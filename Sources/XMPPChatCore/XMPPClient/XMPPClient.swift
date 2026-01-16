@@ -228,6 +228,12 @@ public class XMPPClient {
             xmppStream = nil
             status = .offline
             presencesReady = false
+            // Notify ConnectionManager
+            NotificationCenter.default.post(
+                name: NSNotification.Name("XMPPConnectionStatusChanged"),
+                object: nil,
+                userInfo: ["status": "disconnected"]
+            )
             // Clear presence response tracking when disconnecting
             clearPresenceResponseTracking()
             
@@ -261,6 +267,13 @@ public class XMPPClient {
             logStep("scheduleReconnect:paused-cap:\(reason)")
             return
         }
+        
+        // Notify ConnectionManager that we're reconnecting
+        NotificationCenter.default.post(
+            name: NSNotification.Name("XMPPConnectionStatusChanged"),
+            object: nil,
+            userInfo: ["status": "reconnecting"]
+        )
         
         guard offlineReconnectAttempts < maxOfflineReconnectAttempts else {
             pausedDueToOfflineCap = true
@@ -492,6 +505,12 @@ extension XMPPClient: XMPPStreamDelegate {
         print("Client is connecting...")
         status = .connecting
         logStep("event:connecting")
+        // Notify ConnectionManager
+        NotificationCenter.default.post(
+            name: NSNotification.Name("XMPPConnectionStatusChanged"),
+            object: nil,
+            userInfo: ["status": "connecting"]
+        )
     }
     
     // Match TypeScript: this.client.on('online', async (jid) => { ... })
@@ -521,6 +540,13 @@ extension XMPPClient: XMPPStreamDelegate {
             // Match TypeScript: this.status = 'online';
             status = .online
             isConnecting = false // Connection successful, reset flag
+            
+            // Notify ConnectionManager
+            NotificationCenter.default.post(
+                name: NSNotification.Name("XMPPConnectionStatusChanged"),
+                object: nil,
+                userInfo: ["status": "connected"]
+            )
             
             // Match TypeScript: this.reconnectAttempts = 0;
             reconnectAttempts = 0
@@ -635,6 +661,12 @@ extension XMPPClient: XMPPStreamDelegate {
         status = .offline
         presencesReady = false
         logStep("event:disconnect")
+        // Notify ConnectionManager
+        NotificationCenter.default.post(
+            name: NSNotification.Name("XMPPConnectionStatusChanged"),
+            object: nil,
+            userInfo: ["status": "disconnected"]
+        )
         // Match TypeScript: if (this.pingInterval) clearInterval(this.pingInterval);
         pingInterval?.invalidate()
         isConnecting = false // Reset connection flag on disconnect
@@ -714,6 +746,12 @@ extension XMPPClient: XMPPStreamDelegate {
         print("XMPP client error: \(error.localizedDescription)")
         status = .error
         logStep("event:error")
+        // Notify ConnectionManager
+        NotificationCenter.default.post(
+            name: NSNotification.Name("XMPPConnectionStatusChanged"),
+            object: nil,
+            userInfo: ["status": "disconnected"]
+        )
         scheduleReconnect(reason: "event:error")
     }
     

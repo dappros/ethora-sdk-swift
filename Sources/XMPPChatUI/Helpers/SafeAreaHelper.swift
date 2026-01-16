@@ -11,18 +11,31 @@ import SwiftUI
 import UIKit
 
 extension View {
+    /// Get safe area insets using GeometryReader (recommended approach)
+    public func safeAreaInsets() -> some View {
+        self.background(
+            GeometryReader { geometry in
+                Color.clear.preference(
+                    key: SafeAreaInsetsKey.self,
+                    value: geometry.safeAreaInsets
+                )
+            }
+        )
+    }
+    
+    /// Legacy method - use GeometryReader instead to avoid view hierarchy warnings
+    @available(*, deprecated, message: "Use GeometryReader with safeAreaInsets preference key instead")
     public func getSafeAreaInsets() -> EdgeInsets {
-        if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-           let window = windowScene.windows.first {
-            let uiInsets = window.safeAreaInsets
-            return EdgeInsets(
-                top: uiInsets.top,
-                leading: uiInsets.left,
-                bottom: uiInsets.bottom,
-                trailing: uiInsets.right
-            )
-        }
+        // Avoid accessing UIApplication during view body evaluation
+        // This can cause _UIReparentingView warnings
         return EdgeInsets()
+    }
+}
+
+private struct SafeAreaInsetsKey: PreferenceKey {
+    static var defaultValue: EdgeInsets = EdgeInsets()
+    static func reduce(value: inout EdgeInsets, nextValue: () -> EdgeInsets) {
+        value = nextValue()
     }
 }
 
@@ -38,6 +51,10 @@ extension UIApplication {
 extension View {
     public func getSafeAreaInsets() -> EdgeInsets {
         return EdgeInsets()
+    }
+    
+    public func safeAreaInsets() -> some View {
+        self
     }
 }
 #endif

@@ -80,7 +80,11 @@ public struct MessageNotificationView: View {
                 }
             }
             .padding()
-            .background(Color(.systemBackground))
+            #if os(iOS)
+            .background(Color(uiColor: .systemBackground))
+            #else
+            .background(Color(NSColor.controlBackgroundColor))
+            #endif
             .cornerRadius(12)
             .shadow(color: Color.black.opacity(0.2), radius: 8, x: 0, y: 4)
             .padding(.horizontal, 16)

@@ -777,6 +777,28 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
         )
     }
     
+    public func resendMessage(_ message: Message) {
+        // Check if message is a media message
+        if message.isMediafile == "true" || message.mimetype != nil {
+            // Resend as media message
+            if let location = message.location,
+               let url = URL(string: location) {
+                Task {
+                    do {
+                        let data = try Data(contentsOf: url)
+                        let mimeType = message.mimetype ?? "application/octet-stream"
+                        sendMedia(data: data, type: mimeType)
+                    } catch {
+                        print("❌ ChatRoomViewModel.resendMessage: Error loading media - \(error.localizedDescription)")
+                    }
+                }
+            }
+        } else {
+            // Resend as text message
+            sendMessage(message.body)
+        }
+    }
+    
     public func deleteMessage(_ messageId: String) {
         client.operations.deleteMessage(room: room.jid, msgId: messageId)
     }

@@ -113,7 +113,7 @@ struct DefaultChatInputView: View {
             }
             
             Group {
-                if #available(iOS 16.0, *) {
+                if #available(iOS 16.0, macOS 13.0, *) {
                     TextField(placeholderText, text: $messageText, axis: .vertical)
                         .textFieldStyle(.roundedBorder)
                         .lineLimit(1...5)
@@ -159,7 +159,11 @@ struct DefaultChatInputView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .background(Color(.systemBackground))
+                            #if os(iOS)
+                            .background(Color(uiColor: .systemBackground))
+                            #else
+                            .background(Color(NSColor.controlBackgroundColor))
+                            #endif
         .sheet(isPresented: $showMediaPicker) {
             MediaPickerView(onMediaSelected: { data, type in
                 onSendMedia?(data, type)
@@ -190,7 +194,9 @@ struct MediaPickerView: View {
                 // For now, placeholder
             }
             .navigationTitle("Select Media")
+            #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
+            #endif
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {

@@ -7,6 +7,7 @@
 
 import SwiftUI
 import AVKit
+import Combine
 import XMPPChatCore
 
 public struct MediaMessageView: View {
@@ -115,38 +116,140 @@ struct AudioMessageView: View {
     let message: Message
     @State private var player: AVPlayer?
     @State private var isPlaying = false
+    @State private var duration: TimeInterval = 0
+    @State private var currentTime: TimeInterval = 0
+    @State private var timeObserver: Any?
+    @State private var cancellables = Set<AnyCancellable>()
+    @State private var waveformData: [Float]?
+    @State private var progress: Double = 0
     
     var body: some View {
-        HStack {
+        HStack(spacing: 12) {
+            // Play/Pause button
             Button(action: {
-                if isPlaying {
-                    player?.pause()
-                } else {
-                    player?.play()
-                }
-                isPlaying.toggle()
+                togglePlayback()
             }) {
-                Image(systemName: isPlaying ? "pause.circle.fill" : "play.circle.fill")
-                    .font(.title)
-                    .foregroundColor(.blue)
+                ZStack {
+                    Circle()
+                        .fill(Color.blue)
+                        .frame(width: 44, height: 44)
+                    
+                    Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundColor(.white)
+                        .offset(x: isPlaying ? 0 : 2)
+                }
             }
             
-            if let fileName = message.fileName {
-                Text(fileName)
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
+            VStack(alignment: .leading, spacing: 4) {
+                // Real waveform
+                if let location = message.location, let url = URL(string: location) {
+                    AudioWaveformView(
+                        audioURL: url,
+                        waveformData: waveformData,
+                        waveColor: Color.blue.opacity(0.3),
+                        progressColor: Color.blue,
+                        onSeek: { seekProgress in
+                            if let player = player, duration > 0 {
+                                let time = CMTime(seconds: duration * seekProgress, preferredTimescale: 600)
+                                player.seek(to: time)
+                            }
+                        }
+                    )
+                }
+                
+                // Time info
+                HStack {
+                    Text(formatTime(currentTime))
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    
+                    if duration > 0 {
+                        Text("/ \(formatTime(duration))")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
             }
             
             Spacer()
         }
-        .padding()
-        .background(Color.gray.opacity(0.1))
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(Color(red: 0.95, green: 0.97, blue: 0.99))
         .cornerRadius(12)
+        .shadow(color: Color.black.opacity(0.05), radius: 4, x: 0, y: 2)
         .onAppear {
-            if let location = message.location, let url = URL(string: location) {
-                player = AVPlayer(url: url)
+            setupPlayer()
+            loadWaveformData()
+        }
+        .onDisappear {
+            cleanupPlayer()
+        }
+        .onChange(of: currentTime) { newValue in
+            if duration > 0 {
+                progress = newValue / duration
             }
         }
+    }
+    
+    private func setupPlayer() {
+        guard let location = message.location, let url = URL(string: location) else { return }
+        
+        player = AVPlayer(url: url)
+        
+        // Observe duration
+        player?.currentItem?.publisher(for: \.duration)
+            .sink { [self] durationValue in
+                if durationValue.isValid && !durationValue.isIndefinite {
+                    self.duration = durationValue.seconds
+                }
+            }
+            .store(in: &cancellables)
+        
+        // Observe time updates
+        let interval = CMTime(seconds: 0.1, preferredTimescale: CMTimeScale(NSEC_PER_SEC))
+        timeObserver = player?.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [self] time in
+            currentTime = time.seconds
+            if currentTime >= duration && duration > 0 {
+                isPlaying = false
+            }
+        }
+    }
+    
+    private func cleanupPlayer() {
+        player?.pause()
+        if let observer = timeObserver {
+            player?.removeTimeObserver(observer)
+        }
+        cancellables.removeAll()
+        player = nil
+    }
+    
+    private func togglePlayback() {
+        guard let player = player else { return }
+        
+        if isPlaying {
+            player.pause()
+        } else {
+            player.play()
+        }
+        isPlaying.toggle()
+    }
+    
+    private func loadWaveformData() {
+        // Try to load waveform from message.waveForm if available
+        // Otherwise, AudioWaveformView will generate it from audio
+        if let waveForm = message.waveForm, !waveForm.isEmpty {
+            // Parse waveform data if it's a string representation
+            // This depends on the format from the server
+        }
+    }
+    
+    private func formatTime(_ time: TimeInterval) -> String {
+        let minutes = Int(time) / 60
+        let seconds = Int(time) % 60
+        return String(format: "%d:%02d", minutes, seconds)
     }
 }
 

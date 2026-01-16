@@ -112,7 +112,7 @@ public final class MessageParser {
                     map[lang] = text
                 }
             }
-            translations = map
+            translations = map.isEmpty ? nil : map
         }
 
         let langSource = fullData.getChild("translate")?.attributes["source"]
@@ -132,7 +132,7 @@ public final class MessageParser {
         let dataAttrs = dataNode?.attributes ?? [:]
         // Try both "photo" and "photoURL" attributes
         let photoURL = dataAttrs["photoURL"] ?? dataAttrs["photo"] ?? ""
-
+        
         return MessageData(
             id: finalId,
             body: body,
@@ -197,12 +197,24 @@ public final class MessageParser {
             isDeleted: d.deleted,
             mainMessage: d.dataAttrs["mainMessage"],
             fileName: fileName,
-            translations: d.translations,
+            translations: convertTranslations(d.translations),
             langSource: d.langSource,
             originalName: originalName,
             size: size,
             xmppId: d.xmppId,
             xmppFrom: d.xmppFrom
         )
+    }
+    
+    // Helper to convert [String: String] to [String: MessageTranslation]
+    private static func convertTranslations(_ translations: [String: String]?) -> [String: MessageTranslation]? {
+        guard let translations = translations else { return nil }
+        return translations.reduce(into: [String: MessageTranslation]()) { result, pair in
+            result[pair.key] = MessageTranslation(
+                translatedText: pair.value,
+                sourceLanguage: nil,
+                targetLanguage: pair.key
+            )
+        }
     }
 }

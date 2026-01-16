@@ -98,14 +98,38 @@ struct DefaultMessageBubble: View {
                 } else if message.isMediafile != nil || message.mimetype != nil {
                     MediaMessageView(message: message, isUser: isUser)
                 } else {
-                    Text(message.body)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .background(
-                            RoundedRectangle(cornerRadius: 16)
-                                .fill(isUser ? (colors?.primaryColor ?? Color.blue) : Color.gray.opacity(0.2))
+                    VStack(alignment: .leading, spacing: 8) {
+                        UniversalMarkdownTextView(
+                            text: message.body,
+                            foregroundColor: isUser ? .white : .primary
                         )
-                        .foregroundColor(isUser ? .white : .primary)
+                        
+                        // URL Previews
+                        let urls = message.body.extractURLs()
+                        if !urls.isEmpty {
+                            ForEach(urls, id: \.self) { url in
+                                URLPreviewCard(url: url, isUserMessage: isUser)
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .background(
+                        RoundedRectangle(cornerRadius: 16)
+                            .fill(isUser ? 
+                                  (colors?.primary != nil ? hexColor(colors!.primary) : Color(red: 0.0, green: 0.32, blue: 0.80)) : 
+                                  Color(red: 0.95, green: 0.97, blue: 0.99))
+                    )
+                    .foregroundColor(isUser ? .white : .primary)
+                    .shadow(color: Color.black.opacity(0.05), radius: 4, x: 0, y: 2)
+                    
+                    // Translations
+                    MessageTranslationsView(
+                        message: message,
+                        isUser: isUser,
+                        langSource: "en", // Should come from config
+                        config: nil // Should pass config
+                    )
                 }
                 
                 // Reactions
@@ -126,6 +150,7 @@ struct DefaultMessageBubble: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 4)
         .contentShape(Rectangle())
+        .fadeIn(duration: 0.2)
         .onTapGesture {
             onMessageTap?()
         }
@@ -156,6 +181,30 @@ struct DefaultMessageBubble: View {
         let formatter = DateFormatter()
         formatter.timeStyle = .short
         return formatter.string(from: date)
+    }
+    
+    private func hexColor(_ hex: String) -> Color {
+        let hex = hex.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
+        var int: UInt64 = 0
+        Scanner(string: hex).scanHexInt64(&int)
+        let a, r, g, b: UInt64
+        switch hex.count {
+        case 3: // RGB (12-bit)
+            (a, r, g, b) = (255, (int >> 8) * 17, (int >> 4 & 0xF) * 17, (int & 0xF) * 17)
+        case 6: // RGB (24-bit)
+            (a, r, g, b) = (255, int >> 16, int >> 8 & 0xFF, int & 0xFF)
+        case 8: // ARGB (32-bit)
+            (a, r, g, b) = (int >> 24, int >> 16 & 0xFF, int >> 8 & 0xFF, int & 0xFF)
+        default:
+            (a, r, g, b) = (255, 0, 0, 0)
+        }
+        return Color(
+            .sRGB,
+            red: Double(r) / 255,
+            green: Double(g) / 255,
+            blue: Double(b) / 255,
+            opacity: Double(a) / 255
+        )
     }
 }
 
@@ -207,27 +256,6 @@ struct InitialsAvatarView: View {
             }
         }
         return "?"
-    }
-}
-
-struct ReplyPreviewView: View {
-    let mainMessage: String
-    
-    var body: some View {
-        HStack {
-            Rectangle()
-                .fill(Color.blue)
-                .frame(width: 3)
-            
-            Text(mainMessage)
-                .font(.caption)
-                .foregroundColor(.secondary)
-                .lineLimit(2)
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(Color.gray.opacity(0.1))
-        .cornerRadius(8)
     }
 }
 
