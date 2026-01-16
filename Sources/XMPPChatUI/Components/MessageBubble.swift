@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import XMPPChatCore
 
 public struct MessageBubble: View {
     let message: Message
@@ -233,15 +234,21 @@ struct ReplyPreviewView: View {
 struct ReactionBadgesView: View {
     let reactions: [String: ReactionMessage]
     
+    private var reactionItems: [(id: String, reaction: ReactionMessage)] {
+        reactions.values.map { reaction in
+            (id: reaction.emoji.joined(separator: ""), reaction: reaction)
+        }
+    }
+    
     var body: some View {
         HStack(spacing: 4) {
-            ForEach(Array(reactions.values), id: \.emoji.joined()) { reaction in
+            ForEach(reactionItems, id: \.id) { item in
                 HStack(spacing: 2) {
-                    ForEach(reaction.emoji, id: \.self) { emoji in
+                    ForEach(item.reaction.emoji, id: \.self) { emoji in
                         Text(emoji)
                             .font(.caption)
                     }
-                    Text("\(reaction.data.count)")
+                    Text("\(item.reaction.data.count)")
                         .font(.caption2)
                         .foregroundColor(.secondary)
                 }

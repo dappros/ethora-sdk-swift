@@ -7,19 +7,25 @@
 
 import SwiftUI
 
+#if os(iOS)
+import UIKit
+
 extension View {
-    public func safeAreaInsets() -> EdgeInsets {
-        #if os(iOS)
+    public func getSafeAreaInsets() -> EdgeInsets {
         if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
            let window = windowScene.windows.first {
-            return window.safeAreaInsets
+            let uiInsets = window.safeAreaInsets
+            return EdgeInsets(
+                top: uiInsets.top,
+                leading: uiInsets.left,
+                bottom: uiInsets.bottom,
+                trailing: uiInsets.right
+            )
         }
-        #endif
         return EdgeInsets()
     }
 }
 
-#if os(iOS)
 extension UIApplication {
     var keyWindow: UIWindow? {
         connectedScenes
@@ -28,15 +34,10 @@ extension UIApplication {
             .first { $0.isKeyWindow }
     }
 }
-
-extension UIWindow {
-    var safeAreaInsets: EdgeInsets {
-        EdgeInsets(
-            top: safeAreaInsets.top,
-            leading: safeAreaInsets.left,
-            bottom: safeAreaInsets.bottom,
-            trailing: safeAreaInsets.right
-        )
+#else
+extension View {
+    public func getSafeAreaInsets() -> EdgeInsets {
+        return EdgeInsets()
     }
 }
 #endif

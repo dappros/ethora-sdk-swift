@@ -6,8 +6,9 @@
 //
 
 import SwiftUI
+import XMPPChatCore
 
-public struct ChatInputView: View {
+public struct ConfigurableChatInputView: View {
     @Binding var messageText: String
     let onSendMessage: (String) -> Void
     let onSendMedia: ((Data, String) -> Void)?
@@ -56,7 +57,7 @@ public struct ChatInputView: View {
                 onSendMessage: onSendMessage,
                 onSendMedia: onSendMedia,
                 placeholderText: placeholderText,
-                messageText: messageText,
+                messageText: $messageText,
                 isEditing: isEditing,
                 editMessageId: editMessageId
             ))
@@ -111,10 +112,18 @@ struct DefaultChatInputView: View {
                 }
             }
             
-            TextField(placeholderText, text: $messageText, axis: .vertical)
-                .textFieldStyle(.roundedBorder)
-                .lineLimit(1...5)
-                .focused($isFocused)
+            Group {
+                if #available(iOS 16.0, *) {
+                    TextField(placeholderText, text: $messageText, axis: .vertical)
+                        .textFieldStyle(.roundedBorder)
+                        .lineLimit(1...5)
+                } else {
+                    TextField(placeholderText, text: $messageText)
+                        .textFieldStyle(.roundedBorder)
+                        .lineLimit(5)
+                }
+            }
+            .focused($isFocused)
                 .onSubmit {
                     if !messageText.isEmpty {
                         sendMessage()

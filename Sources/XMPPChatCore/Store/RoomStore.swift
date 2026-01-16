@@ -190,19 +190,42 @@ public class RoomStore: ObservableObject {
             return
         }
         
-        var message = room.messages[index]
+        let originalMessage = room.messages[index]
         
-        if let body = updates.body {
-            message.body = body
-        }
-        if let isDeleted = updates.isDeleted {
-            message.isDeleted = isDeleted
-        }
-        if let reaction = updates.reaction {
-            message.reaction = reaction
-        }
+        // Create a new message with updated values
+        let updatedMessage = Message(
+            id: originalMessage.id,
+            user: originalMessage.user,
+            date: originalMessage.date,
+            body: updates.body ?? originalMessage.body,
+            roomJid: originalMessage.roomJid,
+            key: originalMessage.key,
+            coinsInMessage: originalMessage.coinsInMessage,
+            numberOfReplies: originalMessage.numberOfReplies,
+            isSystemMessage: originalMessage.isSystemMessage,
+            isMediafile: originalMessage.isMediafile,
+            locationPreview: originalMessage.locationPreview,
+            mimetype: originalMessage.mimetype,
+            location: originalMessage.location,
+            pending: originalMessage.pending,
+            timestamp: originalMessage.timestamp,
+            showInChannel: originalMessage.showInChannel,
+            activeMessage: originalMessage.activeMessage,
+            isReply: originalMessage.isReply,
+            isDeleted: updates.isDeleted ?? originalMessage.isDeleted,
+            mainMessage: originalMessage.mainMessage,
+            reply: originalMessage.reply,
+            reaction: updates.reaction ?? originalMessage.reaction,
+            fileName: originalMessage.fileName,
+            translations: originalMessage.translations,
+            langSource: originalMessage.langSource,
+            originalName: originalMessage.originalName,
+            size: originalMessage.size,
+            xmppId: originalMessage.xmppId,
+            xmppFrom: originalMessage.xmppFrom
+        )
         
-        room.messages[index] = message
+        room.messages[index] = updatedMessage
         rooms[roomJID] = room
         saveToCache()
     }

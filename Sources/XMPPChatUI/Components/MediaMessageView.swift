@@ -7,6 +7,7 @@
 
 import SwiftUI
 import AVKit
+import XMPPChatCore
 
 public struct MediaMessageView: View {
     let message: Message

@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import XMPPChatCore
 
 public struct ChatStyles {
     public let colors: ChatColors

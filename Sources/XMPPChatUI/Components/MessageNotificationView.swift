@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import XMPPChatCore
 
 public struct MessageNotificationView: View {
     let notification: MessageNotification
