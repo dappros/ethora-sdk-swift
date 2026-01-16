@@ -103,7 +103,33 @@ public struct RoomListView: View {
                 #endif
             }
             .sheet(isPresented: $viewModel.showNewChatModal) {
-                NewChatModalView(viewModel: viewModel)
+                NewChatModal(
+                    availableUsers: viewModel.getAvailableUsers(),
+                    onCreateChat: { chatName, description, users in
+                        Task { @MainActor in
+                            do {
+                                if users.count == 1, let user = users.first {
+                                    // Private chat
+                                    try await viewModel.createPrivateRoom(with: user)
+                                } else {
+                                    // Group chat
+                                    try await viewModel.createRoom(
+                                        title: chatName,
+                                        description: description ?? "",
+                                        members: users
+                                    )
+                                }
+                                viewModel.showNewChatModal = false
+                            } catch {
+                                print("❌ Failed to create chat: \(error.localizedDescription)")
+                                viewModel.errorMessage = error.localizedDescription
+                            }
+                        }
+                    },
+                    onClose: {
+                        viewModel.showNewChatModal = false
+                    }
+                )
             }
             .onAppear {
                 // FORCE CALL loadRooms when view appears
@@ -538,45 +564,115 @@ public class RoomListViewModel: ObservableObject {
         }
     }
     
-    public func createRoom(title: String, description: String) {
-        // Create new room
-    }
-}
-
-// MARK: - New Chat Modal
-struct NewChatModalView: View {
-    @ObservedObject var viewModel: RoomListViewModel
-    @Environment(\.dismiss) var dismiss
-    @State private var title: String = ""
-    @State private var description: String = ""
-    
-    var body: some View {
-        NavigationView {
-            Form {
-                Section("Room Details") {
-                    TextField("Title", text: $title)
-                    TextField("Description", text: $description)
+    public func createRoom(title: String, description: String, members: [User] = []) async throws {
+        guard let token = UserStore.shared.token else {
+            throw NSError(domain: "RoomListViewModel", code: 401, userInfo: [NSLocalizedDescriptionKey: "Not authenticated"])
+        }
+        
+        isLoading = true
+        errorMessage = nil
+        
+        do {
+            // Create room via API first
+            let memberIds = members.compactMap { $0.id }
+            let apiRoom = try await RoomsAPI.postRoom(
+                title: title,
+                type: RoomType.public,
+                description: description,
+                picture: nil,
+                members: memberIds.isEmpty ? nil : memberIds,
+                baseURL: apiBaseURL,
+                appId: appId
+            )
+            
+            // Create room via XMPP
+            // Note: createRoom is async, so we await it
+            let roomJID = try await client.operations.createRoom(
+                title: title,
+                description: description,
+                conferenceDomain: conferenceDomain
+            )
+            
+            // Invite members if provided
+            for member in members {
+                if let memberJID = member.xmppUsername {
+                    try await client.operations.inviteRoomRequest(
+                        to: memberJID,
+                        roomJid: roomJID,
+                        chatDomain: conferenceDomain
+                    )
                 }
             }
-            .navigationTitle("New Chat")
-            #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-            #endif
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") {
-                        dismiss()
-                    }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Create") {
-                        viewModel.createRoom(title: title, description: description)
-                        dismiss()
-                    }
-                    .disabled(title.isEmpty)
+            
+            // Reload rooms to include the new one
+            loadRooms()
+            
+            isLoading = false
+        } catch {
+            isLoading = false
+            errorMessage = "Failed to create room: \(error.localizedDescription)"
+            throw error
+        }
+    }
+    
+    public func createPrivateRoom(with user: User) async throws {
+        guard let token = UserStore.shared.token else {
+            throw NSError(domain: "RoomListViewModel", code: 401, userInfo: [NSLocalizedDescriptionKey: "Not authenticated"])
+        }
+        
+        guard let userJID = user.xmppUsername else {
+            throw NSError(domain: "RoomListViewModel", code: 400, userInfo: [NSLocalizedDescriptionKey: "User JID not available"])
+        }
+        
+        isLoading = true
+        errorMessage = nil
+        
+        do {
+            // Create private room via API
+            let apiRoom = try await RoomsAPI.postPrivateRoom(
+                username: userJID,
+                baseURL: apiBaseURL,
+                appId: appId
+            )
+            
+            // Create private room via XMPP
+            let roomJID = try await client.operations.createPrivateRoom(
+                title: user.fullName,
+                description: "",
+                to: userJID,
+                conferenceDomain: conferenceDomain
+            )
+            
+            // Reload rooms to include the new one
+            loadRooms()
+            
+            isLoading = false
+        } catch {
+            isLoading = false
+            errorMessage = "Failed to create private room: \(error.localizedDescription)"
+            throw error
+        }
+    }
+    
+    // Get available users from existing rooms (for now)
+    // In a real app, you'd fetch this from an API
+    public func getAvailableUsers() -> [User] {
+        var users: Set<String> = []
+        var userMap: [String: User] = [:]
+        
+        // Collect unique users from all rooms
+        for room in rooms {
+            for message in room.messages {
+                if !users.contains(message.user.id) {
+                    users.insert(message.user.id)
+                    userMap[message.user.id] = message.user
                 }
             }
         }
+        
+        // Exclude current user
+        return Array(userMap.values).filter { $0.id != currentUserId }
     }
 }
+
 

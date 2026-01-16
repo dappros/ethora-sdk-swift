@@ -31,12 +31,13 @@ public struct Message: Codable, Identifiable, Equatable {
     public var reply: [Reply]?
     public var reaction: [String: ReactionMessage]?
     public var fileName: String?
-    public var translations: [String: String]?
+    public var translations: [String: MessageTranslation]?
     public var langSource: String?
     public var originalName: String?
     public var size: String?
     public var xmppId: String?
     public var xmppFrom: String?
+    public var waveForm: String? // Waveform data for audio messages
     
     public init(
         id: String,
@@ -62,12 +63,13 @@ public struct Message: Codable, Identifiable, Equatable {
         reply: [Reply]? = nil,
         reaction: [String: ReactionMessage]? = nil,
         fileName: String? = nil,
-        translations: [String: String]? = nil,
+        translations: [String: MessageTranslation]? = nil,
         langSource: String? = nil,
         originalName: String? = nil,
         size: String? = nil,
         xmppId: String? = nil,
-        xmppFrom: String? = nil
+        xmppFrom: String? = nil,
+        waveForm: String? = nil
     ) {
         self.id = id
         self.user = user
@@ -98,6 +100,7 @@ public struct Message: Codable, Identifiable, Equatable {
         self.size = size
         self.xmppId = xmppId
         self.xmppFrom = xmppFrom
+        self.waveForm = waveForm
     }
 }
 

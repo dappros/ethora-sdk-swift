@@ -60,17 +60,34 @@ public struct ChatRoomView: View {
     @State private var scrollProxy: ScrollViewProxy?
     @State private var hasTriggeredLoadAt85: Bool = false
     @FocusState private var isInputFocused: Bool
+    @State private var showConnectionStatus: Bool = true
+    @State private var showSearch: Bool = false
+    @State private var showRoomInfo: Bool = false
+    @State private var selectedMessageForMenu: Message? = nil
+    @ObservedObject private var connectionManager: ConnectionManager
     
     public init(viewModel: ChatRoomViewModel) {
         self.viewModel = viewModel
+        self._connectionManager = ObservedObject(wrappedValue: ConnectionManager.shared)
     }
     
     public var body: some View {
         VStack(spacing: 0) {
+            // Connection Status
+            if showConnectionStatus {
+                ConnectionStatusView(connectionManager: connectionManager)
+            }
+            
             // Header
-            ChatHeaderView(room: viewModel.room, onBack: {
-                presentationMode.wrappedValue.dismiss()
-            })
+            ChatHeaderView(
+                room: viewModel.room,
+                onBack: {
+                    presentationMode.wrappedValue.dismiss()
+                },
+                onInfo: {
+                    showRoomInfo = true
+                }
+            )
             
             // Off-Clinic Hours Banner
             OffClinicHoursBanner()
@@ -79,7 +96,7 @@ public struct ChatRoomView: View {
             ZStack {
             ScrollViewReader { proxy in
                 ScrollView {
-                        LazyVStack(spacing: 4) {
+                        LazyVStack(spacing: 8) {
                             // Loader at top when loading more (matches TypeScript)
                             if viewModel.isLoadingMore {
                                 HStack {
@@ -130,7 +147,16 @@ public struct ChatRoomView: View {
                                 message: message,
                                     isUser: isUser,
                                     showAvatar: showAvatar,
-                                    previousMessage: previousMessage
+                                    previousMessage: previousMessage,
+                                    onLongPress: {
+                                        // Context menu will be shown via .contextMenu modifier
+                                    },
+                                    onRetry: {
+                                        // Retry sending failed message
+                                        if message.pending == false && message.xmppId == nil {
+                                            viewModel.resendMessage(message)
+                                        }
+                                    }
                             )
                             .id(message.id)
                             .background(
@@ -152,6 +178,16 @@ public struct ChatRoomView: View {
                     .padding()
                 }
                     .coordinateSpace(name: "messageScroll")
+                    .sheet(isPresented: $showRoomInfo) {
+                        RoomInfoModal(
+                            room: viewModel.room,
+                            members: [], // TODO: Load room members
+                            onClose: { showRoomInfo = false },
+                            onEdit: nil,
+                            onLeave: nil,
+                            onDelete: nil
+                        )
+                    }
                     .background(
                         // Track scroll position and dimensions (matches TypeScript checkAtBottom)
                         GeometryReader { scrollGeometry in
@@ -434,10 +470,10 @@ public struct ChatRoomView: View {
             )
             .focused($isInputFocused)
         }
-        // Light gray background
+        // Web-like background
         .background(
-            Color(white: 0.95) // Slightly gray
-            .ignoresSafeArea()
+            Color(red: 0.98, green: 0.98, blue: 0.99)
+                .ignoresSafeArea()
         )
         #if os(iOS)
         .navigationBarHidden(true)
@@ -600,6 +636,17 @@ public struct ChatRoomView: View {
 struct ChatHeaderView: View {
     let room: Room
     let onBack: () -> Void
+    let onInfo: (() -> Void)?
+    
+    init(
+        room: Room,
+        onBack: @escaping () -> Void,
+        onInfo: (() -> Void)? = nil
+    ) {
+        self.room = room
+        self.onBack = onBack
+        self.onInfo = onInfo
+    }
     
     var body: some View {
         HStack {
@@ -632,6 +679,14 @@ struct ChatHeaderView: View {
             }
             
             Spacer()
+            
+            if let onInfo = onInfo {
+                Button(action: onInfo) {
+                    Image(systemName: "info.circle")
+                        .font(.title3)
+                        .foregroundColor(.blue)
+                }
+            }
         }
         .padding()
         #if os(iOS)
@@ -649,6 +704,10 @@ struct MessageBubbleView: View {
     let isUser: Bool
     let showAvatar: Bool
     let previousMessage: Message?
+    let onLongPress: (() -> Void)?
+    let onRetry: (() -> Void)?
+    
+    @State private var showContextMenu = false
     
     var body: some View {
         // Check if this is a delimiter message
@@ -712,21 +771,28 @@ struct MessageBubbleView: View {
                         )
                     } else {
                         if message.body.lowercased() != "media" {
-                Text(message.body)
-                                .foregroundColor(isUser ? .white : .black)
-                                .fixedSize(horizontal: false, vertical: true)
-                                .multilineTextAlignment(.leading)
+                            UniversalMarkdownTextView(
+                                text: message.body,
+                                foregroundColor: isUser ? .white : .black
+                            )
+                            .fixedSize(horizontal: false, vertical: true)
+                            .multilineTextAlignment(.leading)
                         }
                     }
                 }
                         
-                        HStack {
+                        HStack(spacing: 4) {
                             if !isUser {
                                 Spacer() // Push time to right for others too
                             }
                             Text(message.date, style: .time)
                                 .font(.caption2)
                                 .foregroundColor(isUser ? .white.opacity(0.7) : .gray)
+                            
+                            // Message status indicator (only for user's messages)
+                            if isUser {
+                                MessageStatusIndicatorView(message: message, onRetry: onRetry)
+                            }
                         }
                     }
                     .padding(.horizontal, 12)
@@ -742,6 +808,36 @@ struct MessageBubbleView: View {
                     return 300 // Fixed max width for macOS
                         #endif
                 }(), alignment: isUser ? .trailing : .leading)
+                .contextMenu {
+                    MessageContextMenuItems(
+                        message: message,
+                        isUser: isUser,
+                        onReply: {
+                            // TODO: Implement reply
+                        },
+                        onCopy: {
+                            #if os(iOS)
+                            UIPasteboard.general.string = message.body
+                            #else
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(message.body, forType: .string)
+                            #endif
+                        },
+                        onEdit: isUser ? {
+                            // TODO: Implement edit
+                        } : nil,
+                        onDelete: isUser ? {
+                            // TODO: Implement delete
+                        } : nil,
+                        onReport: !isUser ? {
+                            // TODO: Implement report
+                        } : nil
+                    )
+                }
+                .onLongPressGesture {
+                    onLongPress?()
+                    HapticFeedback.buttonPress()
+                }
                 
                 if isUser {
                     if showAvatar && !isConsecutive {
@@ -758,6 +854,82 @@ struct MessageBubbleView: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 2)
         )
+    }
+}
+
+// MARK: - Message Status Indicator
+struct MessageStatusIndicatorView: View {
+    let message: Message
+    let onRetry: (() -> Void)?
+    
+    var body: some View {
+        Group {
+            if let pending = message.pending, pending {
+                // Message is pending/sending
+                ProgressView()
+                    .scaleEffect(0.6)
+                    .frame(width: 12, height: 12)
+            } else if message.xmppId == nil && message.pending == false {
+                // Message failed to send
+                Button(action: {
+                    onRetry?()
+                }) {
+                    Image(systemName: "exclamationmark.circle.fill")
+                        .font(.caption2)
+                        .foregroundColor(.red)
+                }
+            } else {
+                // Message sent successfully
+                Image(systemName: "checkmark")
+                    .font(.caption2)
+                    .foregroundColor(.white.opacity(0.7))
+            }
+        }
+    }
+}
+
+// MARK: - Message Context Menu Items
+struct MessageContextMenuItems: View {
+    let message: Message
+    let isUser: Bool
+    let onReply: (() -> Void)?
+    let onCopy: (() -> Void)?
+    let onEdit: (() -> Void)?
+    let onDelete: (() -> Void)?
+    let onReport: (() -> Void)?
+    
+    var body: some View {
+        Group {
+            if let onReply = onReply {
+                Button(action: onReply) {
+                    Label("Reply", systemImage: "arrowshape.turn.up.left")
+                }
+            }
+            
+            if let onCopy = onCopy {
+                Button(action: onCopy) {
+                    Label("Copy", systemImage: "doc.on.doc")
+                }
+            }
+            
+            if isUser, let onEdit = onEdit {
+                Button(action: onEdit) {
+                    Label("Edit", systemImage: "pencil")
+                }
+            }
+            
+            if isUser, let onDelete = onDelete {
+                Button(role: .destructive, action: onDelete) {
+                    Label("Delete", systemImage: "trash")
+                }
+            }
+            
+            if !isUser, let onReport = onReport {
+                Button(role: .destructive, action: onReport) {
+                    Label("Report", systemImage: "exclamationmark.triangle")
+                }
+            }
+        }
     }
 }
 
@@ -1028,6 +1200,7 @@ struct ChatInputView: View {
     #if os(iOS)
     @State private var showImagePicker = false
     @State private var showDocumentPicker = false
+    @State private var isRecordingAudio = false
     #endif
     
     var body: some View {
@@ -1052,79 +1225,146 @@ struct ChatInputView: View {
                 #endif
             }
             
-            HStack(spacing: 12) {
-                #if os(iOS)
-                Menu {
-                Button(action: {
-                        showImagePicker = true
-                    }) {
-                        Label("Photo or Video", systemImage: "photo")
+            // Audio recorder when recording
+            #if os(iOS)
+            if isRecordingAudio {
+                AudioRecorderView(
+                    isRecording: $isRecordingAudio,
+                    onAudioRecorded: { audioData, mimeType in
+                        onSendMedia(audioData, mimeType)
+                    },
+                    onCancel: {
+                        isRecordingAudio = false
                     }
-                    Button(action: {
-                        showDocumentPicker = true
-                    }) {
-                        Label("File", systemImage: "doc")
-                    }
-                } label: {
-                    Image(systemName: "plus.circle.fill")
-                        .font(.title2)
-                        .foregroundColor(.blue)
-                }
-                .sheet(isPresented: $showImagePicker) {
-                    ImagePicker(onImageSelected: { imageData, mimeType in
-                        onSendMedia(imageData, mimeType)
-                    })
-                }
-                .sheet(isPresented: $showDocumentPicker) {
-                    DocumentPicker(onDocumentSelected: { fileData, fileName, mimeType in
-                        onSendMedia(fileData, mimeType)
-                    })
-                }
-                #else
-                Button(action: {
-                    // File picker for macOS
-                }) {
-                    Image(systemName: "plus.circle.fill")
-                        .font(.title2)
-                        .foregroundColor(.blue)
-                }
-                #endif
-                
-                #if os(iOS)
-                if #available(iOS 16.0, *) {
-                    TextField("Type a message", text: $text, axis: .vertical)
-                        .textFieldStyle(.roundedBorder)
-                        .lineLimit(1...5)
-                } else {
-                    // Fallback for iOS 15
-                    TextField("Type a message", text: $text)
-                        .textFieldStyle(.roundedBorder)
-                        .lineLimit(3)
-                }
-                #else
-                TextField("Type a message", text: $text)
-                    .textFieldStyle(.roundedBorder)
-                #endif
-                
-                Button(action: {
-                    if !text.isEmpty {
-                        onSend()
-                    }
-                }) {
-                    Image(systemName: "arrow.up.circle.fill")
-                        .font(.title2)
-                        .foregroundColor(text.isEmpty ? .gray : .blue)
-                }
-                .disabled(text.isEmpty)
+                )
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            } else {
+                inputView
             }
-            .padding()
+            #else
+            inputView
+            #endif
         }
         #if os(iOS)
-        .background(Color(uiColor: .systemBackground))
-        #else
-        .background(Color(NSColor.controlBackgroundColor))
+        .animation(.easeInOut(duration: 0.3), value: isRecordingAudio)
         #endif
     }
+    
+    #if os(iOS)
+    private var inputView: some View {
+        HStack(spacing: 12) {
+            Menu {
+                Button(action: {
+                    showImagePicker = true
+                }) {
+                    Label("Photo or Video", systemImage: "photo")
+                }
+                Button(action: {
+                    showDocumentPicker = true
+                }) {
+                    Label("File", systemImage: "doc")
+                }
+            } label: {
+                Image(systemName: "plus.circle.fill")
+                    .font(.title2)
+                    .foregroundColor(.blue)
+            }
+            .sheet(isPresented: $showImagePicker) {
+                ImagePicker(onImageSelected: { imageData, mimeType in
+                    onSendMedia(imageData, mimeType)
+                })
+            }
+            .sheet(isPresented: $showDocumentPicker) {
+                DocumentPicker(onDocumentSelected: { fileData, fileName, mimeType in
+                    onSendMedia(fileData, mimeType)
+                })
+            }
+            
+            // Audio recording button
+            Button(action: {
+                isRecordingAudio = true
+            }) {
+                Image(systemName: "mic.fill")
+                    .font(.title3)
+                    .foregroundColor(.white)
+                    .frame(width: 36, height: 36)
+                    .background(Color.red)
+                    .clipShape(Circle())
+            }
+            
+            // Text input with web-like styling
+            if #available(iOS 16.0, *) {
+                TextField("Type a message", text: $text, axis: .vertical)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .background(Color(red: 0.96, green: 0.97, blue: 0.99))
+                    .cornerRadius(12)
+                    .lineLimit(1...5)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(text.isEmpty ? Color.clear : Color.blue.opacity(0.3), lineWidth: 1)
+                    )
+            } else {
+                TextField("Type a message", text: $text)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .background(Color(red: 0.96, green: 0.97, blue: 0.99))
+                    .cornerRadius(12)
+                    .lineLimit(3)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(text.isEmpty ? Color.clear : Color.blue.opacity(0.3), lineWidth: 1)
+                    )
+            }
+            
+            Button(action: {
+                if !text.isEmpty {
+                    onSend()
+                }
+            }) {
+                Image(systemName: "arrow.up.circle.fill")
+                    .font(.title2)
+                    .foregroundColor(text.isEmpty ? .gray : .blue)
+            }
+            .disabled(text.isEmpty)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(Color.white)
+        .cornerRadius(15, corners: [.topLeft, .topRight])
+        .shadow(color: Color.black.opacity(0.05), radius: 8, x: 0, y: -2)
+    }
+    #else
+    private var inputView: some View {
+        HStack(spacing: 12) {
+            Button(action: {
+                // File picker for macOS
+            }) {
+                Image(systemName: "plus.circle.fill")
+                    .font(.title2)
+                    .foregroundColor(.blue)
+            }
+            
+            TextField("Type a message", text: $text)
+                .textFieldStyle(.roundedBorder)
+            
+            Button(action: {
+                if !text.isEmpty {
+                    onSend()
+                }
+            }) {
+                Image(systemName: "arrow.up.circle.fill")
+                    .font(.title2)
+                    .foregroundColor(text.isEmpty ? .gray : .blue)
+            }
+            .disabled(text.isEmpty)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+    }
+    #endif
 }
 
 // MARK: - Media Message Preview
