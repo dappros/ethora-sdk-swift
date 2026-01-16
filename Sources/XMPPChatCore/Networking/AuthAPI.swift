@@ -331,6 +331,118 @@ public struct AuthAPI {
         return (refresh.token, refresh.refreshToken)
     }
     
+    // MARK: - Login Via JWT
+    
+    /// Login via JWT token (mirrors loginViaJwt in auth.api.ts)
+    /// POST /users/client
+    /// - Parameters:
+    ///   - clientToken: Custom JWT token
+    ///   - baseURL: API base URL
+    /// - Returns: LoginResponse with token, refreshToken, and user data
+    public static func loginViaJwt(
+        clientToken: String,
+        baseURL: URL = URL(string: "https://api.ethoradev.com/v1")!
+    ) async throws -> LoginResponse {
+        let url = baseURL.appendingPathComponent("users/client")
+        print("🌐 AuthAPI.loginViaJwt: URL = \(url.absoluteString)")
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue(clientToken, forHTTPHeaderField: "x-custom-token")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw AuthAPIError.networkError("No HTTPURLResponse")
+        }
+        
+        guard (200..<300).contains(httpResponse.statusCode) else {
+            let errorBody = String(data: data, encoding: .utf8) ?? "<no body>"
+            print("❌ AuthAPI.loginViaJwt HTTP Error \(httpResponse.statusCode): \(errorBody)")
+            throw AuthAPIError.httpError(httpResponse.statusCode, errorBody)
+        }
+        
+        struct JWTLoginResponse: Codable {
+            let user: UserResponse
+            let refreshToken: String
+            let token: String
+        }
+        
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        
+        do {
+            let jwtResponse = try decoder.decode(JWTLoginResponse.self, from: data)
+            let loginResponse = LoginResponse(
+                success: true,
+                token: jwtResponse.token,
+                refreshToken: jwtResponse.refreshToken,
+                user: jwtResponse.user,
+                app: nil,
+                isAllowedNewAppCreate: nil
+            )
+            
+            print("✅ AuthAPI.loginViaJwt: SUCCESS!")
+            return loginResponse
+        } catch {
+            let jsonString = String(data: data, encoding: .utf8) ?? "<no data>"
+            print("❌ AuthAPI.loginViaJwt Decode Error: \(error)")
+            print("📄 Response body: \(jsonString)")
+            throw AuthAPIError.decodeError(error.localizedDescription)
+        }
+    }
+    
+    // MARK: - Check Email Exist
+    
+    /// Check if email exists (mirrors checkEmailExist in auth.api.ts)
+    /// GET /users/checkEmail/{email}
+    /// - Parameters:
+    ///   - email: Email to check
+    ///   - baseURL: API base URL
+    ///   - appToken: App token for Authorization header
+    /// - Returns: Boolean indicating if email exists
+    public static func checkEmailExist(
+        email: String,
+        baseURL: URL = URL(string: "https://api.ethoradev.com/v1")!,
+        appToken: String = AppConfig.appToken
+    ) async throws -> Bool {
+        let url = baseURL.appendingPathComponent("users/checkEmail/\(email)")
+        print("🌐 AuthAPI.checkEmailExist: URL = \(url.absoluteString)")
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue(appToken, forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw AuthAPIError.networkError("No HTTPURLResponse")
+        }
+        
+        guard (200..<300).contains(httpResponse.statusCode) else {
+            let errorBody = String(data: data, encoding: .utf8) ?? "<no body>"
+            print("❌ AuthAPI.checkEmailExist HTTP Error \(httpResponse.statusCode): \(errorBody)")
+            throw AuthAPIError.httpError(httpResponse.statusCode, errorBody)
+        }
+        
+        // Response is typically a boolean or object indicating existence
+        if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let exists = json["exists"] as? Bool {
+            return exists
+        }
+        
+        // If response is just true/false
+        if let stringResponse = String(data: data, encoding: .utf8) {
+            return stringResponse.lowercased() == "true"
+        }
+        
+        return false
+    }
+    
     // MARK: - Upload File
     
     /// Upload file (mirrors uploadFile in auth.api.ts)

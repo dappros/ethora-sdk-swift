@@ -12,7 +12,7 @@ public class MessageCache {
     public static let shared = MessageCache()
     
     private let cacheKeyPrefix = "XMPPChat_Messages_"
-    private let maxCachedMessagesPerRoom = 100 // Cache up to 100 messages per room
+    private let maxCachedMessagesPerRoom = 50 // Cache up to 50 messages per room (matches web limit)
     
     private init() {}
     
