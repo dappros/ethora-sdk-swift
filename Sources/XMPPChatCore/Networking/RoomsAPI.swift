@@ -110,8 +110,6 @@ public struct RoomsAPI {
         }
     }
     
-}
-
     // MARK: - Create Room
     
     /// Create a new room
@@ -211,8 +209,8 @@ public struct RoomsAPI {
             
             let decoder = JSONDecoder()
             decoder.keyDecodingStrategy = .useDefaultKeys
-            let response = try decoder.decode(PostRoomResponse.self, from: data)
-            return response.result
+            let decodedResponse = try decoder.decode(PostRoomResponse.self, from: data)
+            return decodedResponse.result
         } catch let urlError {
             throw RoomsAPIError.networkError(urlError.localizedDescription)
         }
@@ -301,8 +299,8 @@ public struct RoomsAPI {
             
             let decoder = JSONDecoder()
             decoder.keyDecodingStrategy = .useDefaultKeys
-            let response = try decoder.decode(PostPrivateRoomResponse.self, from: data)
-            return response.result
+            let decodedResponse = try decoder.decode(PostPrivateRoomResponse.self, from: data)
+            return decodedResponse.result
         } catch let urlError {
             throw RoomsAPIError.networkError(urlError.localizedDescription)
         }
@@ -555,8 +553,8 @@ public struct RoomsAPI {
             
             let decoder = JSONDecoder()
             decoder.keyDecodingStrategy = .useDefaultKeys
-            let response = try decoder.decode(AddRoomMemberResponse.self, from: data)
-            return response.results
+            let decodedResponse = try decoder.decode(AddRoomMemberResponse.self, from: data)
+            return decodedResponse.results
         } catch let urlError {
             throw RoomsAPIError.networkError(urlError.localizedDescription)
         }

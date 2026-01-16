@@ -666,7 +666,7 @@ struct MessageBubbleView: View {
                 // Avatar on left (for others' messages)
             if !isUser {
                     if showAvatar && !isConsecutive {
-                        AvatarView(user: message.user, size: 32)
+                        SizedAvatarView(user: message.user, size: 32)
                     } else {
                         // Spacer to align consecutive messages
                         Color.clear
@@ -745,7 +745,7 @@ struct MessageBubbleView: View {
                 
                 if isUser {
                     if showAvatar && !isConsecutive {
-                        AvatarView(user: message.user, size: 32)
+                        SizedAvatarView(user: message.user, size: 32)
                     } else {
                         // Spacer to align consecutive messages
                         Color.clear
@@ -762,7 +762,7 @@ struct MessageBubbleView: View {
 }
 
 // MARK: - Avatar View with Photo or Initials
-struct AvatarView: View {
+struct SizedAvatarView: View {
     let user: User
     let size: CGFloat
     

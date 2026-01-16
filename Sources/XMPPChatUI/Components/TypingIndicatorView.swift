@@ -6,8 +6,9 @@
 //
 
 import SwiftUI
+import XMPPChatCore
 
-public struct TypingIndicatorView: View {
+public struct ConfigurableTypingIndicatorView: View {
     let usersTyping: [String]
     let text: String
     let isVisible: Bool

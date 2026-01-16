@@ -130,11 +130,8 @@ extension XMPPOperations {
                 return false
             }
             
-            // Register handler
-            if let handleStanzas = client?.handleStanzas {
-                // Note: This requires access to stanza handlers
-                // For now, we'll use a timeout-based approach
-            }
+            // Note: We use a timeout-based approach for waiting for presence response
+            // The handler registration would require access to private handleStanzas
             
             stream.send(presenceStanza)
             
