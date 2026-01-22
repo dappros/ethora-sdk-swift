@@ -129,16 +129,11 @@ public struct ChatRoomView: View {
                                     previousMessage: previousMessage
                                 )
                                 
-                                // Проверяем, разделено ли следующее сообщение датой от текущего
                                 let nextMessageHasDateSeparator = nextMessage != nil ? shouldShowDateSeparator(
                                     currentMessage: nextMessage!,
                                     previousMessage: message
                                 ) : false
                                 
-                                // Показываем аватар на последнем сообщении в группе:
-                                // - если следующее сообщение от другого пользователя, ИЛИ
-                                // - если следующее сообщение разделено датой, ИЛИ
-                                // - если следующего сообщения нет (последнее сообщение)
                                 let showAvatar = nextMessage == nil || 
                                                  nextMessage?.user.id != message.user.id || 
                                                  nextMessageHasDateSeparator
@@ -833,14 +828,12 @@ struct MessageBubbleView: View {
         @ViewBuilder
         func buildAvatarView() -> some View {
             if !isUser {
-                // Показываем аватар на последнем сообщении в группе (если showAvatar == true)
                 if showAvatar {
                     SizedAvatarView(user: message.user, size: 32)
                 } else {
                     Color.clear.frame(width: 32, height: 32)
                 }
             } else {
-                // Для сообщений пользователя не показываем аватар слева
                 Color.clear.frame(width: 0, height: 0)
             }
         }
@@ -1018,7 +1011,6 @@ struct MessageBubbleView: View {
                     }
                 }
                 
-                // Right avatar - не показываем для сообщений пользователя
                 if !isUser {
                     Spacer()
                 }

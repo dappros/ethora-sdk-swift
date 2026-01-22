@@ -94,12 +94,13 @@ struct DefaultChatInputView: View {
     @FocusState private var isFocused: Bool
     
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 16) {
             if isEditing {
                 Button("Cancel") {
                     onCancelEdit?()
                 }
                 .foregroundColor(.secondary)
+                .padding(.trailing, 8)
             }
             
             if !disableMedia {
@@ -107,33 +108,56 @@ struct DefaultChatInputView: View {
                     showMediaPicker = true
                 }) {
                     Image(systemName: "paperclip")
-                        .font(.title3)
-                        .foregroundColor(.blue)
+                        .font(.system(size: 20, weight: .medium))
+                        .foregroundColor(.black)
+                        .frame(width: 40, height: 40)
+                        .background(Color.white)
+                        .clipShape(Circle())
+                        .overlay(
+                            Circle()
+                                .stroke(Color.gray.opacity(0.3), lineWidth: 0.5)
+                        )
                 }
             }
             
-            Group {
-                if #available(iOS 16.0, macOS 13.0, *) {
-                    TextField(placeholderText, text: $messageText, axis: .vertical)
-                        .textFieldStyle(.roundedBorder)
-                        .lineLimit(1...5)
-                } else {
-                    TextField(placeholderText, text: $messageText)
-                        .textFieldStyle(.roundedBorder)
-                        .lineLimit(5)
+            ZStack(alignment: .leading) {
+                if messageText.isEmpty {
+                    Text(placeholderText)
+                        .foregroundColor(.gray.opacity(0.6))
+                        .padding(.horizontal, 16)
+                }
+                
+                Group {
+                    if #available(iOS 16.0, macOS 13.0, *) {
+                        TextField("", text: $messageText, axis: .vertical)
+                            .lineLimit(1...5)
+                    } else {
+                        TextField("", text: $messageText)
+                            .lineLimit(5)
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+                .foregroundColor(.black)
+            }
+            .background(Color.white)
+            .cornerRadius(20)
+            .overlay(
+                RoundedRectangle(cornerRadius: 20)
+                    .stroke(Color.gray.opacity(0.3), lineWidth: 0.5)
+            )
+            .accentColor(.blue)
+            .focused($isFocused)
+            .onSubmit {
+                if !messageText.isEmpty {
+                    sendMessage()
                 }
             }
-            .focused($isFocused)
-                .onSubmit {
-                    if !messageText.isEmpty {
-                        sendMessage()
-                    }
+            .onChange(of: messageText) { newValue in
+                if let filter = messageTextFilter, filter.enabled {
+                    messageText = filter.filterFunction(newValue)
                 }
-                .onChange(of: messageText) { newValue in
-                    if let filter = messageTextFilter, filter.enabled {
-                        messageText = filter.filterFunction(newValue)
-                    }
-                }
+            }
             
             if let secondaryButton = secondarySendButton, secondaryButton.enabled {
                 Button(action: {
@@ -150,20 +174,27 @@ struct DefaultChatInputView: View {
                 Button(action: {
                     sendMessage()
                 }) {
-                    Image(systemName: "arrow.up.circle.fill")
-                        .font(.title2)
-                        .foregroundColor(messageText.isEmpty ? .gray : .blue)
+                    Image(systemName: "paperplane.fill")
+                        .font(.system(size: 18, weight: .medium))
+                        .foregroundColor(.white)
+                        .frame(width: 40, height: 40)
+                        .background(messageText.isEmpty ? Color.gray : Color.blue)
+                        .clipShape(Circle())
+                        .overlay(
+                            Circle()
+                                .stroke(Color.gray.opacity(0.3), lineWidth: 0.5)
+                        )
                 }
                 .disabled(messageText.isEmpty)
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-                            #if os(iOS)
-                            .background(Color(uiColor: .systemBackground))
-                            #else
-                            .background(Color(NSColor.controlBackgroundColor))
-                            #endif
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        #if os(iOS)
+        .background(Color(uiColor: .systemBackground))
+        #else
+        .background(Color(NSColor.controlBackgroundColor))
+        #endif
         .sheet(isPresented: $showMediaPicker) {
             MediaPickerView(onMediaSelected: { data, type in
                 onSendMedia?(data, type)
