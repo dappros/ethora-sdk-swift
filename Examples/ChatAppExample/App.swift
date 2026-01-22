@@ -33,6 +33,13 @@ class AppState: ObservableObject {
     }
     
     func initializeXMPPWithCachedUser() async {
+        // Disconnect existing client if any
+        if let existingClient = xmppClient {
+            print("⚠️ Disconnecting existing XMPP client before creating new one")
+            existingClient.disconnect()
+            xmppClient = nil
+        }
+        
         guard let user = UserStore.shared.currentUser else {
             print("❌ No cached user available")
             return
@@ -58,10 +65,20 @@ class AppState: ObservableObject {
         self.xmppClient = client
         self.isAuthenticated = true
         
+        // Register with ClientRegistry
+        ClientRegistry.shared.setGlobalXMPPClient(client)
+        
         print("✅ XMPP Client initialized with cached user: \(user.email ?? "unknown")")
     }
     
     func initializeXMPPWithLoggedInUser() async {
+        // Disconnect existing client if any
+        if let existingClient = xmppClient {
+            print("⚠️ Disconnecting existing XMPP client before creating new one")
+            existingClient.disconnect()
+            xmppClient = nil
+        }
+        
         guard let user = UserStore.shared.currentUser else {
             print("❌ No user in UserStore after login")
             return
@@ -86,6 +103,9 @@ class AppState: ObservableObject {
         client.delegate = self
         self.xmppClient = client
         self.isAuthenticated = true
+        
+        // Register with ClientRegistry
+        ClientRegistry.shared.setGlobalXMPPClient(client)
         
         print("✅ XMPP Client initialized with logged in user: \(user.email ?? "unknown")")
     }

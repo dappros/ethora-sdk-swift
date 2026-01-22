@@ -69,12 +69,36 @@ public class XMPPStream_WebSocket {
         socket?.disconnect()
         socket = nil
         isConnected = false
+        authState = .notStarted
+    }
+    
+    /// Check if the stream is currently connected and ready to send
+    public func checkConnected() -> Bool {
+        return isConnected && socket != nil
     }
     
     public func send(_ stanza: XMPPStanza) {
         let xml = stanza.toXML()
         
         guard let socket = socket else {
+            print("❌ XMPPStream.send: Cannot send stanza - socket is nil")
+            let error = NSError(
+                domain: "XMPPStream",
+                code: -1,
+                userInfo: [NSLocalizedDescriptionKey: "Cannot send: socket is nil"]
+            )
+            delegate?.xmppStream(self, didReceiveError: error)
+            return
+        }
+        
+        guard isConnected else {
+            print("❌ XMPPStream.send: Cannot send stanza - not connected")
+            let error = NSError(
+                domain: "XMPPStream",
+                code: -2,
+                userInfo: [NSLocalizedDescriptionKey: "Cannot send: not connected"]
+            )
+            delegate?.xmppStream(self, didReceiveError: error)
             return
         }
         
@@ -84,6 +108,12 @@ public class XMPPStream_WebSocket {
     
     public func send(_ xml: String) {
         guard let socket = socket else {
+            print("❌ XMPPStream.send: Cannot send XML - socket is nil")
+            return
+        }
+        
+        guard isConnected else {
+            print("❌ XMPPStream.send: Cannot send XML - not connected")
             return
         }
         
@@ -385,12 +415,21 @@ public class XMPPStream_WebSocket {
                 print("   Do NOT reconnect - the other connection is handling it.")
                 print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
                 
+                // Create error with replaced flag
+                let replacedError = NSError(
+                    domain: "XMPPStream",
+                    code: 409,
+                    userInfo: [
+                        NSLocalizedDescriptionKey: "Connection replaced by new connection",
+                        "replaced": true
+                    ]
+                )
+                
                 // Notify delegate that connection was replaced
-                if let delegate = delegate as? XMPPClient {
-                    // Set flag to prevent reconnection
-                    // We need to access XMPPClient's connectionReplaced flag
-                    // This is a bit of a hack, but we need to prevent reconnection
-                }
+                delegate?.xmppStreamDidDisconnect(self, error: replacedError)
+                
+                // Close the connection immediately
+                socket?.disconnect()
                 return
             }
         }

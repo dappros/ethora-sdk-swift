@@ -59,6 +59,8 @@ public class HandleStanzas {
             stanzaHandlers.onPresenceInRoom(stanza)
             
         case "iq":
+            // Handle IQ errors first (including get-history errors)
+            stanzaHandlers.onIQError(stanza)
             // onGetChatRooms(stanza, xmppWs);
             stanzaHandlers.onGetChatRooms(stanza, client: client)
             // onRealtimeMessage(stanza);

@@ -97,6 +97,17 @@ public class XMPPClient {
         return status == .online
     }
     
+    /// Check if client is fully connected and ready to send messages
+    /// This includes being online AND having sent presence to all rooms
+    public func isFullyConnected() -> Bool {
+        return status == .online && presencesReady
+    }
+    
+    /// Check if client is currently in the process of connecting
+    public func checkConnecting() -> Bool {
+        return status == .connecting
+    }
+    
     public func getConnectionSteps() -> [ConnectionStep] {
         return connectionSteps
     }
@@ -134,6 +145,14 @@ public class XMPPClient {
             NSLog("⚠️ Connection was replaced by new connection, not reconnecting")
             print("⚠️ Connection was replaced by new connection, not reconnecting")
             connectionReplaced = false // Reset flag
+            isConnecting = false // Ensure flag is reset
+            return
+        }
+        
+        // Check if already connected
+        if status == .online {
+            NSLog("⚠️ Already connected, skipping initializeClient")
+            print("⚠️ Already connected, skipping initializeClient")
             return
         }
         
@@ -143,11 +162,12 @@ public class XMPPClient {
             logStep("initializeClient:start")
             
             // Match TypeScript: if (this.client) { await this.disconnect(); }
-            if xmppStream != nil {
+            if let existingStream = xmppStream {
                 logStep("initializeClient:disconnect-previous")
-                Task {
-                    await disconnect()
-                }
+                // Disconnect existing stream synchronously before creating new one
+                existingStream.disconnect()
+                xmppStream = nil
+                // Note: We don't wait for disconnect to complete - the new connection will handle it
             }
             
             // Match TypeScript: const url = this.devServer || `wss://xmpp.ethoradev.com:5443/ws`;
@@ -257,6 +277,14 @@ public class XMPPClient {
     
     // MARK: - Reconnection
     private func scheduleReconnect(reason: String) {
+        // Don't reconnect if connection was replaced
+        if connectionReplaced {
+            NSLog("⚠️ Not scheduling reconnect - connection was replaced")
+            print("⚠️ Not scheduling reconnect - connection was replaced")
+            connectionReplaced = false // Reset flag
+            return
+        }
+        
         guard status != .online else { return }
         guard reconnectTimer == nil else { return }
         guard isBrowserOnline() else {
@@ -269,10 +297,14 @@ public class XMPPClient {
         }
         
         // Notify ConnectionManager that we're reconnecting
+        print("🔄 XMPPClient: Reconnecting - reason: \(reason)")
         NotificationCenter.default.post(
             name: NSNotification.Name("XMPPConnectionStatusChanged"),
             object: nil,
-            userInfo: ["status": "reconnecting"]
+            userInfo: [
+                "status": "reconnecting",
+                "reason": "Reconnecting... (\(reason))"
+            ]
         )
         
         guard offlineReconnectAttempts < maxOfflineReconnectAttempts else {
@@ -505,12 +537,16 @@ extension XMPPClient: XMPPStreamDelegate {
         print("Client is connecting...")
         status = .connecting
         logStep("event:connecting")
-        // Notify ConnectionManager
-        NotificationCenter.default.post(
-            name: NSNotification.Name("XMPPConnectionStatusChanged"),
-            object: nil,
-            userInfo: ["status": "connecting"]
-        )
+            // Notify ConnectionManager
+            print("🔄 XMPPClient: Connecting to server...")
+            NotificationCenter.default.post(
+                name: NSNotification.Name("XMPPConnectionStatusChanged"),
+                object: nil,
+                userInfo: [
+                    "status": "connecting",
+                    "reason": "Connecting to server..."
+                ]
+            )
     }
     
     // Match TypeScript: this.client.on('online', async (jid) => { ... })
@@ -542,6 +578,7 @@ extension XMPPClient: XMPPStreamDelegate {
             isConnecting = false // Connection successful, reset flag
             
             // Notify ConnectionManager
+            print("✅ XMPPClient: Connected successfully")
             NotificationCenter.default.post(
                 name: NSNotification.Name("XMPPConnectionStatusChanged"),
                 object: nil,
@@ -661,11 +698,75 @@ extension XMPPClient: XMPPStreamDelegate {
         status = .offline
         presencesReady = false
         logStep("event:disconnect")
-        // Notify ConnectionManager
+        
+        // Prepare disconnect reason for user-friendly message
+        var disconnectReason: String? = nil
+        var errorCode: Int? = nil
+        var errorDescription: String? = nil
+        
+        if let error = error {
+            if let nsError = error as NSError? {
+                errorCode = nsError.code
+                errorDescription = nsError.localizedDescription
+                
+                // Format user-friendly reason
+                if wasReplaced {
+                    disconnectReason = "Another device is connected"
+                } else if let code = nsError.userInfo["disconnectCode"] as? UInt16 {
+                    switch code {
+                    case 1000:
+                        disconnectReason = "Connection closed normally"
+                    case 1001:
+                        disconnectReason = "Server is going away"
+                    case 1006:
+                        disconnectReason = "Connection lost. Check your internet connection"
+                    case 1008:
+                        disconnectReason = "Policy violation"
+                    case 1011:
+                        disconnectReason = "Server error. Please try again later"
+                    default:
+                        disconnectReason = "Connection error (code: \(code))"
+                    }
+                } else if nsError.code == 409 {
+                    disconnectReason = "Another device is connected"
+                } else if nsError.domain == "XMPPStream" {
+                    disconnectReason = "Server connection lost"
+                } else {
+                    disconnectReason = nsError.localizedDescription
+                }
+            }
+        } else {
+            // No error provided - generic disconnect
+            if wasReplaced {
+                disconnectReason = "Another device is connected"
+            } else {
+                disconnectReason = "Connection lost"
+            }
+        }
+        
+        // Log disconnect details for debugging
+        print("🔌 XMPPClient: Disconnect notification")
+        print("   Reason: \(disconnectReason ?? "Unknown")")
+        print("   Error Code: \(errorCode?.description ?? "N/A")")
+        print("   Error Description: \(errorDescription ?? "N/A")")
+        print("   Was Replaced: \(wasReplaced)")
+        
+        // Notify ConnectionManager with detailed information
+        var userInfo: [String: Any] = ["status": "disconnected"]
+        if let reason = disconnectReason {
+            userInfo["reason"] = reason
+        }
+        if let code = errorCode {
+            userInfo["errorCode"] = code
+        }
+        if let description = errorDescription {
+            userInfo["errorDescription"] = description
+        }
+        
         NotificationCenter.default.post(
             name: NSNotification.Name("XMPPConnectionStatusChanged"),
             object: nil,
-            userInfo: ["status": "disconnected"]
+            userInfo: userInfo
         )
         // Match TypeScript: if (this.pingInterval) clearInterval(this.pingInterval);
         pingInterval?.invalidate()
@@ -743,14 +844,35 @@ extension XMPPClient: XMPPStreamDelegate {
     public func xmppStream(_ stream: XMPPStream, didReceiveError error: Error) {
         // Match TypeScript: console.error('XMPP client error:', error);
         NSLog("XMPP client error: %@", error.localizedDescription)
-        print("XMPP client error: \(error.localizedDescription)")
+        print("❌ XMPP client error: \(error.localizedDescription)")
+        
         status = .error
         logStep("event:error")
+        
+        // Prepare error information for user-friendly message
+        var userInfo: [String: Any] = ["status": "disconnected"]
+        var reason: String = "Server error occurred"
+        
+        if let nsError = error as NSError? {
+            if nsError.domain == "XMPPStream" {
+                reason = "Connection error. Please try again."
+            } else {
+                reason = nsError.localizedDescription
+            }
+            userInfo["errorCode"] = nsError.code
+            userInfo["errorDescription"] = nsError.localizedDescription
+        }
+        
+        userInfo["reason"] = reason
+        
+        print("🔌 XMPPClient: Error disconnect notification")
+        print("   Reason: \(reason)")
+        
         // Notify ConnectionManager
         NotificationCenter.default.post(
             name: NSNotification.Name("XMPPConnectionStatusChanged"),
             object: nil,
-            userInfo: ["status": "disconnected"]
+            userInfo: userInfo
         )
         scheduleReconnect(reason: "event:error")
     }
@@ -838,7 +960,20 @@ extension XMPPClient: XMPPStreamDelegate {
             NSLog("📨 XMPPClient: Real-time message in room %@", roomJID)
             print("📨 XMPPClient: Real-time message in room \(roomJID)")
             guard let self = self else { return }
+            
+            // Notify delegate (for backward compatibility)
             self.delegate?.xmppClient(self, didReceiveMessage: message)
+            
+            // Also post notification so multiple ChatRoomViewModels can receive it
+            // This prevents conflicts when multiple chat rooms are open
+            NotificationCenter.default.post(
+                name: NSNotification.Name("XMPPMessageReceived"),
+                object: self,
+                userInfo: [
+                    "message": message,
+                    "roomJID": roomJID
+                ]
+            )
         }
         
         // Set up history message handler
@@ -867,6 +1002,36 @@ extension XMPPClient: XMPPStreamDelegate {
             print("✅ XMPPClient: Delegate notified")
         }
         
+        // Set up reaction handler
+        handlers.onReactionReceived = { [weak self] roomJID, messageId, reactions, from, data in
+            print("👍 XMPPClient: Reaction received in room \(roomJID) for message \(messageId)")
+            guard let self = self else { return }
+            
+            // Update RoomStore (must be on MainActor)
+            Task { @MainActor in
+                RoomStore.shared.setReactions(
+                    roomJID: roomJID,
+                    messageId: messageId,
+                    reactions: reactions,
+                    from: from,
+                    data: data
+                )
+            }
+            
+            // Post notification so ChatRoomViewModel can update its local messages array
+            NotificationCenter.default.post(
+                name: NSNotification.Name("XMPPReactionReceived"),
+                object: self,
+                userInfo: [
+                    "roomJID": roomJID,
+                    "messageId": messageId,
+                    "reactions": reactions,
+                    "from": from,
+                    "data": data
+                ]
+            )
+        }
+        
         // Set up composing (typing) indicator handler
         handlers.onComposingChanged = { [weak self] roomJID, composingList, isComposing in
             print("⌨️ XMPPClient: Composing changed in room \(roomJID) - isComposing: \(isComposing), users: \(composingList)")
@@ -879,6 +1044,61 @@ extension XMPPClient: XMPPStreamDelegate {
                     "roomJID": roomJID,
                     "composingList": composingList,
                     "isComposing": isComposing
+                ]
+            )
+        }
+        
+        // Set up delete message handler
+        handlers.onMessageDeleted = { [weak self] roomJID, messageId in
+            print("🗑️ XMPPClient: Message deleted in room \(roomJID) for message \(messageId)")
+            guard let self = self else { return }
+            
+            // Update RoomStore (must be on MainActor)
+            Task { @MainActor in
+                var updates = PartialMessageUpdate()
+                updates.isDeleted = true
+                RoomStore.shared.updateMessage(
+                    roomJID: roomJID,
+                    messageId: messageId,
+                    updates: updates
+                )
+            }
+            
+            // Post notification so ChatRoomViewModel can update its local messages array
+            NotificationCenter.default.post(
+                name: NSNotification.Name("XMPPMessageDeleted"),
+                object: self,
+                userInfo: [
+                    "roomJID": roomJID,
+                    "messageId": messageId
+                ]
+            )
+        }
+        
+        // Set up edit message handler
+        handlers.onMessageEdited = { [weak self] roomJID, messageId, newText in
+            print("✏️ XMPPClient: Message edited in room \(roomJID) for message \(messageId)")
+            guard let self = self else { return }
+            
+            // Update RoomStore (must be on MainActor)
+            Task { @MainActor in
+                var updates = PartialMessageUpdate()
+                updates.body = newText
+                RoomStore.shared.updateMessage(
+                    roomJID: roomJID,
+                    messageId: messageId,
+                    updates: updates
+                )
+            }
+            
+            // Post notification so ChatRoomViewModel can update its local messages array
+            NotificationCenter.default.post(
+                name: NSNotification.Name("XMPPMessageEdited"),
+                object: self,
+                userInfo: [
+                    "roomJID": roomJID,
+                    "messageId": messageId,
+                    "newText": newText
                 ]
             )
         }

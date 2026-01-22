@@ -43,19 +43,37 @@ public struct UserProfileModal: View {
                 VStack(spacing: 24) {
                     // Profile Image
                     if let imageURL = user.profileImage, let url = URL(string: imageURL) {
-                        AsyncImage(url: url) { image in
-                            image
-                                .resizable()
-                                .aspectRatio(contentMode: .fill)
-                        } placeholder: {
-                            InitialsAvatarView(user: user)
+                        AsyncImage(url: url) { phase in
+                            switch phase {
+                            case .success(let image):
+                                image
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fill)
+                                    .frame(width: 120, height: 120)
+                                    .clipShape(Circle())
+                                    .overlay(
+                                        Circle()
+                                            .stroke(Color.gray.opacity(0.3), lineWidth: 2)
+                                    )
+                            case .failure(let error):
+                                // Only log non-cancellation errors
+                                let _ = {
+                                    if let urlError = error as? URLError, urlError.code != .cancelled {
+                                        // Log actual errors (not cancellations)
+                                        print("⚠️ Error loading profile image (non-cancellation): \(error.localizedDescription)")
+                                    }
+                                }()
+                                // Always return initials view on failure
+                                InitialsAvatarView(user: user)
+                                    .frame(width: 120, height: 120)
+                            case .empty:
+                                InitialsAvatarView(user: user)
+                                    .frame(width: 120, height: 120)
+                            @unknown default:
+                                InitialsAvatarView(user: user)
+                                    .frame(width: 120, height: 120)
+                            }
                         }
-                        .frame(width: 120, height: 120)
-                        .clipShape(Circle())
-                        .overlay(
-                            Circle()
-                                .stroke(Color.gray.opacity(0.3), lineWidth: 2)
-                        )
                     } else {
                         InitialsAvatarView(user: user)
                             .frame(width: 120, height: 120)

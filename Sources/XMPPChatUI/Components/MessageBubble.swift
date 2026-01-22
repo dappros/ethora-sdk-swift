@@ -214,15 +214,30 @@ struct AvatarView: View {
     var body: some View {
         Group {
             if let profileImage = user.profileImage, let url = URL(string: profileImage) {
-                AsyncImage(url: url) { image in
-                    image
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
-                } placeholder: {
-                    InitialsAvatarView(user: user)
+                AsyncImage(url: url) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                            .frame(width: 32, height: 32)
+                            .clipShape(Circle())
+                    case .failure(let error):
+                        // Only log non-cancellation errors
+                        let _ = {
+                            if let urlError = error as? URLError, urlError.code != .cancelled {
+                                // Log actual errors (not cancellations)
+                                print("⚠️ Error loading avatar (non-cancellation): \(error.localizedDescription)")
+                            }
+                        }()
+                        // Always return initials view on failure
+                        InitialsAvatarView(user: user)
+                    case .empty:
+                        InitialsAvatarView(user: user)
+                    @unknown default:
+                        InitialsAvatarView(user: user)
+                    }
                 }
-                .frame(width: 32, height: 32)
-                .clipShape(Circle())
             } else {
                 InitialsAvatarView(user: user)
             }

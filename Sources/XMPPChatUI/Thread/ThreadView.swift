@@ -94,6 +94,9 @@ public struct ThreadView: View {
                     .padding(.vertical, 8)
                 }
                 .onAppear {
+                    // Load replies when view appears
+                    viewModel.loadReplies()
+                    
                     if let lastReply = viewModel.replies.last {
                         withAnimation {
                             proxy.scrollTo(lastReply.id, anchor: .bottom)
@@ -240,11 +243,32 @@ class ThreadViewModel: ObservableObject {
     }
     
     func loadReplies() {
-        // Load replies from store or API
-        // For now, placeholder - should integrate with RoomStore
-        Task {
-            // TODO: Implement actual reply loading
-            // This should filter messages where mainMessage?.id == activeMessage.id
+        // Load replies from RoomStore
+        Task { @MainActor in
+            // Get all messages for this room from RoomStore
+            guard let room = RoomStore.shared.rooms[roomJID] else {
+                print("⚠️ ThreadViewModel: Room not found: \(roomJID)")
+                return
+            }
+            
+            let allMessages = room.messages
+            
+            // Filter messages where mainMessage == activeMessage.id
+            let filteredReplies = allMessages.filter { message in
+                message.mainMessage == activeMessage.id
+            }
+            
+            // Sort by timestamp (oldest first)
+            let sortedReplies = filteredReplies.sorted { msg1, msg2 in
+                let ts1 = msg1.timestamp ?? 0
+                let ts2 = msg2.timestamp ?? 0
+                return ts1 < ts2
+            }
+            
+            self.replies = sortedReplies
+            self.replyCount = sortedReplies.count
+            
+            print("📝 ThreadViewModel: Loaded \(sortedReplies.count) replies for message \(activeMessage.id)")
         }
     }
 }

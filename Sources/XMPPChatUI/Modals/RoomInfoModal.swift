@@ -40,16 +40,39 @@ public struct RoomInfoModal: View {
                 VStack(alignment: .leading, spacing: 24) {
                     // Room Image
                     if let imageURL = room.roomBg, let url = URL(string: imageURL) {
-                        AsyncImage(url: url) { image in
-                            image
-                                .resizable()
-                                .aspectRatio(contentMode: .fill)
-                        } placeholder: {
-                            Rectangle()
-                                .fill(Color.blue.opacity(0.3))
+                        AsyncImage(url: url) { phase in
+                            switch phase {
+                            case .success(let image):
+                                image
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fill)
+                                    .frame(height: 200)
+                                    .cornerRadius(12)
+                            case .failure(let error):
+                                // Only log non-cancellation errors
+                                let _ = {
+                                    if let urlError = error as? URLError, urlError.code != .cancelled {
+                                        // Log actual errors (not cancellations)
+                                        print("⚠️ Error loading room image (non-cancellation): \(error.localizedDescription)")
+                                    }
+                                }()
+                                // Always return placeholder on failure
+                                Rectangle()
+                                    .fill(Color.blue.opacity(0.3))
+                                    .frame(height: 200)
+                                    .cornerRadius(12)
+                            case .empty:
+                                Rectangle()
+                                    .fill(Color.blue.opacity(0.3))
+                                    .frame(height: 200)
+                                    .cornerRadius(12)
+                            @unknown default:
+                                Rectangle()
+                                    .fill(Color.blue.opacity(0.3))
+                                    .frame(height: 200)
+                                    .cornerRadius(12)
+                            }
                         }
-                        .frame(height: 200)
-                        .cornerRadius(12)
                     }
                     
                     // Room Info
