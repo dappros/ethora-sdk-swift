@@ -258,10 +258,28 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
         
         //print("⌨️ ChatRoomViewModel: Composing changed - isTyping: \(isComposing), users: \(composingList)")
         
+        // Filter out current user from composing list (don't show typing indicator for yourself)
+        let filteredComposingList = composingList.filter { userId in
+            // Normalize user IDs for comparison
+            let normalizedUserId = userId.lowercased().trimmingCharacters(in: .whitespaces)
+            let normalizedCurrentId = currentUserId.lowercased().trimmingCharacters(in: .whitespaces)
+            
+            // Also check XMPP username if available
+            if let currentXmpp = currentUserXmppUsername {
+                let normalizedCurrentXmpp = currentXmpp.lowercased().trimmingCharacters(in: .whitespaces)
+                let normalizedUserXmpp = userId.lowercased().trimmingCharacters(in: .whitespaces)
+                if normalizedUserXmpp == normalizedCurrentXmpp {
+                    return false
+                }
+            }
+            
+            return normalizedUserId != normalizedCurrentId
+        }
+        
         // Update UI on main thread
         Task { @MainActor in
-            self.isTyping = isComposing
-            self.composingUsers = composingList
+            self.isTyping = !filteredComposingList.isEmpty
+            self.composingUsers = filteredComposingList
         }
     }
     
