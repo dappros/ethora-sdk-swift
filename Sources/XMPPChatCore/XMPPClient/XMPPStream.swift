@@ -81,7 +81,7 @@ public class XMPPStream_WebSocket {
         let xml = stanza.toXML()
         
         guard let socket = socket else {
-            print("❌ XMPPStream.send: Cannot send stanza - socket is nil")
+            //print("❌ XMPPStream.send: Cannot send stanza - socket is nil")
             let error = NSError(
                 domain: "XMPPStream",
                 code: -1,
@@ -92,7 +92,7 @@ public class XMPPStream_WebSocket {
         }
         
         guard isConnected else {
-            print("❌ XMPPStream.send: Cannot send stanza - not connected")
+            //print("❌ XMPPStream.send: Cannot send stanza - not connected")
             let error = NSError(
                 domain: "XMPPStream",
                 code: -2,
@@ -108,12 +108,12 @@ public class XMPPStream_WebSocket {
     
     public func send(_ xml: String) {
         guard let socket = socket else {
-            print("❌ XMPPStream.send: Cannot send XML - socket is nil")
+            //print("❌ XMPPStream.send: Cannot send XML - socket is nil")
             return
         }
         
         guard isConnected else {
-            print("❌ XMPPStream.send: Cannot send XML - not connected")
+            //print("❌ XMPPStream.send: Cannot send XML - not connected")
             return
         }
         
@@ -177,8 +177,8 @@ public class XMPPStream_WebSocket {
     // However, @xmpp/client might use stream:stream format - let's try both approaches
     private func sendInitialStreamHeader() {
         guard let host = url.host, let username = username else {
-            NSLog("❌ Cannot send stream header - missing host or username")
-            print("❌ Cannot send stream header - missing host or username")
+            //NSlog("❌ Cannot send stream header - missing host or username")
+            //print("❌ Cannot send stream header - missing host or username")
             return
         }
         
@@ -186,22 +186,22 @@ public class XMPPStream_WebSocket {
         // Format: <open xmlns='urn:ietf:params:xml:ns:xmpp-framing' to='host' version='1.0'/>
         let openHeader = "<open xmlns='urn:ietf:params:xml:ns:xmpp-framing' to='\(host)' version='1.0'/>"
         
-        NSLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        NSLog("📤 STEP 1: SENDING XMPP OPEN (RFC 7395)")
-        NSLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        NSLog("   Host: %@", host)
-        NSLog("   Username: %@", username)
-        NSLog("   Open Header: %@", openHeader)
-        NSLog("   Header Length: %lu bytes", openHeader.count)
-        NSLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        print("📤 STEP 1: SENDING XMPP OPEN (RFC 7395)")
-        print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        print("   Host: \(host)")
-        print("   Username: \(username)")
-        print("   Open Header: \(openHeader)")
-        print("   Header Length: \(openHeader.count) bytes")
-        print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        //NSlog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        //NSlog("📤 STEP 1: SENDING XMPP OPEN (RFC 7395)")
+        //NSlog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        //NSlog("   Host: %@", host)
+        //NSlog("   Username: %@", username)
+        //NSlog("   Open Header: %@", openHeader)
+        //NSlog("   Header Length: %lu bytes", openHeader.count)
+        //NSlog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        //print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        //print("📤 STEP 1: SENDING XMPP OPEN (RFC 7395)")
+        //print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        //print("   Host: \(host)")
+        //print("   Username: \(username)")
+        //print("   Open Header: \(openHeader)")
+        //print("   Header Length: \(openHeader.count) bytes")
+        //print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
         
         // Only set to streamHeaderSent if we're not already in post-SASL flow
         if authState != .saslSuccess {
@@ -210,29 +210,29 @@ public class XMPPStream_WebSocket {
         
         // Write to socket
         socket?.write(string: openHeader) { [weak self] in
-            NSLog("✅ Open header written to WebSocket")
-            print("✅ Open header written to WebSocket")
+            //NSlog("✅ Open header written to WebSocket")
+            //print("✅ Open header written to WebSocket")
         }
     }
     
     // Handle server responses and implement XMPP authentication flow
     private func handleServerResponse(_ xmlString: String) {
-        // NSLog("🔍 Processing server response - Auth State: %@", String(describing: authState))
-        // print("🔍 Processing server response - Auth State: \(authState)")
+        // //NSlog("🔍 Processing server response - Auth State: %@", String(describing: authState))
+        // //print("🔍 Processing server response - Auth State: \(authState)")
         
         // RFC 7395: Server responds with <open> or <stream:stream>
         // Check for server's <open> response
         if xmlString.contains("<open") && xmlString.contains("urn:ietf:params:xml:ns:xmpp-framing") {
-            NSLog("📥 Received server <open> response")
-            print("📥 Received server <open> response")
+            //NSlog("📥 Received server <open> response")
+            //print("📥 Received server <open> response")
             
             // Extract stream ID if present
             if let idMatch = xmlString.range(of: "id=['\"]([^'\"]+)['\"]", options: .regularExpression) {
                 let idString = String(xmlString[idMatch])
                 if let idValue = idString.range(of: "['\"]([^'\"]+)['\"]", options: .regularExpression) {
                     streamId = String(idString[idValue])
-                    NSLog("   Stream ID: %@", streamId ?? "none")
-                    print("   Stream ID: \(streamId ?? "none")")
+                    //NSlog("   Stream ID: %@", streamId ?? "none")
+                    //print("   Stream ID: \(streamId ?? "none")")
                 }
             }
             return
@@ -240,16 +240,16 @@ public class XMPPStream_WebSocket {
         
         // Check for server's stream:stream response (alternative format)
         if xmlString.contains("<stream:stream") {
-            NSLog("📥 Received server stream:stream header")
-            print("📥 Received server stream:stream header")
+            //NSlog("📥 Received server stream:stream header")
+            //print("📥 Received server stream:stream header")
             
             // Extract stream ID if present
             if let idMatch = xmlString.range(of: "id=['\"]([^'\"]+)['\"]", options: .regularExpression) {
                 let idString = String(xmlString[idMatch])
                 if let idValue = idString.range(of: "['\"]([^'\"]+)['\"]", options: .regularExpression) {
                     streamId = String(idString[idValue])
-                    NSLog("   Stream ID: %@", streamId ?? "none")
-                    print("   Stream ID: \(streamId ?? "none")")
+                    //NSlog("   Stream ID: %@", streamId ?? "none")
+                    //print("   Stream ID: \(streamId ?? "none")")
                 }
             }
             return
@@ -258,25 +258,25 @@ public class XMPPStream_WebSocket {
         // Check for stream:features (can be standalone or inside stream:stream/open)
         // RFC 7395: Features come after <open> response
         if xmlString.contains("<stream:features") || xmlString.contains("<features") || xmlString.contains("xmlns=\"http://etherx.jabber.org/streams\"") || xmlString.contains("xmlns='http://etherx.jabber.org/streams'") {
-            NSLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-            NSLog("📥 STEP 2: RECEIVED STREAM FEATURES")
-            NSLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-            NSLog("   Full XML: %@", xmlString)
-            print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-            print("📥 STEP 2: RECEIVED STREAM FEATURES")
-            print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-            print("   Full XML: \(xmlString)")
+            //NSlog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            //NSlog("📥 STEP 2: RECEIVED STREAM FEATURES")
+            //NSlog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            //NSlog("   Full XML: %@", xmlString)
+            //print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            //print("📥 STEP 2: RECEIVED STREAM FEATURES")
+            //print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            //print("   Full XML: \(xmlString)")
             
             if authState == .streamHeaderSent {
                 authState = .streamFeaturesReceived
                 // Always try SASL PLAIN - it's standard
-                NSLog("   Sending SASL PLAIN authentication...")
-                print("   Sending SASL PLAIN authentication...")
+                //NSlog("   Sending SASL PLAIN authentication...")
+                //print("   Sending SASL PLAIN authentication...")
                 sendSASLAuth()
             } else if authState == .saslSuccess {
                 // After SASL success, we receive stream features again - need to bind
-                NSLog("   After SASL success - sending bind...")
-                print("   After SASL success - sending bind...")
+                //NSlog("   After SASL success - sending bind...")
+                //print("   After SASL success - sending bind...")
                 sendResourceBind()
             }
             return
@@ -284,18 +284,18 @@ public class XMPPStream_WebSocket {
         
         // Check for SASL success (can be just <success/> or with xmlns)
         if xmlString.contains("<success") || (xmlString.contains("success") && xmlString.contains("urn:ietf:params:xml:ns:xmpp-sasl")) {
-            NSLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-            NSLog("✅ STEP 3: SASL AUTHENTICATION SUCCESS")
-            NSLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-            print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-            print("✅ STEP 3: SASL AUTHENTICATION SUCCESS")
-            print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            //NSlog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            //NSlog("✅ STEP 3: SASL AUTHENTICATION SUCCESS")
+            //NSlog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            //print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            //print("✅ STEP 3: SASL AUTHENTICATION SUCCESS")
+            //print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
             
             authState = .saslSuccess
             // After SASL success, send new <open> to restart stream (RFC 7395)
             // Reset to streamHeaderSent so we can process the new features correctly
-            NSLog("   Restarting stream after SASL success...")
-            print("   Restarting stream after SASL success...")
+            //NSlog("   Restarting stream after SASL success...")
+            //print("   Restarting stream after SASL success...")
             // Don't reset authState yet - keep it as .saslSuccess so we know we're in post-SASL flow
             sendInitialStreamHeader()
             return
@@ -303,10 +303,10 @@ public class XMPPStream_WebSocket {
         
         // Check for SASL failure
         if xmlString.contains("<failure") || (xmlString.contains("failure") && xmlString.contains("urn:ietf:params:xml:ns:xmpp-sasl")) {
-            NSLog("❌❌❌ SASL AUTHENTICATION FAILED ❌❌❌")
-            NSLog("   Response: %@", xmlString)
-            print("❌❌❌ SASL AUTHENTICATION FAILED ❌❌❌")
-            print("   Response: \(xmlString)")
+            //NSlog("❌❌❌ SASL AUTHENTICATION FAILED ❌❌❌")
+            //NSlog("   Response: %@", xmlString)
+            //print("❌❌❌ SASL AUTHENTICATION FAILED ❌❌❌")
+            //print("   Response: \(xmlString)")
             return
         }
         
@@ -316,14 +316,14 @@ public class XMPPStream_WebSocket {
         let hasBindId = xmlString.contains("bind-") // Our bind IQ has id starting with "bind-"
         
         if hasBindResultType && (hasBind || hasBindId) {
-            NSLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-            NSLog("✅ STEP 4: BIND SUCCESS")
-            NSLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-            NSLog("   Full XML: %@", xmlString)
-            print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-            print("✅ STEP 4: BIND SUCCESS")
-            print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-            print("   Full XML: \(xmlString)")
+            //NSlog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            //NSlog("✅ STEP 4: BIND SUCCESS")
+            //NSlog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            //NSlog("   Full XML: %@", xmlString)
+            //print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            //print("✅ STEP 4: BIND SUCCESS")
+            //print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            //print("   Full XML: \(xmlString)")
             
             // Extract JID from bind result - try multiple patterns
             var extractedJID: String? = nil
@@ -350,15 +350,15 @@ public class XMPPStream_WebSocket {
             
             if let jid = extractedJID {
                 self.jid = jid
-                NSLog("   Bound JID: %@", jid)
-                print("   Bound JID: \(jid)")
+                //NSlog("   Bound JID: %@", jid)
+                //print("   Bound JID: \(jid)")
             } else {
                 // Fallback: construct JID from username and host
                 if let username = username, let host = url.host {
                     let fallbackJID = "\(username)@\(host)/\(resource)"
                     self.jid = fallbackJID
-                    NSLog("   Using constructed JID: %@", fallbackJID)
-                    print("   Using constructed JID: \(fallbackJID)")
+                    //NSlog("   Using constructed JID: %@", fallbackJID)
+                    //print("   Using constructed JID: \(fallbackJID)")
                 }
             }
             
@@ -379,14 +379,14 @@ public class XMPPStream_WebSocket {
         
         // If we're in sessionSent state and get a result with session ID, that's our session result
         if hasSessionResultType && (hasSessionContent || (hasSessionId && authState == .sessionSent)) {
-            NSLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-            NSLog("✅ STEP 5: SESSION ESTABLISHED - XMPP ONLINE!")
-            NSLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-            NSLog("   Full XML: %@", xmlString)
-            print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-            print("✅ STEP 5: SESSION ESTABLISHED - XMPP ONLINE!")
-            print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-            print("   Full XML: \(xmlString)")
+            //NSlog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            //NSlog("✅ STEP 5: SESSION ESTABLISHED - XMPP ONLINE!")
+            //NSlog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            //NSlog("   Full XML: %@", xmlString)
+            //print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            //print("✅ STEP 5: SESSION ESTABLISHED - XMPP ONLINE!")
+            //print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            //print("   Full XML: \(xmlString)")
             
             authState = .authenticated
             // Use bound JID or constructed JID
@@ -402,18 +402,18 @@ public class XMPPStream_WebSocket {
         // Check for stream:error with conflict (connection replaced)
         if xmlString.contains("<stream:error") && xmlString.contains("conflict") {
             if xmlString.contains("Replaced by new connection") {
-                NSLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-                NSLog("⚠️⚠️⚠️ CONNECTION REPLACED BY NEW CONNECTION ⚠️⚠️⚠️")
-                NSLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-                NSLog("   Another connection is active. This connection will close.")
-                NSLog("   Do NOT reconnect - the other connection is handling it.")
-                NSLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-                print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-                print("⚠️⚠️⚠️ CONNECTION REPLACED BY NEW CONNECTION ⚠️⚠️⚠️")
-                print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-                print("   Another connection is active. This connection will close.")
-                print("   Do NOT reconnect - the other connection is handling it.")
-                print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+                //NSlog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+                //NSlog("⚠️⚠️⚠️ CONNECTION REPLACED BY NEW CONNECTION ⚠️⚠️⚠️")
+                //NSlog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+                //NSlog("   Another connection is active. This connection will close.")
+                //NSlog("   Do NOT reconnect - the other connection is handling it.")
+                //NSlog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+                //print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+                //print("⚠️⚠️⚠️ CONNECTION REPLACED BY NEW CONNECTION ⚠️⚠️⚠️")
+                //print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+                //print("   Another connection is active. This connection will close.")
+                //print("   Do NOT reconnect - the other connection is handling it.")
+                //print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
                 
                 // Create error with replaced flag
                 let replacedError = NSError(
@@ -441,41 +441,41 @@ public class XMPPStream_WebSocket {
         }
         
         // Log unhandled response
-        NSLog("⚠️ Unhandled server response in state %@: %@", String(describing: authState), xmlString)
-        print("⚠️ Unhandled server response in state \(authState): \(xmlString)")
+        //NSlog("⚠️ Unhandled server response in state %@: %@", String(describing: authState), xmlString)
+        //print("⚠️ Unhandled server response in state \(authState): \(xmlString)")
     }
     
     // Send SASL authentication
     private func sendSASLAuth() {
         guard let username = username, let password = password else {
-            NSLog("❌ Cannot send SASL auth - missing username or password")
-            print("❌ Cannot send SASL auth - missing username or password")
+            //NSlog("❌ Cannot send SASL auth - missing username or password")
+            //print("❌ Cannot send SASL auth - missing username or password")
             return
         }
         
         // SASL PLAIN format: base64(username\0username\0password)
         let authString = "\(username)\0\(username)\0\(password)"
         guard let authData = authString.data(using: .utf8) else {
-            NSLog("❌ Failed to encode SASL auth string")
-            print("❌ Failed to encode SASL auth string")
+            //NSlog("❌ Failed to encode SASL auth string")
+            //print("❌ Failed to encode SASL auth string")
             return
         }
         let authBase64 = authData.base64EncodedString()
         
         let saslAuth = "<auth xmlns=\"urn:ietf:params:xml:ns:xmpp-sasl\" mechanism=\"PLAIN\">\(authBase64)</auth>"
         
-        NSLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        NSLog("📤 STEP 3: SENDING SASL AUTHENTICATION")
-        NSLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        NSLog("   Mechanism: PLAIN")
-        NSLog("   Username: %@", username)
-        NSLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        print("📤 STEP 3: SENDING SASL AUTHENTICATION")
-        print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        print("   Mechanism: PLAIN")
-        print("   Username: \(username)")
-        print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        //NSlog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        //NSlog("📤 STEP 3: SENDING SASL AUTHENTICATION")
+        //NSlog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        //NSlog("   Mechanism: PLAIN")
+        //NSlog("   Username: %@", username)
+        //NSlog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        //print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        //print("📤 STEP 3: SENDING SASL AUTHENTICATION")
+        //print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        //print("   Mechanism: PLAIN")
+        //print("   Username: \(username)")
+        //print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
         
         authState = .saslAuthSent
         socket?.write(string: saslAuth)
@@ -488,12 +488,12 @@ public class XMPPStream_WebSocket {
         let bindId = "bind-\(UUID().uuidString)"
         let bindIQ = "<iq type=\"set\" id=\"\(bindId)\"><bind xmlns=\"urn:ietf:params:xml:ns:xmpp-bind\"><resource>\(resource)</resource></bind></iq>"
         
-        NSLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        NSLog("📤 STEP 4: SENDING RESOURCE BIND")
-        NSLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        print("📤 STEP 4: SENDING RESOURCE BIND")
-        print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        //NSlog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        //NSlog("📤 STEP 4: SENDING RESOURCE BIND")
+        //NSlog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        //print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        //print("📤 STEP 4: SENDING RESOURCE BIND")
+        //print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
         
         authState = .bindSent
         socket?.write(string: bindIQ)
@@ -504,12 +504,12 @@ public class XMPPStream_WebSocket {
         let sessionId = "session-\(UUID().uuidString)"
         let sessionIQ = "<iq type=\"set\" id=\"\(sessionId)\"><session xmlns=\"urn:ietf:params:xml:ns:xmpp-session\"/></iq>"
         
-        NSLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        NSLog("📤 STEP 5: SENDING SESSION ESTABLISHMENT")
-        NSLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        print("📤 STEP 5: SENDING SESSION ESTABLISHMENT")
-        print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        //NSlog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        //NSlog("📤 STEP 5: SENDING SESSION ESTABLISHMENT")
+        //NSlog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        //print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        //print("📤 STEP 5: SENDING SESSION ESTABLISHMENT")
+        //print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
         
         authState = .sessionSent
         socket?.write(string: sessionIQ)
@@ -572,24 +572,24 @@ extension XMPPStream_WebSocket: WebSocketDelegate {
             
         case .disconnected(let reason, let code):
             // Detailed disconnect logging
-            NSLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-            NSLog("❌❌❌ WEBSOCKET DISCONNECTED ❌❌❌")
-            NSLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-            NSLog("   Disconnect Code: %u", code)
-            NSLog("   Reason: %@", reason)
-            NSLog("   Code Meaning: %@", getDisconnectCodeMeaning(code))
-            NSLog("   Was Connected: %@", isConnected ? "YES" : "NO")
-            NSLog("   Current JID: %@", jid ?? "nil")
-            NSLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-            print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-            print("❌❌❌ WEBSOCKET DISCONNECTED ❌❌❌")
-            print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-            print("   Disconnect Code: \(code)")
-            print("   Reason: \(reason)")
-            print("   Code Meaning: \(getDisconnectCodeMeaning(code))")
-            print("   Was Connected: \(isConnected ? "YES" : "NO")")
-            print("   Current JID: \(jid ?? "nil")")
-            print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            //NSlog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            //NSlog("❌❌❌ WEBSOCKET DISCONNECTED ❌❌❌")
+            //NSlog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            //NSlog("   Disconnect Code: %u", code)
+            //NSlog("   Reason: %@", reason)
+            //NSlog("   Code Meaning: %@", getDisconnectCodeMeaning(code))
+            //NSlog("   Was Connected: %@", isConnected ? "YES" : "NO")
+            //NSlog("   Current JID: %@", jid ?? "nil")
+            //NSlog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            //print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            //print("❌❌❌ WEBSOCKET DISCONNECTED ❌❌❌")
+            //print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            //print("   Disconnect Code: \(code)")
+            //print("   Reason: \(reason)")
+            //print("   Code Meaning: \(getDisconnectCodeMeaning(code))")
+            //print("   Was Connected: \(isConnected ? "YES" : "NO")")
+            //print("   Current JID: \(jid ?? "nil")")
+            //print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
             
             isConnected = false
             
@@ -608,14 +608,14 @@ extension XMPPStream_WebSocket: WebSocketDelegate {
             
         case .text(let string):
             // Log raw XML from server (matching TypeScript behavior)
-            // NSLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-            // NSLog("📥 RECEIVED XML FROM SERVER (LENGTH: %lu):", string.count)
-            // NSLog("%@", string)
-            // NSLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-            // print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-            // print("📥 RECEIVED XML FROM SERVER (LENGTH: \(string.count)):")
-            // print(string)
-            // print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            // //NSlog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            // //NSlog("📥 RECEIVED XML FROM SERVER (LENGTH: %lu):", string.count)
+            // //NSlog("%@", string)
+            // //NSlog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            // //print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            // //print("📥 RECEIVED XML FROM SERVER (LENGTH: \(string.count)):")
+            // //print(string)
+            // //print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
             
             // Handle stream features and authentication flow FIRST
             // This processes the raw XML and sends appropriate responses
@@ -630,17 +630,17 @@ extension XMPPStream_WebSocket: WebSocketDelegate {
                !string.contains("<stream:error") &&
                !string.contains("<success xmlns='urn:ietf:params:xml:ns:xmpp-sasl'") {
             if let stanza = parseStanza(string) {
-                    // NSLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-                    // NSLog("✅ PARSED STANZA SUCCESSFULLY")
-                    // NSLog("   Name: %@, Type: %@, From: %@, To: %@, ID: %@", 
+                    // //NSlog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+                    // //NSlog("✅ PARSED STANZA SUCCESSFULLY")
+                    // //NSlog("   Name: %@, Type: %@, From: %@, To: %@, ID: %@", 
                     //       stanza.name, 
                     //       stanza.attributes["type"] ?? "none",
                     //       stanza.attributes["from"] ?? "none",
                     //       stanza.attributes["to"] ?? "none",
                     //       stanza.attributes["id"] ?? "none")
-                    // print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-                    // print("✅ PARSED STANZA SUCCESSFULLY")
-                    // print("   Name: \(stanza.name), Type: \(stanza.attributes["type"] ?? "none"), From: \(stanza.attributes["from"] ?? "none"), To: \(stanza.attributes["to"] ?? "none"), ID: \(stanza.attributes["id"] ?? "none")")
+                    // //print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+                    // //print("✅ PARSED STANZA SUCCESSFULLY")
+                    // //print("   Name: \(stanza.name), Type: \(stanza.attributes["type"] ?? "none"), From: \(stanza.attributes["from"] ?? "none"), To: \(stanza.attributes["to"] ?? "none"), ID: \(stanza.attributes["id"] ?? "none")")
                     
                     // Match TypeScript: Detect when stream becomes online
                     // In XMPP, after authentication, we receive a stream response or presence
@@ -653,9 +653,9 @@ extension XMPPStream_WebSocket: WebSocketDelegate {
                             if let from = stanza.attributes["from"] {
                                 self.jid = from
                                 isConnected = true
-                                NSLog("🔥🔥🔥 XMPP STREAM BECAME ONLINE 🔥🔥🔥")
-                                print("🔥🔥🔥 XMPP STREAM BECAME ONLINE 🔥🔥🔥")
-                                print("JID: \(from)")
+                                //NSlog("🔥🔥🔥 XMPP STREAM BECAME ONLINE 🔥🔥🔥")
+                                //print("🔥🔥🔥 XMPP STREAM BECAME ONLINE 🔥🔥🔥")
+                                //print("JID: \(from)")
                                 delegate?.xmppStreamDidBecomeOnline(self, jid: from)
                             }
                         } else if stanza.name == "iq" && 
@@ -679,14 +679,14 @@ extension XMPPStream_WebSocket: WebSocketDelegate {
                     // This ensures all stanzas go through the proper handler chain (HandleStanzas -> StanzaHandlers)
                     delegate?.xmppStream(self, didReceiveStanza: stanza)
                 } else {
-                    NSLog("⚠️⚠️⚠️ FAILED TO PARSE STANZA ⚠️⚠️⚠️")
-                    NSLog("   Raw XML: %@", string)
-                    print("⚠️⚠️⚠️ FAILED TO PARSE STANZA ⚠️⚠️⚠️")
-                    print("   Raw XML: \(string)")
+                    //NSlog("⚠️⚠️⚠️ FAILED TO PARSE STANZA ⚠️⚠️⚠️")
+                    //NSlog("   Raw XML: %@", string)
+                    //print("⚠️⚠️⚠️ FAILED TO PARSE STANZA ⚠️⚠️⚠️")
+                    //print("   Raw XML: \(string)")
                 }
             } else {
-                NSLog("ℹ️ Stream-level element, not parsing as stanza")
-                print("ℹ️ Stream-level element, not parsing as stanza")
+                //NSlog("ℹ️ Stream-level element, not parsing as stanza")
+                //print("ℹ️ Stream-level element, not parsing as stanza")
             }
             
         case .error(let wsError):
@@ -710,7 +710,7 @@ extension XMPPStream_WebSocket: WebSocketDelegate {
 class XMPPStanzaParser {
     static func parse(_ xmlString: String) -> XMPPStanza? {
         guard let data = xmlString.data(using: .utf8) else {
-            print("⚠️ Failed to convert XML string to data")
+            //print("⚠️ Failed to convert XML string to data")
             return nil
         }
         
@@ -723,9 +723,9 @@ class XMPPStanzaParser {
         let success = parser.parse()
         
         if !success {
-            print("⚠️ XML parsing failed: \(parser.parserError?.localizedDescription ?? "unknown error")")
+            //print("⚠️ XML parsing failed: \(parser.parserError?.localizedDescription ?? "unknown error")")
             if let error = parser.parserError {
-                print("   Error domain: \(error._domain), code: \(error._code)")
+                //print("   Error domain: \(error._domain), code: \(error._code)")
             }
         }
         
@@ -818,15 +818,15 @@ class XMPPStanzaParserDelegate: NSObject, XMLParserDelegate {
     
     func parser(_ parser: XMLParser, parseErrorOccurred parseError: Error) {
         self.parseError = parseError
-        print("⚠️ XML Parse Error: \(parseError.localizedDescription)")
+        //print("⚠️ XML Parse Error: \(parseError.localizedDescription)")
         if let nsError = parseError as NSError? {
-            print("   Domain: \(nsError.domain), Code: \(nsError.code)")
-            print("   Line: \(parser.lineNumber), Column: \(parser.columnNumber)")
+            //print("   Domain: \(nsError.domain), Code: \(nsError.code)")
+            //print("   Line: \(parser.lineNumber), Column: \(parser.columnNumber)")
         }
     }
     
     func parser(_ parser: XMLParser, validationErrorOccurred validationError: Error) {
-        print("⚠️ XML Validation Error: \(validationError.localizedDescription)")
+        //print("⚠️ XML Validation Error: \(validationError.localizedDescription)")
     }
 }
 

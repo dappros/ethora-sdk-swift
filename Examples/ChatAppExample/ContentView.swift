@@ -38,11 +38,11 @@ struct ContentView: View {
             Task { @MainActor in
                 if UserStore.shared.isAuthenticated,
                    let user = UserStore.shared.currentUser {
-                    print("ℹ️ Found cached user: \(user.email ?? "unknown")")
-                    print("   Token exists: \(UserStore.shared.token != nil)")
-                    print("   But NOT auto-connecting. User must click Login button.")
+                    //print("ℹ️ Found cached user: \(user.email ?? "unknown")")
+                    //print("   Token exists: \(UserStore.shared.token != nil)")
+                    //print("   But NOT auto-connecting. User must click Login button.")
                 } else {
-                    print("ℹ️ No cached user found. User needs to login manually.")
+                    //print("ℹ️ No cached user found. User needs to login manually.")
                 }
             }
         }
@@ -52,24 +52,24 @@ struct ContentView: View {
         isLoading = true
         errorMessage = nil
         
-        print("")
-        print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        print("🔐 USER CLICKED LOGIN BUTTON")
-        print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        print("📧 Email: \(username)")
-        print("")
+        //print("")
+        //print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        //print("🔐 USER CLICKED LOGIN BUTTON")
+        //print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        //print("📧 Email: \(username)")
+        //print("")
         
         do {
-            print("🌐 Calling AuthAPI.loginWithEmail...")
+            //print("🌐 Calling AuthAPI.loginWithEmail...")
             
             let loginResponse = try await AuthAPI.loginWithEmail(
                 email: username,
                 password: password
             )
             
-            print("")
-            print("✅ Login API call successful!")
-            print("💾 Saving user data to UserStore (cache)...")
+            //print("")
+            //print("✅ Login API call successful!")
+            //print("💾 Saving user data to UserStore (cache)...")
             
             // Save to UserStore (this will cache it)
             await UserStore.shared.setUser(from: loginResponse)
@@ -77,27 +77,27 @@ struct ContentView: View {
             // Verify it was saved
             let savedToken = await MainActor.run { UserStore.shared.token }
             let savedUser = await MainActor.run { UserStore.shared.currentUser }
-            print("✅ UserStore updated:")
-            print("   Token saved: \(savedToken != nil ? "YES" : "NO")")
-            print("   User saved: \(savedUser?.email ?? "NO")")
-            print("   isAuthenticated: \(await MainActor.run { UserStore.shared.isAuthenticated })")
+            //print("✅ UserStore updated:")
+            //print("   Token saved: \(savedToken != nil ? "YES" : "NO")")
+            //print("   User saved: \(savedUser?.email ?? "NO")")
+            //print("   isAuthenticated: \(await MainActor.run { UserStore.shared.isAuthenticated })")
             
-            print("")
-            print("🔌 Initializing XMPP connection...")
+            //print("")
+            //print("🔌 Initializing XMPP connection...")
             
             // Initialize XMPP with logged in user
             await appState.initializeXMPPWithLoggedInUser()
             
-            print("")
-            print("✅ Login complete! User authenticated and XMPP connected.")
-            print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            //print("")
+            //print("✅ Login complete! User authenticated and XMPP connected.")
+            //print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
             
         } catch {
             let errorMsg = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             errorMessage = errorMsg
-            print("")
-            print("❌ Login failed: \(errorMsg)")
-            print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            //print("")
+            //print("❌ Login failed: \(errorMsg)")
+            //print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
         }
         
         isLoading = false
@@ -190,36 +190,36 @@ struct MainChatView: View {
                 }
         }
         .onAppear {
-            print("")
-            print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-            print("📱 MainChatView.onAppear - CALLED!")
-            print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            //print("")
+            //print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            //print("📱 MainChatView.onAppear - CALLED!")
+            //print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
             
             Task { @MainActor in
                 // Update currentUserId if needed
                 if let user = UserStore.shared.currentUser {
                     currentUserId = user.id
-                    print("✅ Current User ID: \(currentUserId)")
+                    //print("✅ Current User ID: \(currentUserId)")
                 }
                 
                 // Verify authentication state
                 let isAuth = UserStore.shared.isAuthenticated
                 let hasToken = UserStore.shared.token != nil
                 let tokenPreview = UserStore.shared.token?.prefix(30) ?? "nil"
-                print("🔍 Authentication state:")
-                print("   isAuthenticated: \(isAuth)")
-                print("   hasToken: \(hasToken)")
-                print("   token: \(tokenPreview)...")
+                //print("🔍 Authentication state:")
+                //print("   isAuthenticated: \(isAuth)")
+                //print("   hasToken: \(hasToken)")
+                //print("   token: \(tokenPreview)...")
                 
                 // Load rooms immediately if authenticated
                 if isAuth && hasToken {
-                    print("✅ User authenticated, calling loadRooms() NOW...")
+                    //print("✅ User authenticated, calling loadRooms() NOW...")
                     roomListViewModel.loadRooms()
                 } else {
-                    print("❌ User not authenticated, cannot load rooms")
-                    print("   This means login didn't work or UserStore wasn't updated")
+                    //print("❌ User not authenticated, cannot load rooms")
+                    //print("   This means login didn't work or UserStore wasn't updated")
                 }
-                print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+                //print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
             }
         }
     }

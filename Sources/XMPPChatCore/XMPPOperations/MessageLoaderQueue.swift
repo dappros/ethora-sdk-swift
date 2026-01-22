@@ -49,7 +49,7 @@ public class MessageLoaderQueue {
     public func start() {
         stop() // Stop any existing timer
         
-        // print("🔄 MessageLoaderQueue: Starting auto-load queue")
+        // //print("🔄 MessageLoaderQueue: Starting auto-load queue")
         
         // Reset processed rooms when starting
         processedRooms.removeAll()
@@ -67,13 +67,13 @@ public class MessageLoaderQueue {
         processingTimer?.invalidate()
         processingTimer = nil
         isProcessing = false
-        // print("⏹️ MessageLoaderQueue: Stopped auto-load queue")
+        // //print("⏹️ MessageLoaderQueue: Stopped auto-load queue")
     }
     
     /// Reset processed rooms (call when rooms list changes)
     public func reset() {
         processedRooms.removeAll()
-        // print("🔄 MessageLoaderQueue: Reset processed rooms")
+        // //print("🔄 MessageLoaderQueue: Reset processed rooms")
     }
     
     /// Check if room needs more messages (matching TypeScript roomHasMoreMessages)
@@ -95,7 +95,7 @@ public class MessageLoaderQueue {
         guard !isProcessing,
               let client = client,
               client.checkOnline() else {
-            // print("⏭️ MessageLoaderQueue: Skipping queue process - isProcessing: \(isProcessing), client online: \(client?.checkOnline() ?? false)")
+            // //print("⏭️ MessageLoaderQueue: Skipping queue process - isProcessing: \(isProcessing), client online: \(client?.checkOnline() ?? false)")
             return
         }
         
@@ -104,37 +104,37 @@ public class MessageLoaderQueue {
         let isLoading = loadingProvider?() ?? false
         
         if isGlobalLoading || isLoading {
-            // print("⏭️ MessageLoaderQueue: Skipping queue process - globalLoading: \(isGlobalLoading), loading: \(isLoading)")
+            // //print("⏭️ MessageLoaderQueue: Skipping queue process - globalLoading: \(isGlobalLoading), loading: \(isLoading)")
             return
         }
         
         // Get current rooms list
         guard let roomsProvider = roomsProvider else {
-            // print("⚠️ MessageLoaderQueue: No rooms provider set")
+            // //print("⚠️ MessageLoaderQueue: No rooms provider set")
             return
         }
         
         let allRooms = roomsProvider()
-        // print("📋 MessageLoaderQueue: processQueue called - total rooms: \(allRooms.count)")
+        // //print("📋 MessageLoaderQueue: processQueue called - total rooms: \(allRooms.count)")
         
         // Filter unprocessed rooms (matching TypeScript: roomsList.filter(jid => !processedChats.current.has(jid)))
         let unprocessedRooms = allRooms.filter { room in
             !processedRooms.contains(room.jid)
         }
         
-        // print("📋 MessageLoaderQueue: Unprocessed rooms: \(unprocessedRooms.count)")
+        // //print("📋 MessageLoaderQueue: Unprocessed rooms: \(unprocessedRooms.count)")
         
         // Filter rooms that need messages
         let roomsNeedingMessages = unprocessedRooms.filter { room in
             shouldProcessRoom(room)
         }
         
-        // print("📋 MessageLoaderQueue: Rooms needing messages: \(roomsNeedingMessages.count)")
+        // //print("📋 MessageLoaderQueue: Rooms needing messages: \(roomsNeedingMessages.count)")
         
         // If no rooms need processing, stop the timer (matching TypeScript)
         guard !unprocessedRooms.isEmpty else {
             if !processedRooms.isEmpty {
-                // print("✅ MessageLoaderQueue: All rooms processed (\(processedRooms.count) rooms)")
+                // //print("✅ MessageLoaderQueue: All rooms processed (\(processedRooms.count) rooms)")
             }
             stop()
             return
@@ -147,7 +147,7 @@ public class MessageLoaderQueue {
             let endIndex = min(i + batchSize, unprocessedRooms.count)
             let batch = Array(unprocessedRooms[i..<endIndex])
             
-            // print("📦 MessageLoaderQueue: Processing batch of \(batch.count) rooms (batch \(i/batchSize + 1))")
+            // //print("📦 MessageLoaderQueue: Processing batch of \(batch.count) rooms (batch \(i/batchSize + 1))")
             
             // Process batch in parallel (matching TypeScript: await Promise.all(batch.map(...)))
             await withTaskGroup(of: Void.self) { group in
@@ -160,7 +160,7 @@ public class MessageLoaderQueue {
         }
         
         isProcessing = false
-        // print("✅ MessageLoaderQueue: Finished processing batch")
+        // //print("✅ MessageLoaderQueue: Finished processing batch")
     }
     
     /// Load messages for a specific room (matching TypeScript logic)
@@ -171,23 +171,23 @@ public class MessageLoaderQueue {
         let noMessages = room.noMessages ?? false
         let historyComplete = room.historyComplete ?? false
         
-        // print("📊 MessageLoaderQueue: Room \(room.title) - messages: \(messageCount), noMessages: \(noMessages), historyComplete: \(historyComplete), needsProcessing: \(needsProcessing)")
+        // //print("📊 MessageLoaderQueue: Room \(room.title) - messages: \(messageCount), noMessages: \(noMessages), historyComplete: \(historyComplete), needsProcessing: \(needsProcessing)")
         
         guard needsProcessing else {
             // Mark as processed even if we can't load
             processedRooms.insert(room.jid)
-            // print("⏭️ MessageLoaderQueue: Skipping room \(room.title) (doesn't need processing)")
+            // //print("⏭️ MessageLoaderQueue: Skipping room \(room.title) (doesn't need processing)")
             return
         }
         
         guard let client = client,
               client.checkOnline() else {
             processedRooms.insert(room.jid)
-            // print("⚠️ MessageLoaderQueue: Cannot load for room \(room.title) (client offline)")
+            // //print("⚠️ MessageLoaderQueue: Cannot load for room \(room.title) (client offline)")
             return
         }
         
-        // print("📥 MessageLoaderQueue: Loading \(pageSize) messages for room: \(room.title) (\(room.jid))")
+        // //print("📥 MessageLoaderQueue: Loading \(pageSize) messages for room: \(room.title) (\(room.jid))")
         
         // Send get-history request (matching TypeScript: await loadMoreMessages(jid, pageSize))
         // Note: TypeScript version doesn't pass before parameter, so we load from latest
@@ -203,7 +203,7 @@ public class MessageLoaderQueue {
         // Mark as processed (matching TypeScript: processedChats.current.add(jid))
         processedRooms.insert(room.jid)
         
-        // print("✅ MessageLoaderQueue: Sent get-history for room: \(room.title)")
+        // //print("✅ MessageLoaderQueue: Sent get-history for room: \(room.title)")
     }
     
     /// Called when a room receives messages - check if it needs more
@@ -213,10 +213,10 @@ public class MessageLoaderQueue {
         // so it can be queued again in the next cycle
         if currentMessageCount < targetMessageCount {
             processedRooms.remove(roomJID)
-            // print("🔄 MessageLoaderQueue: Room \(roomJID) still needs more messages (\(currentMessageCount)/\(targetMessageCount))")
+            // //print("🔄 MessageLoaderQueue: Room \(roomJID) still needs more messages (\(currentMessageCount)/\(targetMessageCount))")
         } else {
             processedRooms.insert(roomJID)
-            // print("✅ MessageLoaderQueue: Room \(roomJID) has enough messages (\(currentMessageCount))")
+            // //print("✅ MessageLoaderQueue: Room \(roomJID) has enough messages (\(currentMessageCount))")
         }
     }
     

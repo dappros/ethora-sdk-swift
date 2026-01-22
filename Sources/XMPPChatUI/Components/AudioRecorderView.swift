@@ -100,7 +100,7 @@ public struct AudioRecorderView: View {
                 isRecording = true
                 startTimer()
             } catch {
-                print("Failed to start recording: \(error)")
+                //print("Failed to start recording: \(error)")
             }
         }
     }
@@ -247,7 +247,7 @@ class AudioRecorderManager: NSObject, ObservableObject {
 extension AudioRecorderManager: AVAudioRecorderDelegate {
     func audioRecorderDidFinishRecording(_ recorder: AVAudioRecorder, successfully flag: Bool) {
         if !flag {
-            print("Recording finished unsuccessfully")
+            //print("Recording finished unsuccessfully")
         }
     }
 }

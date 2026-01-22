@@ -36,9 +36,9 @@ public class MessageCache {
                 UserDefaults.standard.set(timestamp, forKey: timestampKey)
             }
             
-            print("💾 MessageCache: Saved \(messagesToCache.count) messages for room: \(roomJID)")
+            //print("💾 MessageCache: Saved \(messagesToCache.count) messages for room: \(roomJID)")
         } catch {
-            print("❌ MessageCache: Failed to save messages for room \(roomJID): \(error)")
+            //print("❌ MessageCache: Failed to save messages for room \(roomJID): \(error)")
         }
     }
     
@@ -55,10 +55,10 @@ public class MessageCache {
             decoder.dateDecodingStrategy = .iso8601
             let messages = try decoder.decode([Message].self, from: data)
             
-            print("📂 MessageCache: Loaded \(messages.count) cached messages for room: \(roomJID)")
+            //print("📂 MessageCache: Loaded \(messages.count) cached messages for room: \(roomJID)")
             return messages
         } catch {
-            print("❌ MessageCache: Failed to load messages for room \(roomJID): \(error)")
+            //print("❌ MessageCache: Failed to load messages for room \(roomJID): \(error)")
             return nil
         }
     }
@@ -77,7 +77,7 @@ public class MessageCache {
         UserDefaults.standard.removeObject(forKey: key)
         UserDefaults.standard.removeObject(forKey: timestampKey)
         
-        print("🗑️ MessageCache: Cleared cached messages for room: \(roomJID)")
+        //print("🗑️ MessageCache: Cleared cached messages for room: \(roomJID)")
     }
     
     /// Clear all cached messages (useful for logout)
@@ -88,7 +88,7 @@ public class MessageCache {
                 UserDefaults.standard.removeObject(forKey: key)
             }
         }
-        print("🗑️ MessageCache: Cleared all cached messages")
+        //print("🗑️ MessageCache: Cleared all cached messages")
     }
     
     /// Check if there are cached messages for a room

@@ -35,7 +35,7 @@ extension XMPPOperations {
             try await setMeAsOwner(roomId: roomId)
             try await roomConfig(roomId: roomId, title: title, description: description)
         } catch {
-            print("❌ Error creating room: \(error)")
+            //print("❌ Error creating room: \(error)")
             throw error
         }
         
@@ -63,7 +63,7 @@ extension XMPPOperations {
             try await setMeAsOwner(roomId: roomId)
             try await roomConfig(roomId: roomId, title: title, description: description)
         } catch {
-            print("❌ Error creating private room: \(error)")
+            //print("❌ Error creating private room: \(error)")
             throw error
         }
         
@@ -325,7 +325,7 @@ extension XMPPOperations {
     public func leaveTheRoom(roomJID: String) {
         guard let stream = client?.xmppStream,
               let jid = stream.jid else {
-            print("❌ Cannot leave room - no JID available")
+            //print("❌ Cannot leave room - no JID available")
             return
         }
         

@@ -83,14 +83,14 @@ public struct AuthAPI {
         appToken: String = AppConfig.appToken
     ) async throws -> LoginResponse {
         // FORCE VISIBLE LOGGING - This MUST appear in Xcode console
-        NSLog("🔥🔥🔥 AUTHAPI.LOGINWITHEMAIL CALLED 🔥🔥🔥")
-        print("🔥🔥🔥 AUTHAPI.LOGINWITHEMAIL CALLED 🔥🔥🔥")
+        //NSlog("🔥🔥🔥 AUTHAPI.LOGINWITHEMAIL CALLED 🔥🔥🔥")
+        //print("🔥🔥🔥 AUTHAPI.LOGINWITHEMAIL CALLED 🔥🔥🔥")
         
         let url = baseURL.appendingPathComponent("users/login-with-email")
-        NSLog("🌐 AuthAPI.loginWithEmail: URL = %@", url.absoluteString)
-        NSLog("📧 AuthAPI.loginWithEmail: email = %@", email)
-        print("🌐 AuthAPI.loginWithEmail: URL = \(url.absoluteString)")
-        print("📧 AuthAPI.loginWithEmail: email = \(email)")
+        //NSlog("🌐 AuthAPI.loginWithEmail: URL = %@", url.absoluteString)
+        //NSlog("📧 AuthAPI.loginWithEmail: email = %@", email)
+        //print("🌐 AuthAPI.loginWithEmail: URL = \(url.absoluteString)")
+        //print("📧 AuthAPI.loginWithEmail: email = \(email)")
         
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -115,72 +115,72 @@ public struct AuthAPI {
         let separator = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         let statusText = HTTPURLResponse.localizedString(forStatusCode: httpResponse.statusCode)
         
-        // Use NSLog for guaranteed visibility in Xcode console
-        NSLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        NSLog("📦 FULL API RESPONSE (/users/login-with-email):")
-        NSLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        NSLog("Status: %d", httpResponse.statusCode)
-        NSLog("Status Text: %@", statusText)
-        NSLog("")
+        // Use //NSlog for guaranteed visibility in Xcode console
+        //NSlog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        //NSlog("📦 FULL API RESPONSE (/users/login-with-email):")
+        //NSlog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        //NSlog("Status: %d", httpResponse.statusCode)
+        //NSlog("Status Text: %@", statusText)
+        //NSlog("")
         
         // Log headers
-        NSLog("Headers:")
+        //NSlog("Headers:")
         for (key, value) in httpResponse.allHeaderFields {
             if let keyString = key as? String, let valueString = value as? String {
-                NSLog("  %@: %@", keyString, valueString)
+                //NSlog("  %@: %@", keyString, valueString)
             }
         }
-        NSLog("")
+        //NSlog("")
         
         // Log response body
-        NSLog("Full Response Data:")
+        //NSlog("Full Response Data:")
         if let responseBody = String(data: data, encoding: .utf8) {
-            // Try to pretty print JSON
+            // Try to pretty //print JSON
             if let jsonObject = try? JSONSerialization.jsonObject(with: data, options: []),
                let prettyData = try? JSONSerialization.data(withJSONObject: jsonObject, options: [.prettyPrinted]),
                let prettyString = String(data: prettyData, encoding: .utf8) {
-                NSLog("%@", prettyString)
+                //NSlog("%@", prettyString)
             } else {
-                NSLog("%@", responseBody)
+                //NSlog("%@", responseBody)
             }
         } else {
-            NSLog("⚠️ Could not decode response body as UTF-8")
-            NSLog("   Response data size: %d bytes", data.count)
+            //NSlog("⚠️ Could not decode response body as UTF-8")
+            //NSlog("   Response data size: %d bytes", data.count)
         }
-        NSLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        //NSlog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
         
-        // Also use print for good measure
-        print(separator)
-        print("📦 FULL API RESPONSE (/users/login-with-email):")
-        print(separator)
-        print("Status: \(httpResponse.statusCode)")
-        print("Status Text: \(statusText)")
-        print("")
-        print("Headers:")
+        // Also use //print for good measure
+        //print(separator)
+        //print("📦 FULL API RESPONSE (/users/login-with-email):")
+        //print(separator)
+        //print("Status: \(httpResponse.statusCode)")
+        //print("Status Text: \(statusText)")
+        //print("")
+        //print("Headers:")
         for (key, value) in httpResponse.allHeaderFields {
             if let keyString = key as? String, let valueString = value as? String {
-                print("  \(keyString): \(valueString)")
+                //print("  \(keyString): \(valueString)")
             }
         }
-            print("")
-        print("Full Response Data:")
+            //print("")
+        //print("Full Response Data:")
         if let responseBody = String(data: data, encoding: .utf8) {
             if let jsonObject = try? JSONSerialization.jsonObject(with: data, options: []),
                let prettyData = try? JSONSerialization.data(withJSONObject: jsonObject, options: [.prettyPrinted]),
                let prettyString = String(data: prettyData, encoding: .utf8) {
-                print(prettyString)
+                //print(prettyString)
             } else {
-            print(responseBody)
+            //print(responseBody)
             }
         } else {
-            print("⚠️ Could not decode response body as UTF-8")
-            print("   Response data size: \(data.count) bytes")
+            //print("⚠️ Could not decode response body as UTF-8")
+            //print("   Response data size: \(data.count) bytes")
         }
-        print(separator)
+        //print(separator)
         
         guard (200..<300).contains(httpResponse.statusCode) else {
             let errorBody = String(data: data, encoding: .utf8) ?? "<no body>"
-            print("❌ AuthAPI.loginWithEmail HTTP Error \(httpResponse.statusCode): \(errorBody)")
+            //print("❌ AuthAPI.loginWithEmail HTTP Error \(httpResponse.statusCode): \(errorBody)")
             throw AuthAPIError.httpError(httpResponse.statusCode, errorBody)
         }
         
@@ -190,24 +190,24 @@ public struct AuthAPI {
         do {
             let loginResponse = try decoder.decode(LoginResponse.self, from: data)
             
-            // Print parsed login response details
-            print("✅ AuthAPI.loginWithEmail: SUCCESS! Parsed response:")
-            print("   success: \(loginResponse.success)")
-            print("   token: \(loginResponse.token.prefix(50))...")
-            print("   refreshToken: \(loginResponse.refreshToken.prefix(50))...")
-            print("   user._id: \(loginResponse.user._id)")
-            print("   user.email: \(loginResponse.user.email ?? "nil")")
-            print("   user.firstName: \(loginResponse.user.firstName ?? "nil")")
-            print("   user.lastName: \(loginResponse.user.lastName ?? "nil")")
-            print("   user.xmppUsername: \(loginResponse.user.xmppUsername ?? "nil")")
-            print("   user.xmppPassword: \(loginResponse.user.xmppPassword ?? "nil")")
-            print("   user.appId: \(loginResponse.user.appId ?? "nil")")
+            // //print parsed login response details
+            //print("✅ AuthAPI.loginWithEmail: SUCCESS! Parsed response:")
+            //print("   success: \(loginResponse.success)")
+            //print("   token: \(loginResponse.token.prefix(50))...")
+            //print("   refreshToken: \(loginResponse.refreshToken.prefix(50))...")
+            //print("   user._id: \(loginResponse.user._id)")
+            //print("   user.email: \(loginResponse.user.email ?? "nil")")
+            //print("   user.firstName: \(loginResponse.user.firstName ?? "nil")")
+            //print("   user.lastName: \(loginResponse.user.lastName ?? "nil")")
+            //print("   user.xmppUsername: \(loginResponse.user.xmppUsername ?? "nil")")
+            //print("   user.xmppPassword: \(loginResponse.user.xmppPassword ?? "nil")")
+            //print("   user.appId: \(loginResponse.user.appId ?? "nil")")
             
             return loginResponse
         } catch {
             let jsonString = String(data: data, encoding: .utf8) ?? "<no data>"
-            print("❌ AuthAPI.loginWithEmail Decode Error: \(error)")
-            print("📄 Response body: \(jsonString)")
+            //print("❌ AuthAPI.loginWithEmail Decode Error: \(error)")
+            //print("📄 Response body: \(jsonString)")
             throw AuthAPIError.decodeError(error.localizedDescription)
         }
     }
@@ -227,7 +227,7 @@ public struct AuthAPI {
         appToken: String = AppConfig.appToken
     ) async throws -> (token: String, refreshToken: String) {
         let url = baseURL.appendingPathComponent("users/login/refresh")
-        print("🌐 AuthAPI.refreshToken: URL = \(url.absoluteString)")
+        //print("🌐 AuthAPI.refreshToken: URL = \(url.absoluteString)")
         
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -252,71 +252,71 @@ public struct AuthAPI {
         let separator = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         let statusText = HTTPURLResponse.localizedString(forStatusCode: httpResponse.statusCode)
         
-        // Use NSLog for guaranteed visibility in Xcode console
-        NSLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        NSLog("📦 FULL API RESPONSE (/users/login/refresh):")
-        NSLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        NSLog("Status: %d", httpResponse.statusCode)
-        NSLog("Status Text: %@", statusText)
-        NSLog("")
+        // Use //NSlog for guaranteed visibility in Xcode console
+        //NSlog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        //NSlog("📦 FULL API RESPONSE (/users/login/refresh):")
+        //NSlog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        //NSlog("Status: %d", httpResponse.statusCode)
+        //NSlog("Status Text: %@", statusText)
+        //NSlog("")
         
         // Log headers
-        NSLog("Headers:")
+        //NSlog("Headers:")
         for (key, value) in httpResponse.allHeaderFields {
             if let keyString = key as? String, let valueString = value as? String {
-                NSLog("  %@: %@", keyString, valueString)
+                //NSlog("  %@: %@", keyString, valueString)
             }
         }
-        NSLog("")
+        //NSlog("")
         
         // Log response body
-        NSLog("Full Response Data:")
+        //NSlog("Full Response Data:")
         if let responseBody = String(data: data, encoding: .utf8) {
             if let jsonObject = try? JSONSerialization.jsonObject(with: data, options: []),
                let prettyData = try? JSONSerialization.data(withJSONObject: jsonObject, options: [.prettyPrinted]),
                let prettyString = String(data: prettyData, encoding: .utf8) {
-                NSLog("%@", prettyString)
+                //NSlog("%@", prettyString)
             } else {
-                NSLog("%@", responseBody)
+                //NSlog("%@", responseBody)
             }
         } else {
-            NSLog("⚠️ Could not decode response body as UTF-8")
-            NSLog("   Response data size: %d bytes", data.count)
+            //NSlog("⚠️ Could not decode response body as UTF-8")
+            //NSlog("   Response data size: %d bytes", data.count)
         }
-        NSLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        //NSlog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
         
-        // Also use print for good measure
-        print(separator)
-        print("📦 FULL API RESPONSE (/users/login/refresh):")
-        print(separator)
-        print("Status: \(httpResponse.statusCode)")
-        print("Status Text: \(statusText)")
-        print("")
-        print("Headers:")
+        // Also use //print for good measure
+        //print(separator)
+        //print("📦 FULL API RESPONSE (/users/login/refresh):")
+        //print(separator)
+        //print("Status: \(httpResponse.statusCode)")
+        //print("Status Text: \(statusText)")
+        //print("")
+        //print("Headers:")
         for (key, value) in httpResponse.allHeaderFields {
             if let keyString = key as? String, let valueString = value as? String {
-                print("  \(keyString): \(valueString)")
+                //print("  \(keyString): \(valueString)")
             }
         }
-        print("")
-        print("Full Response Data:")
+        //print("")
+        //print("Full Response Data:")
         if let responseBody = String(data: data, encoding: .utf8) {
             if let jsonObject = try? JSONSerialization.jsonObject(with: data, options: []),
                let prettyData = try? JSONSerialization.data(withJSONObject: jsonObject, options: [.prettyPrinted]),
                let prettyString = String(data: prettyData, encoding: .utf8) {
-                print(prettyString)
+                //print(prettyString)
             } else {
-                print(responseBody)
+                //print(responseBody)
             }
         } else {
-            print("⚠️ Could not decode response body as UTF-8")
-            print("   Response data size: \(data.count) bytes")
+            //print("⚠️ Could not decode response body as UTF-8")
+            //print("   Response data size: \(data.count) bytes")
         }
-        print(separator)
+        //print(separator)
         
         guard (200..<300).contains(httpResponse.statusCode) else {
             let errorBody = String(data: data, encoding: .utf8) ?? "<no body>"
-            print("❌ AuthAPI.refreshToken HTTP Error \(httpResponse.statusCode): \(errorBody)")
+            //print("❌ AuthAPI.refreshToken HTTP Error \(httpResponse.statusCode): \(errorBody)")
             throw AuthAPIError.httpError(httpResponse.statusCode, errorBody)
         }
         
@@ -327,7 +327,7 @@ public struct AuthAPI {
         
         let decoder = JSONDecoder()
         let refresh = try decoder.decode(RefreshResponse.self, from: data)
-        print("✅ AuthAPI.refreshToken: Got new token prefix=\(refresh.token.prefix(20))...")
+        //print("✅ AuthAPI.refreshToken: Got new token prefix=\(refresh.token.prefix(20))...")
         return (refresh.token, refresh.refreshToken)
     }
     
@@ -344,7 +344,7 @@ public struct AuthAPI {
         baseURL: URL = URL(string: "https://api.ethoradev.com/v1")!
     ) async throws -> LoginResponse {
         let url = baseURL.appendingPathComponent("users/client")
-        print("🌐 AuthAPI.loginViaJwt: URL = \(url.absoluteString)")
+        //print("🌐 AuthAPI.loginViaJwt: URL = \(url.absoluteString)")
         
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -360,7 +360,7 @@ public struct AuthAPI {
         
         guard (200..<300).contains(httpResponse.statusCode) else {
             let errorBody = String(data: data, encoding: .utf8) ?? "<no body>"
-            print("❌ AuthAPI.loginViaJwt HTTP Error \(httpResponse.statusCode): \(errorBody)")
+            //print("❌ AuthAPI.loginViaJwt HTTP Error \(httpResponse.statusCode): \(errorBody)")
             throw AuthAPIError.httpError(httpResponse.statusCode, errorBody)
         }
         
@@ -384,12 +384,12 @@ public struct AuthAPI {
                 isAllowedNewAppCreate: nil
             )
             
-            print("✅ AuthAPI.loginViaJwt: SUCCESS!")
+            //print("✅ AuthAPI.loginViaJwt: SUCCESS!")
             return loginResponse
         } catch {
             let jsonString = String(data: data, encoding: .utf8) ?? "<no data>"
-            print("❌ AuthAPI.loginViaJwt Decode Error: \(error)")
-            print("📄 Response body: \(jsonString)")
+            //print("❌ AuthAPI.loginViaJwt Decode Error: \(error)")
+            //print("📄 Response body: \(jsonString)")
             throw AuthAPIError.decodeError(error.localizedDescription)
         }
     }
@@ -409,7 +409,7 @@ public struct AuthAPI {
         appToken: String = AppConfig.appToken
     ) async throws -> Bool {
         let url = baseURL.appendingPathComponent("users/checkEmail/\(email)")
-        print("🌐 AuthAPI.checkEmailExist: URL = \(url.absoluteString)")
+        //print("🌐 AuthAPI.checkEmailExist: URL = \(url.absoluteString)")
         
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
@@ -425,7 +425,7 @@ public struct AuthAPI {
         
         guard (200..<300).contains(httpResponse.statusCode) else {
             let errorBody = String(data: data, encoding: .utf8) ?? "<no body>"
-            print("❌ AuthAPI.checkEmailExist HTTP Error \(httpResponse.statusCode): \(errorBody)")
+            //print("❌ AuthAPI.checkEmailExist HTTP Error \(httpResponse.statusCode): \(errorBody)")
             throw AuthAPIError.httpError(httpResponse.statusCode, errorBody)
         }
         
@@ -463,8 +463,8 @@ public struct AuthAPI {
     ) async throws -> UploadResponse {
         
         let url = baseURL.appendingPathComponent("files/")
-        print("🌐 AuthAPI.uploadFile: URL = \(url.absoluteString)")
-        print("📁 Uploading file: \(fileName) (\(fileData.count) bytes, \(mimeType))")
+        //print("🌐 AuthAPI.uploadFile: URL = \(url.absoluteString)")
+        //print("📁 Uploading file: \(fileName) (\(fileData.count) bytes, \(mimeType))")
         
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -495,7 +495,7 @@ public struct AuthAPI {
         
         guard (200..<300).contains(httpResponse.statusCode) else {
             let errorBody = String(data: data, encoding: .utf8) ?? "<no body>"
-            print("❌ AuthAPI.uploadFile HTTP Error \(httpResponse.statusCode): \(errorBody)")
+            //print("❌ AuthAPI.uploadFile HTTP Error \(httpResponse.statusCode): \(errorBody)")
             throw AuthAPIError.httpError(httpResponse.statusCode, errorBody)
         }
         
@@ -504,12 +504,12 @@ public struct AuthAPI {
         
         do {
             let uploadResponse = try decoder.decode(UploadResponse.self, from: data)
-            print("✅ AuthAPI.uploadFile: SUCCESS! Uploaded \(uploadResponse.results.count) file(s)")
+            //print("✅ AuthAPI.uploadFile: SUCCESS! Uploaded \(uploadResponse.results.count) file(s)")
             return uploadResponse
         } catch {
             let jsonString = String(data: data, encoding: .utf8) ?? "<no data>"
-            print("❌ AuthAPI.uploadFile Decode Error: \(error)")
-            print("📄 Response body: \(jsonString)")
+            //print("❌ AuthAPI.uploadFile Decode Error: \(error)")
+            //print("📄 Response body: \(jsonString)")
             throw AuthAPIError.decodeError(error.localizedDescription)
         }
     }

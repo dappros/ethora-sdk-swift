@@ -121,7 +121,7 @@ public struct RoomListView: View {
                                 }
                                 viewModel.showNewChatModal = false
                             } catch {
-                                print("❌ Failed to create chat: \(error.localizedDescription)")
+                                //print("❌ Failed to create chat: \(error.localizedDescription)")
                                 viewModel.errorMessage = error.localizedDescription
                             }
                         }
@@ -133,16 +133,16 @@ public struct RoomListView: View {
             }
             .onAppear {
                 // FORCE CALL loadRooms when view appears
-                NSLog("🔥🔥🔥 ROOMLISTVIEW.ONAPPEAR CALLED 🔥🔥🔥")
-                print("🔥🔥🔥 ROOMLISTVIEW.ONAPPEAR CALLED 🔥🔥🔥")
-                print("📋 RoomListView.onAppear: View appeared")
-                print("   ViewModel has \(viewModel.rooms.count) rooms")
-                print("   isLoading: \(viewModel.isLoading)")
+                //NSlog("🔥🔥🔥 ROOMLISTVIEW.ONAPPEAR CALLED 🔥🔥🔥")
+                //print("🔥🔥🔥 ROOMLISTVIEW.ONAPPEAR CALLED 🔥🔥🔥")
+                //print("📋 RoomListView.onAppear: View appeared")
+                //print("   ViewModel has \(viewModel.rooms.count) rooms")
+                //print("   isLoading: \(viewModel.isLoading)")
                 
                 // Call loadRooms if not already loading
                 if !viewModel.isLoading && viewModel.rooms.isEmpty {
-                    NSLog("🚀 Calling viewModel.loadRooms() from onAppear")
-                    print("🚀 Calling viewModel.loadRooms() from onAppear")
+                    //NSlog("🚀 Calling viewModel.loadRooms() from onAppear")
+                    //print("🚀 Calling viewModel.loadRooms() from onAppear")
                     viewModel.loadRooms()
                 }
             }
@@ -428,7 +428,7 @@ public class RoomListViewModel: ObservableObject {
             if let self = self, !self.rooms.isEmpty {
                 self.messageLoaderQueue?.reset()
                 self.messageLoaderQueue?.start()
-                print("🔄 RoomListViewModel: Started auto-load history queue (client connected)")
+                //print("🔄 RoomListViewModel: Started auto-load history queue (client connected)")
             }
         }
         
@@ -461,7 +461,7 @@ public class RoomListViewModel: ObservableObject {
                     // Trigger UI update
                     self.objectWillChange.send()
                     
-                    print("✅ RoomListViewModel: Updated room \(roomJID) with \(cachedMessages.count) messages from cache")
+                    //print("✅ RoomListViewModel: Updated room \(roomJID) with \(cachedMessages.count) messages from cache")
                 }
             }
         }
@@ -476,13 +476,9 @@ public class RoomListViewModel: ObservableObject {
     
     public func loadRooms() {
         // FORCE VISIBLE LOGGING
-        NSLog("🔥🔥🔥 ROOMLISTVIEWMODEL.LOADROOMS CALLED 🔥🔥🔥")
-        print("🔥🔥🔥 ROOMLISTVIEWMODEL.LOADROOMS CALLED 🔥🔥🔥")
         
         isLoading = true
         errorMessage = nil
-        NSLog("➡️ RoomListViewModel.loadRooms: Starting... baseURL=%@", apiBaseURL.absoluteString)
-        print("➡️ RoomListViewModel.loadRooms: Starting... baseURL=\(apiBaseURL)")
         
         // Check UserStore state before loading
         Task { @MainActor in
@@ -490,26 +486,13 @@ public class RoomListViewModel: ObservableObject {
             let hasToken = UserStore.shared.token != nil
             let userEmail = UserStore.shared.currentUser?.email ?? "nil"
             
-            NSLog("🔍 RoomListViewModel.loadRooms: UserStore state:")
-            NSLog("   isAuthenticated: %@", isAuth ? "true" : "false")
-            NSLog("   hasToken: %@", hasToken ? "true" : "false")
-            NSLog("   userEmail: %@", userEmail)
-            print("🔍 RoomListViewModel.loadRooms: UserStore state:")
-            print("   isAuthenticated: \(isAuth)")
-            print("   hasToken: \(hasToken)")
-            print("   userEmail: \(userEmail)")
-            
             guard isAuth, hasToken else {
                 let msg = "User not authenticated. Please login first."
                 self.errorMessage = msg
                 self.isLoading = false
-                NSLog("❌ RoomListViewModel.loadRooms: %@", msg)
-                print("❌ RoomListViewModel.loadRooms: \(msg)")
                 return
             }
             
-            NSLog("✅ User authenticated, calling RoomsAPI.getRooms()")
-            print("✅ User authenticated, calling RoomsAPI.getRooms()")
             
             do {
                 // RoomsAPI now uses UserStore automatically
@@ -518,15 +501,13 @@ public class RoomListViewModel: ObservableObject {
                     appId: appId,
                     conferenceDomain: conferenceDomain
                 )
-                NSLog("✅ RoomListViewModel.loadRooms: Success! Loaded %d rooms", loadedRooms.count)
-                print("✅ RoomListViewModel.loadRooms: Success! Loaded \(loadedRooms.count) rooms")
                 
                 // Load cached messages for each room
                 var roomsWithCachedMessages: [Room] = []
                 for var room in loadedRooms {
                     if let cachedMessages = MessageCache.shared.loadMessages(forRoomJID: room.jid) {
                         room.messages = cachedMessages
-                        print("📂 RoomListViewModel: Loaded \(cachedMessages.count) cached messages for room: \(room.jid)")
+                        //print("📂 RoomListViewModel: Loaded \(cachedMessages.count) cached messages for room: \(room.jid)")
                     }
                     roomsWithCachedMessages.append(room)
                 }
@@ -542,24 +523,24 @@ public class RoomListViewModel: ObservableObject {
                     
                     // Start auto-loading history for all rooms when XMPP is idle
                     if client.checkOnline() {
-                        print("🔄 RoomListViewModel: Client is online, starting auto-load queue")
-                        print("   Rooms count: \(self.rooms.count)")
-                        print("   Rooms with < 20 messages: \(self.rooms.filter { $0.messages.count < 20 }.count)")
+                        //print("🔄 RoomListViewModel: Client is online, starting auto-load queue")
+                        //print("   Rooms count: \(self.rooms.count)")
+                        //print("   Rooms with < 20 messages: \(self.rooms.filter { $0.messages.count < 20 }.count)")
                         messageLoaderQueue?.reset() // Reset to process all rooms
                         messageLoaderQueue?.start()
-                        print("✅ RoomListViewModel: Started auto-load history queue")
+                        //print("✅ RoomListViewModel: Started auto-load history queue")
                     } else {
-                        print("⚠️ RoomListViewModel: Client is not online, cannot start auto-load queue")
+                        //print("⚠️ RoomListViewModel: Client is not online, cannot start auto-load queue")
                     }
                 }
             } catch {
                 let errorMsg = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
                 self.errorMessage = "Failed to load rooms: \(errorMsg)"
                 self.isLoading = false
-                NSLog("❌ RoomListViewModel.loadRooms error: %@", errorMsg)
-                NSLog("   Full error: %@", error.localizedDescription)
-                print("❌ RoomListViewModel.loadRooms error: \(errorMsg)")
-                print("   Full error: \(error)")
+                //NSlog("❌ RoomListViewModel.loadRooms error: %@", errorMsg)
+                //NSlog("   Full error: %@", error.localizedDescription)
+                //print("❌ RoomListViewModel.loadRooms error: \(errorMsg)")
+                //print("   Full error: \(error)")
             }
         }
     }

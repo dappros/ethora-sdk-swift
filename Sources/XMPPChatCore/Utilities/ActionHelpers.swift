@@ -23,7 +23,7 @@ public func createSafeDispatch(_ dispatch: @escaping (Any) -> Void) -> (Any) -> 
         if isValidAction(action) {
             dispatch(action)
         } else {
-            print("Warning: Invalid action dispatched: \(action)")
+            //print("Warning: Invalid action dispatched: \(action)")
         }
     }
 }
