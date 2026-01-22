@@ -900,18 +900,24 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
         
         //print("👤 User info: \(firstName) \(lastName)")
         
+        // Generate the same ID that will be sent to server
+        // This matches the logic in SendTextMessage.swift: "send-text-message-\(timestamp)"
+        let messageId = "send-text-message-\(Int64(Date().timeIntervalSince1970 * 1000))"
+        
         client.operations.sendTextMessage(
             roomJID: room.jid,
             firstName: firstName,
             lastName: lastName,
             photo: photo,
             walletAddress: walletAddress,
-            userMessage: text
+            userMessage: text,
+            customId: messageId
         )
         
         // Add message optimistically to UI (will be confirmed when received from server)
+        // Use the SAME ID that was sent to server, so server can match it via xmppId
         let optimisticMessage = Message(
-            id: "pending-\(Int64(Date().timeIntervalSince1970 * 1000))",
+            id: messageId,
             user: User(
                 id: currentUserId,
                 name: "\(firstName) \(lastName)",
@@ -924,7 +930,8 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
             body: text,
             roomJid: room.jid,
             pending: true,
-            timestamp: Int64(Date().timeIntervalSince1970 * 1000)
+            timestamp: Int64(Date().timeIntervalSince1970 * 1000),
+            xmppId: messageId // Store the sent ID so we can match it when server confirms
         )
         
         messages.append(optimisticMessage)
@@ -1025,25 +1032,139 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
         
         //print("✅ handleIncomingMessage: Room matches, processing message")
         
-        // Match TypeScript: Check for existing message (avoid duplicates)
-        // const existingIndex = roomMessages.findIndex(...)
+         to match: pending message id === incoming message xmppId
         if let existingIndex = messages.firstIndex(where: { msg in
+            // Exact ID match
             msg.id == message.id ||
+            // CRITICAL: If incoming message has xmppId, check if it matches existing message ID
+            // This handles the case: pending message id = "send-text-message-123", 
+            // incoming message xmppId = "send-text-message-123"
             (message.xmppId != nil && msg.id == message.xmppId) ||
-            (msg.xmppId != nil && msg.xmppId == message.id)
+            // If existing message has xmppId, check if it matches incoming message ID
+            (msg.xmppId != nil && msg.xmppId == message.id) ||
+            // Also check: if both have xmppId and they match
+            (msg.xmppId != nil && message.xmppId != nil && msg.xmppId == message.xmppId)
         }) {
-            // Match TypeScript: Update existing message instead of adding duplicate
-            // roomMessages[existingIndex] = deepMerge({ ...roomMessages[existingIndex] }, { ...message, pending: false });
-            //print("⚠️ handleIncomingMessage: Message already exists at index \(existingIndex) - UPDATING")
-            messages[existingIndex] = message
+            // Match TypeScript EXACTLY: Update existing message and set pending to false
+            // From roomsSlice.ts lines 198-201:
+            // roomMessages[existingIndex] = deepMerge(
+            //   { ...roomMessages[existingIndex] },
+            //   { ...message, pending: false }
+            // );
+            let existingMessage = messages[existingIndex]
+            
+            // Deep merge: keep existing values, but update with new message and set pending: false
+            let updatedMessage = Message(
+                id: message.id, // Use confirmed ID from server
+                user: message.user,
+                date: message.date,
+                body: message.body,
+                roomJid: message.roomJid,
+                key: message.key ?? existingMessage.key,
+                coinsInMessage: message.coinsInMessage ?? existingMessage.coinsInMessage,
+                numberOfReplies: message.numberOfReplies ?? existingMessage.numberOfReplies,
+                isSystemMessage: message.isSystemMessage ?? existingMessage.isSystemMessage,
+                isMediafile: message.isMediafile ?? existingMessage.isMediafile,
+                locationPreview: message.locationPreview ?? existingMessage.locationPreview,
+                mimetype: message.mimetype ?? existingMessage.mimetype,
+                location: message.location ?? existingMessage.location,
+                pending: false, // Always set pending to false when confirmed
+                timestamp: message.timestamp ?? existingMessage.timestamp,
+                showInChannel: message.showInChannel ?? existingMessage.showInChannel,
+                activeMessage: message.activeMessage ?? existingMessage.activeMessage,
+                isReply: message.isReply ?? existingMessage.isReply,
+                isDeleted: message.isDeleted ?? existingMessage.isDeleted,
+                mainMessage: message.mainMessage ?? existingMessage.mainMessage,
+                reply: message.reply ?? existingMessage.reply,
+                reaction: message.reaction ?? existingMessage.reaction,
+                fileName: message.fileName ?? existingMessage.fileName,
+                translations: message.translations ?? existingMessage.translations,
+                langSource: message.langSource ?? existingMessage.langSource,
+                originalName: message.originalName ?? existingMessage.originalName,
+                size: message.size ?? existingMessage.size,
+                xmppId: message.xmppId ?? existingMessage.xmppId, // Keep xmppId if available
+                xmppFrom: message.xmppFrom ?? existingMessage.xmppFrom,
+                waveForm: message.waveForm ?? existingMessage.waveForm
+            )
+            
+            // REPLACE existing message, don't add new one
+            messages[existingIndex] = updatedMessage
+            room.messages = messages
             return
         }
         
         //print("✅ handleIncomingMessage: Message is new, will be added")
         
-        // Remove any pending message with same content (optimistic update confirmation)
-        if let pendingIndex = messages.firstIndex(where: { $0.pending == true && $0.body == message.body }) {
-            messages.remove(at: pendingIndex)
+        // CRITICAL FALLBACK: If message is from current user, aggressively find and replace ANY pending message
+        // with same content, regardless of ID matching. This handles cases where server doesn't return our ID correctly.
+        let isFromCurrentUser = message.user.id == currentUserId || 
+                                message.user.xmppUsername == currentUserId ||
+                                (message.xmppFrom != nil && (message.xmppFrom?.contains(currentUserId) == true || 
+                                                              message.xmppFrom?.contains(message.user.xmppUsername ?? "") == true))
+        
+        if isFromCurrentUser {
+            // Find ALL pending messages with same content from current user
+            let pendingIndices = messages.enumerated().compactMap { index, msg -> Int? in
+                guard msg.pending == true else { return nil }
+                guard msg.body == message.body else { return nil }
+                
+                // Check if it's from current user
+                let msgIsFromCurrentUser = msg.user.id == currentUserId || 
+                                          msg.user.xmppUsername == currentUserId ||
+                                          msg.user.id == message.user.id ||
+                                          msg.user.xmppUsername == message.user.xmppUsername
+                
+                return msgIsFromCurrentUser ? index : nil
+            }
+            
+            // Replace the FIRST pending message found (or remove all if multiple)
+            if let pendingIndex = pendingIndices.first {
+                // Replace pending message with confirmed one
+                let pendingMessage = messages[pendingIndex]
+            let updatedMessage = Message(
+                id: message.id, // Use confirmed ID from server
+                user: message.user,
+                date: message.date,
+                body: message.body,
+                roomJid: message.roomJid,
+                key: message.key ?? pendingMessage.key,
+                coinsInMessage: message.coinsInMessage ?? pendingMessage.coinsInMessage,
+                numberOfReplies: message.numberOfReplies ?? pendingMessage.numberOfReplies,
+                isSystemMessage: message.isSystemMessage ?? pendingMessage.isSystemMessage,
+                isMediafile: message.isMediafile ?? pendingMessage.isMediafile,
+                locationPreview: message.locationPreview ?? pendingMessage.locationPreview,
+                mimetype: message.mimetype ?? pendingMessage.mimetype,
+                location: message.location ?? pendingMessage.location,
+                pending: false, // Set pending to false
+                timestamp: message.timestamp ?? pendingMessage.timestamp,
+                showInChannel: message.showInChannel ?? pendingMessage.showInChannel,
+                activeMessage: message.activeMessage ?? pendingMessage.activeMessage,
+                isReply: message.isReply ?? pendingMessage.isReply,
+                isDeleted: message.isDeleted ?? pendingMessage.isDeleted,
+                mainMessage: message.mainMessage ?? pendingMessage.mainMessage,
+                reply: message.reply ?? pendingMessage.reply,
+                reaction: message.reaction ?? pendingMessage.reaction,
+                fileName: message.fileName ?? pendingMessage.fileName,
+                translations: message.translations ?? pendingMessage.translations,
+                langSource: message.langSource ?? pendingMessage.langSource,
+                originalName: message.originalName ?? pendingMessage.originalName,
+                size: message.size ?? pendingMessage.size,
+                xmppId: message.xmppId ?? pendingMessage.xmppId,
+                xmppFrom: message.xmppFrom ?? pendingMessage.xmppFrom,
+                waveForm: message.waveForm ?? pendingMessage.waveForm
+            )
+                messages[pendingIndex] = updatedMessage
+                
+                // Remove any other pending messages with same content (duplicates)
+                if pendingIndices.count > 1 {
+                    for index in pendingIndices.dropFirst().reversed() {
+                        messages.remove(at: index)
+                    }
+                }
+                
+                room.messages = messages
+                return
+            }
         }
         
         // Match TypeScript: Add message with delimiter logic
@@ -1074,6 +1195,20 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
                 )
                 messages.insert(delimiterMessage, at: delimiterIndex)
             }
+        }
+        
+        // FINAL CHECK: Before adding, make sure we don't already have this message
+        // (in case it was added/updated in one of the checks above)
+        let alreadyExists = messages.contains { msg in
+            msg.id == message.id ||
+            (message.xmppId != nil && msg.id == message.xmppId) ||
+            (msg.xmppId != nil && msg.xmppId == message.id) ||
+            (msg.xmppId != nil && message.xmppId != nil && msg.xmppId == message.xmppId)
+        }
+        
+        if alreadyExists {
+            // Message already exists, don't add duplicate
+            return
         }
         
         // Add the actual message

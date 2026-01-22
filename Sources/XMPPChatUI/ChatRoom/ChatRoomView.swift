@@ -119,9 +119,48 @@ public struct ChatRoomView: View {
                                 .id("loader-top")
                             }
                             
-                            ForEach(Array(viewModel.messages.enumerated()), id: \.element.id) { index, message in
-                                let previousMessage = index > 0 ? viewModel.messages[index - 1] : nil
-                                let nextMessage = index < viewModel.messages.count - 1 ? viewModel.messages[index + 1] : nil
+                            // Filter out deleted messages and old pending duplicates
+                            // CRITICAL: Remove pending messages if there's a confirmed version with same content
+                            let filteredMessages = viewModel.messages.filter { msg in
+                                // Remove deleted messages
+                                guard msg.isDeleted != true else { return false }
+                                
+                                // For pending messages, check if there's a confirmed version
+                                if let pending = msg.pending, pending {
+                                    // Check if there's a confirmed message with:
+                                    // 1. Same content and user
+                                    // 2. Or matching ID/xmppId
+                                    let hasConfirmedVersion = viewModel.messages.contains { otherMsg in
+                                        guard otherMsg.pending != true else { return false }
+                                        
+                                        // Match by ID/xmppId
+                                        if otherMsg.id == msg.id ||
+                                           (otherMsg.xmppId != nil && otherMsg.xmppId == msg.id) ||
+                                           (msg.xmppId != nil && msg.xmppId == otherMsg.id) ||
+                                           (otherMsg.xmppId != nil && msg.xmppId != nil && otherMsg.xmppId == msg.xmppId) {
+                                            return true
+                                        }
+                                        
+                                        // Match by content and user (fallback)
+                                        if otherMsg.body == msg.body &&
+                                           (otherMsg.user.id == msg.user.id || 
+                                            otherMsg.user.xmppUsername == msg.user.xmppUsername) {
+                                            return true
+                                        }
+                                        
+                                        return false
+                                    }
+                                    // Only show pending if there's NO confirmed version
+                                    return !hasConfirmedVersion
+                                }
+                                
+                                // Keep all non-pending messages
+                                return true
+                            }
+                            
+                            ForEach(Array(filteredMessages.enumerated()), id: \.element.id) { index, message in
+                                let previousMessage = index > 0 ? filteredMessages[index - 1] : nil
+                                let nextMessage = index < filteredMessages.count - 1 ? filteredMessages[index + 1] : nil
                                 
                                 // Check if we need to show date separator
                                 let showDateSeparator = shouldShowDateSeparator(
@@ -1018,6 +1057,14 @@ struct MessageBubbleView: View {
                     if !isUser {
                         Spacer()
                     }
+                    
+                    // Show "sending..." text for pending messages (like in web app)
+                    if isUser, let pending = message.pending, pending {
+                        Text("sending...")
+                            .font(.caption2)
+                            .foregroundColor(.white.opacity(0.7))
+                    }
+                    
                     Text(message.date, style: .time)
                         .font(.caption2)
                         .foregroundColor(isUser ? .white.opacity(0.7) : .gray)
@@ -1196,8 +1243,25 @@ struct MessageStatusIndicatorView: View {
                         .font(.caption2)
                         .foregroundColor(.red)
                 }
+            } else if message.xmppId != nil {
+                // Message sent and confirmed by server - show double checkmark
+                // TODO: Add read receipt logic to determine if actually read by others
+                // For now, show double checkmark for all confirmed messages
+                ZStack {
+                    // First checkmark (behind)
+                    Image(systemName: "checkmark")
+                        .font(.caption2)
+                        .foregroundColor(.white.opacity(0.7))
+                        .offset(x: 0, y: 0)
+                    // Second checkmark (overlapping, slightly offset)
+                    Image(systemName: "checkmark")
+                        .font(.caption2)
+                        .foregroundColor(.white.opacity(0.7))
+                        .offset(x: 3, y: 0)
+                }
+                .frame(width: 16, height: 12)
             } else {
-                // Message sent successfully
+                // Message sent but not yet confirmed - show single checkmark
                 Image(systemName: "checkmark")
                     .font(.caption2)
                     .foregroundColor(.white.opacity(0.7))
