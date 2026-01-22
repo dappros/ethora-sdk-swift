@@ -185,6 +185,69 @@ public class StanzaHandlers {
         print("🗑️ Unregistered get-history collector: queryId=\(queryId)")
     }
     
+    /// Handle IQ error responses for get-history queries
+    /// This is called when the server returns an error for a MAM query
+    public func onIQError(_ stanza: XMPPStanza) {
+        // Check if this is an IQ error response
+        guard stanza.name == "iq",
+              stanza.attributes["type"] == "error" else {
+            return
+        }
+        
+        let id = stanza.attributes["id"] ?? ""
+        let from = stanza.attributes["from"] ?? ""
+        
+        // Check if this is a get-history error
+        if id.hasPrefix("get-history:") {
+            print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            print("❌ GET-HISTORY IQ ERROR RECEIVED:")
+            print("   Query ID: \(id)")
+            print("   From: \(from)")
+            
+            // Extract error details
+            var errorType = "unknown"
+            var errorCondition = "unknown"
+            var errorText = ""
+            
+            if let errorNode = stanza.getChild("error") {
+                errorType = errorNode.attributes["type"] ?? "unknown"
+                
+                // Common error conditions
+                for child in errorNode.children {
+                    if child.attributes["xmlns"]?.contains("xmpp-stanzas") == true {
+                        errorCondition = child.name
+                    }
+                    if child.name == "text" {
+                        errorText = child.text ?? ""
+                    }
+                }
+            }
+            
+            print("   Error Type: \(errorType)")
+            print("   Error Condition: \(errorCondition)")
+            if !errorText.isEmpty {
+                print("   Error Text: \(errorText)")
+            }
+            print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            
+            // Extract room JID from 'from' attribute
+            let roomJID = from.components(separatedBy: "/").first ?? from
+            
+            // Post notification for UI to handle
+            NotificationCenter.default.post(
+                name: NSNotification.Name("XMPPHistoryLoadFailed"),
+                object: nil,
+                userInfo: [
+                    "roomJID": roomJID,
+                    "queryId": id,
+                    "errorType": errorType,
+                    "errorCondition": errorCondition,
+                    "errorText": errorText
+                ]
+            )
+        }
+    }
+    
     /// Handle reaction messages (onReactionMessage from TypeScript)
     public func onReactionMessage(_ stanza: XMPPStanza) {
         guard let id = stanza.attributes["id"],

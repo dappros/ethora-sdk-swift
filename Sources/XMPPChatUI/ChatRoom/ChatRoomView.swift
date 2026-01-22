@@ -9,15 +9,14 @@ import SwiftUI
 #if os(macOS)
 import AppKit
 #endif
+#if os(iOS)
+import WebKit
+import AVKit
+import PhotosUI
+import UniformTypeIdentifiers
+#endif
 import XMPPChatCore
-
-// Preference key for first message position tracking
-struct FirstMessagePositionKey: PreferenceKey {
-    static var defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = nextValue()
-    }
-}
+import AVFoundation
 
 // Preference key for scroll metrics tracking (matches TypeScript getScrollParams)
 struct ScrollMetrics: Equatable {
@@ -45,8 +44,6 @@ public struct ChatRoomView: View {
     @Environment(\.presentationMode) var presentationMode
     @ObservedObject var viewModel: ChatRoomViewModel
     @State private var messageText: String = ""
-    @State private var firstMessageY: CGFloat = 0
-    @State private var hasTriggeredLoad: Bool = false
     @State private var scrollOffset: CGFloat = 0
     @State private var showScrollButton: Bool = false
     @State private var newMessagesCount: Int = 0
@@ -58,12 +55,15 @@ public struct ChatRoomView: View {
     @State private var isUserScrolledUp: Bool = false
     @State private var atBottom: Bool = true
     @State private var scrollProxy: ScrollViewProxy?
-    @State private var hasTriggeredLoadAt85: Bool = false
     @FocusState private var isInputFocused: Bool
     @State private var showConnectionStatus: Bool = true
     @State private var showSearch: Bool = false
     @State private var showRoomInfo: Bool = false
     @State private var selectedMessageForMenu: Message? = nil
+    @State private var showThread: Bool = false
+    @State private var selectedMessageForThread: Message? = nil
+    @State private var showReportModal: Bool = false
+    @State private var messageToReport: Message? = nil
     @ObservedObject private var connectionManager: ConnectionManager
     
     public init(viewModel: ChatRoomViewModel) {
@@ -71,32 +71,40 @@ public struct ChatRoomView: View {
         self._connectionManager = ObservedObject(wrappedValue: ConnectionManager.shared)
     }
     
-    public var body: some View {
-        VStack(spacing: 0) {
-            // Connection Status
-            if showConnectionStatus {
-                ConnectionStatusView(connectionManager: connectionManager)
+    // Helper function to build messages list
+    @ViewBuilder
+    private func buildMessagesList(proxy: ScrollViewProxy) -> some View {
+        LazyVStack(spacing: 8) {
+            // Error message banner at top (if there's an error)
+            if let errorMessage = viewModel.loadError {
+                VStack(spacing: 8) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundColor(.orange)
+                        Text(errorMessage)
+                            .font(.caption)
+                            .foregroundColor(.primary)
+                        Spacer()
+                        Button(action: {
+                            // Retry loading messages
+                            viewModel.loadError = nil
+                            viewModel.loadMessages(forceReload: true)
+                        }) {
+                            Text("Retry")
+                                .font(.caption)
+                                .fontWeight(.semibold)
+                                .foregroundColor(.blue)
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(Color.orange.opacity(0.1))
+                    .cornerRadius(8)
+                }
+                .padding(.horizontal)
+                .padding(.top, 8)
             }
             
-            // Header
-            ChatHeaderView(
-                room: viewModel.room,
-                onBack: {
-                    presentationMode.wrappedValue.dismiss()
-                },
-                onInfo: {
-                    showRoomInfo = true
-                }
-            )
-            
-            // Off-Clinic Hours Banner
-            OffClinicHoursBanner()
-            
-            // Messages List
-            ZStack {
-            ScrollViewReader { proxy in
-                ScrollView {
-                        LazyVStack(spacing: 8) {
                             // Loader at top when loading more (matches TypeScript)
                             if viewModel.isLoadingMore {
                                 HStack {
@@ -128,20 +136,18 @@ public struct ChatRoomView: View {
                                         .padding(.vertical, 8)
                                 }
                                 
-                                // Determine if message is from current user
-                                // Check both database ID and XMPP username
-                                let isUser: Bool = {
-                                    if message.user.id == viewModel.currentUserId {
-                                        return true
-                                    }
-                                    if let currentUserXmpp = viewModel.currentUserXmppUsername,
-                                       let messageUserXmpp = message.user.xmppUsername {
-                                        // Normalize usernames for comparison (lowercase, trim)
-                                        return currentUserXmpp.lowercased().trimmingCharacters(in: .whitespaces) == 
-                                               messageUserXmpp.lowercased().trimmingCharacters(in: .whitespaces)
-                                    }
+                                // Determine if message is from current user - break up complex expression
+                                let isCurrentUserById = message.user.id == viewModel.currentUserId
+                                let isCurrentUserByXmpp: Bool = {
+                                    guard let currentUserXmpp = viewModel.currentUserXmppUsername,
+                                          let messageUserXmpp = message.user.xmppUsername else {
                                     return false
+                                    }
+                                    let normalizedCurrent = currentUserXmpp.lowercased().trimmingCharacters(in: .whitespaces)
+                                    let normalizedMessage = messageUserXmpp.lowercased().trimmingCharacters(in: .whitespaces)
+                                    return normalizedCurrent == normalizedMessage
                                 }()
+                                let isUser = isCurrentUserById || isCurrentUserByXmpp
                                 
                             MessageBubbleView(
                                 message: message,
@@ -156,28 +162,109 @@ public struct ChatRoomView: View {
                                         if message.pending == false && message.xmppId == nil {
                                             viewModel.resendMessage(message)
                                         }
-                                    }
+                                    },
+                                    onReactionTap: { emoji in
+                                        viewModel.addReaction(messageId: message.id, emoji: emoji)
+                                    },
+                                    onReply: {
+                                        selectedMessageForThread = message
+                                        showThread = true
+                                    },
+                                    onEdit: isUser ? {
+                                        viewModel.isEditing = true
+                                        viewModel.editText = message.body
+                                        viewModel.editMessageId = message.id
+                                        messageText = message.body
+                                    } : nil,
+                                    onDelete: isUser ? {
+                                        viewModel.deleteMessage(message.id)
+                                    } : nil,
+                                    onReport: !isUser ? {
+                                        messageToReport = message
+                                        showReportModal = true
+                                    } : nil
                             )
                             .id(message.id)
-                            .background(
-                                // Track position of first message (oldest) to detect scroll
-                                Group {
-                                    if index == 0 {
-                                        GeometryReader { geometry in
-                                            Color.clear
-                                                .preference(
-                                                    key: FirstMessagePositionKey.self,
-                                                    value: geometry.frame(in: .named("messageScroll")).minY
-                                                )
-                                        }
-                                    }
+            }
+        }
+        .padding()
+    }
+    
+    public var body: some View {
+        VStack(spacing: 0) {
+            // Connection Status
+            if showConnectionStatus {
+                ConnectionStatusView(connectionManager: connectionManager)
+            }
+            
+            // Header
+            ChatHeaderView(
+                room: viewModel.room,
+                onBack: {
+                    presentationMode.wrappedValue.dismiss()
+                },
+                onInfo: {
+                    showRoomInfo = true
+                }
+            )
+            
+            // Off-Clinic Hours Banner
+            OffClinicHoursBanner()
+            
+            // Messages List
+            ZStack {
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        buildMessagesList(proxy: proxy)
+                    }
+                    .coordinateSpace(name: "messageScroll")
+                    .sheet(isPresented: $showThread) {
+                        if let message = selectedMessageForThread,
+                           let currentUser = UserStore.shared.currentUser {
+                            ThreadView(
+                                activeMessage: message,
+                                currentUser: currentUser,
+                                onClose: {
+                                    showThread = false
+                                    selectedMessageForThread = nil
+                                },
+                                onSendMessage: { text, alsoSendToMain in
+                                    viewModel.sendReply(messageId: message.id, text: text, alsoSendToMain: alsoSendToMain)
+                                },
+                                onSendMedia: { data, type in
+                                    viewModel.sendMedia(data: data, type: type)
                                 }
                             )
                         }
                     }
-                    .padding()
-                }
-                    .coordinateSpace(name: "messageScroll")
+                    .sheet(isPresented: $showReportModal) {
+                        if let message = messageToReport {
+                            ReportModal(
+                                type: .message,
+                                onReport: { reason, additionalInfo in
+                                    Task {
+                                        do {
+                                            // Extract chat name from room JID
+                                            let chatName = viewModel.room.jid.components(separatedBy: "@").first ?? viewModel.room.jid
+                                            let _ = try await RoomsAPI.postReportMessage(
+                                                chatName: chatName,
+                                                messageId: message.id,
+                                                category: reason,
+                                                text: additionalInfo.isEmpty ? nil : additionalInfo
+                                            )
+                                            print("✅ Message reported successfully")
+                                        } catch {
+                                            print("❌ Failed to report message: \(error.localizedDescription)")
+                                        }
+                                    }
+                                },
+                                onClose: {
+                                    showReportModal = false
+                                    messageToReport = nil
+                                }
+                            )
+                        }
+                    }
                     .sheet(isPresented: $showRoomInfo) {
                         RoomInfoModal(
                             room: viewModel.room,
@@ -214,21 +301,29 @@ public struct ChatRoomView: View {
                     )
                     .refreshable {
                         // Pull to refresh - load latest messages
+                        // This also retries after errors
                         print("🔄 Pull to refresh triggered from UI")
-                        hasTriggeredLoad = false // Reset trigger flag
-                        hasTriggeredLoadAt85 = false // Reset 85% trigger flag
+                        
+                        // Clear any errors when user pulls to refresh
+                        viewModel.loadError = nil
                         
                         // Викликаємо refreshMessages для завантаження нових повідомлень
                         viewModel.refreshMessages()
                         
-                        // Чекаємо, поки повідомлення завантажаться
-                        // Перевіряємо прапорець isRefreshing
+                        // Wait for refresh to complete (isRefreshing becomes false)
+                        // This allows the refreshable spinner to show properly
                         var attempts = 0
-                        let maxAttempts = 30 // 3 секунди (30 * 100ms)
+                        let maxAttempts = 60 // 6 seconds (60 * 100ms) - longer timeout
                         
                         while attempts < maxAttempts && viewModel.isRefreshing {
                             try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
                             attempts += 1
+                        }
+                        
+                        // Force clear isRefreshing if still set after timeout
+                        if viewModel.isRefreshing {
+                            viewModel.isRefreshing = false
+                            print("⏱️ Force clearing isRefreshing after timeout")
                         }
                         
                         if !viewModel.isRefreshing {
@@ -238,22 +333,14 @@ public struct ChatRoomView: View {
                         }
                     }
                     .onPreferenceChange(ScrollMetricsKey.self) { metrics in
-                        // Debounced scroll check (matches TypeScript onScroll with 50ms timeout)
-                        checkAtBottom(metrics: metrics, proxy: proxy)
-                        // Перевірка 85% прокрутки для завантаження
-                        checkScrollPercentageForLoad(metrics: metrics)
+                        // Debounced scroll handler (combines checkAtBottom and checkIfLoadMoreMessages)
+                        handleScroll(metrics: metrics, proxy: proxy)
                     }
                     .onPreferenceChange(ContentHeightKey.self) { height in
                         contentHeight = height
                     }
-                    .onPreferenceChange(FirstMessagePositionKey.self) { firstMessageY in
-                        self.firstMessageY = firstMessageY
-                        checkAndLoadMoreIfNeeded(firstMessageY: firstMessageY)
-                    }
                     .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("MessagesLoaded"))) { notification in
-                        // Reset trigger flags when messages finish loading
-                        hasTriggeredLoad = false
-                        hasTriggeredLoadAt85 = false
+                        // Messages finished loading - scroll position restoration happens in viewModel
                         
                         // Отримуємо фактичну кількість повідомлень з notification
                         let userInfo = notification.userInfo ?? [:]
@@ -453,27 +540,52 @@ public struct ChatRoomView: View {
             }
             
             // Input Area
-            ChatInputView(
-                text: $messageText,
-                onSend: {
-                    viewModel.sendMessage(messageText)
+            ConfigurableChatInputView(
+                messageText: $messageText,
+                onSendMessage: { text in
+                    viewModel.stopTyping() // Stop typing when sending
+                    if viewModel.isEditing, let messageId = viewModel.editMessageId {
+                        viewModel.editMessage(messageId, newText: text)
+                        viewModel.cancelEdit()
                     messageText = ""
+                    } else {
+                        viewModel.sendMessage(text)
+                        messageText = ""
+                    }
                 },
                 onSendMedia: { data, type in
+                    viewModel.stopTyping() // Stop typing when sending media
                     viewModel.sendMedia(data: data, type: type)
                 },
                 isEditing: viewModel.isEditing,
-                editText: viewModel.editText,
+                editMessageId: viewModel.editMessageId,
                 onCancelEdit: {
+                    viewModel.stopTyping() // Stop typing when canceling edit
                     viewModel.cancelEdit()
-                }
+                    messageText = ""
+                },
+                customComponent: viewModel.config?.customComponents?.customInputComponent
             )
             .focused($isInputFocused)
+            .onChange(of: messageText) { _ in
+                // Start typing when user types (debounced in startTyping)
+                if !messageText.isEmpty {
+                    viewModel.startTyping()
+                } else {
+                    viewModel.stopTyping()
+                }
+            }
+            .onChange(of: isInputFocused) { focused in
+                // Stop typing when input loses focus
+                if !focused {
+                    viewModel.stopTyping()
+                }
+            }
         }
         // Web-like background
         .background(
             Color(red: 0.98, green: 0.98, blue: 0.99)
-                .ignoresSafeArea()
+            .ignoresSafeArea()
         )
         #if os(iOS)
         .navigationBarHidden(true)
@@ -503,10 +615,6 @@ public struct ChatRoomView: View {
     
     /// Check if at bottom and handle scroll button (matches TypeScript checkAtBottom)
     private func checkAtBottom(metrics: ScrollMetrics, proxy: ScrollViewProxy) {
-        // Debounce: Use async to simulate TypeScript's setTimeout
-        Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 50_000_000) // 50ms debounce
-            
             // Calculate distance from bottom (matches TypeScript exactly)
             let distanceFromBottom = metrics.scrollHeight - metrics.clientHeight - metrics.scrollTop
             
@@ -518,118 +626,98 @@ public struct ChatRoomView: View {
             
             let scrolledUp = distanceFromBottom > 150
             
+        // Match web version logic exactly:
+        // - Show button when scrolled up (> 150px from bottom)
+        // - Hide button and scroll when at bottom (<= 5px from bottom)
+        // - Hide button when near bottom (between 5px and 150px)
             if scrolledUp {
                 showScrollButton = true
             } else if isAtBottom {
                 scrollToBottom(proxy: proxy)
-            }
-            
-            // Логіка завантаження при скролі > 85% буде в checkScrollPercentageForLoad
-            
-            // Check if we should load more messages (matches TypeScript checkIfLoadMoreMessages)
-            // TypeScript: if (params.top >= 150 || isLoadingMore.current) return;
-            if metrics.scrollTop < 150 && !viewModel.isLoadingMore {
-                checkAndLoadMoreIfNeeded(firstMessageY: firstMessageY)
-            }
+            showScrollButton = false
+            newMessagesCount = 0
+        } else if isNearBottom {
+            // Near bottom but not exactly at bottom: hide button
+            showScrollButton = false
         }
     }
     
-    /// Перевірка відсотка прокрутки для завантаження історії (> 85%)
-    private func checkScrollPercentageForLoad(metrics: ScrollMetrics) {
-        // Обчислюємо відсоток прокрутки на основі scrollTop та загальної висоти контенту
-        // scrollTop - це скільки ми проскролили від початку
-        // contentHeight - це загальна висота контенту
-        // clientHeight - це висота видимої області
+    /// Single trigger point for loading more messages (matches web version)
+    /// TypeScript: if (params.top >= 150 || isLoadingMore.current) return;
+    private func checkIfLoadMoreMessages(metrics: ScrollMetrics) {
+        // Guard: Don't load if already loading or history complete
+        guard !viewModel.isLoadingMore else { return }
+        guard viewModel.room.historyComplete != true else { return }
         
-        guard contentHeight > 0 && metrics.clientHeight > 0 else { return }
+        // Guard: Only trigger when near top (scrollTop < 150px) - matches TypeScript
+        guard metrics.scrollTop < 150 else { return }
         
-        // Загальна висота, яку можна прокрутити
-        let totalScrollableHeight = max(contentHeight - metrics.clientHeight, 1)
+        // Get first message (skip delimiter-new) - matches web version exactly
+        let firstMessage = viewModel.messages.first(where: { $0.id != "delimiter-new" }) 
+                         ?? viewModel.messages.first
         
-        // Відсоток прокрутки: скільки ми проскролили від загальної висоти
-        let scrollPercentage = (metrics.scrollTop / totalScrollableHeight) * 100
-        
-        // Якщо проскролили більше ніж на 85% і ще не викликали завантаження
-        if scrollPercentage > 85 && !hasTriggeredLoadAt85 && !viewModel.isLoadingMore && viewModel.room.historyComplete != true {
-        // Знаходимо найстаріше повідомлення та використовуємо його ID (matching TypeScript)
-        let oldestMessage = viewModel.messages.first(where: { $0.id != "delimiter-new" }) ?? viewModel.messages.first
-        
-        guard let message = oldestMessage else { return }
-        
-        // Використовуємо message.id конвертований в Int64 (matching TypeScript: Number(firstMessageId))
-        let beforeMessageId: Int64? = Int64(message.id)
-        
-        if let messageId = beforeMessageId {
-            print("📜 Завантаження історії при скролі > 85%: scrollPercentage=\(Int(scrollPercentage))%, scrollTop=\(Int(metrics.scrollTop)), contentHeight=\(Int(contentHeight)), beforeMessageId=\(messageId)")
-            hasTriggeredLoadAt85 = true
-            viewModel.loadMoreMessages(max: 30, beforeTimestamp: messageId)
-        }
+        guard let message = firstMessage else { 
+            print("⚠️ checkIfLoadMoreMessages: No first message found")
+            return 
         }
         
-        // Скидаємо прапорець, якщо проскролили назад (менше 85%)
-        if scrollPercentage <= 85 {
-            hasTriggeredLoadAt85 = false
+        // Match web version: Number(firstMessageId) - try to convert message.id to number
+        // This matches TypeScript: loadMoreMessages(firstMessage.roomJid, 30, Number(firstMessageId))
+        let beforeTimestamp: Int64? = {
+            // First, try to convert message.id directly to Int64 (like Number() in TypeScript)
+            if let numericId = Int64(message.id) {
+                print("📜 Using message.id as numeric: \(numericId)")
+                return numericId
+            }
+            
+            // If message.id is not numeric (e.g., UUID), try timestamp
+            if let timestamp = message.timestamp {
+                print("📜 Using message.timestamp: \(timestamp)")
+                return timestamp
+            }
+            
+            // Last resort: convert date to timestamp (milliseconds)
+            let dateTimestamp = Int64(message.date.timeIntervalSince1970 * 1000)
+            print("📜 Using date conversion: \(dateTimestamp)")
+            return dateTimestamp
+        }()
+        
+        guard let before = beforeTimestamp else {
+            print("❌ checkIfLoadMoreMessages: Could not determine beforeTimestamp for message.id=\(message.id)")
+            return
+        }
+        
+        print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        print("📜 Triggering loadMoreMessages:")
+        print("   scrollTop: \(Int(metrics.scrollTop))")
+        print("   firstMessage.id: \(message.id)")
+        print("   firstMessage.timestamp: \(message.timestamp?.description ?? "nil")")
+        print("   beforeTimestamp (to send): \(before)")
+        print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        
+        // Save scroll position before loading
+        if let firstMsg = viewModel.messages.first {
+            viewModel.saveScrollPositionBeforeLoad()
+        }
+        
+        // Load more messages - matches web: loadMoreMessages(roomJid, 30, Number(firstMessageId))
+        viewModel.loadMoreMessages(max: 30, beforeTimestamp: before)
+    }
+    
+    /// Debounced scroll handler - combines checkAtBottom and checkIfLoadMoreMessages
+    private func handleScroll(metrics: ScrollMetrics, proxy: ScrollViewProxy) {
+        // Debounce to prevent excessive calls (100ms - better performance than 50ms)
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 100_000_000) // 100ms debounce
+            
+            // Check if at bottom (for scroll button visibility)
+            checkAtBottom(metrics: metrics, proxy: proxy)
+            
+            // Check if should load more (single trigger point)
+            checkIfLoadMoreMessages(metrics: metrics)
         }
     }
     
-    private func checkAndLoadMoreIfNeeded(firstMessageY: CGFloat) {
-        // TypeScript logic: if (params.top >= 150) return;
-        // params.top is scrollTop - distance from top
-        // We should load when scrollTop < 150 (near the top)
-        
-        // firstMessageY is the Y position of first message in scroll coordinate space
-        // When at top: firstMessageY ≈ padding (positive, e.g., 16)
-        // When scrolled down: firstMessageY becomes negative
-        
-        // Convert to scrollTop: how far we've scrolled from top
-        let scrollTop = max(0, -firstMessageY)
-        
-        // 150px threshold (matching TypeScript: params.top >= 150 means don't load)
-        let threshold: CGFloat = 150
-        let shouldLoad = scrollTop < threshold
-        
-        // Debug logging (only when near threshold)
-        if shouldLoad || scrollTop < 200 {
-            print("📜 SCROLL CHECK: firstMessageY=\(Int(firstMessageY)), scrollTop=\(Int(scrollTop)), threshold=\(Int(threshold)), shouldLoad=\(shouldLoad)")
-            print("   hasTriggered=\(hasTriggeredLoad), isLoadingMore=\(viewModel.isLoadingMore), historyComplete=\(viewModel.room.historyComplete ?? false), msgCount=\(viewModel.messages.count)")
-        }
-        
-        // Check all conditions for loading more
-        guard shouldLoad else {
-            // Reset trigger flag when scrolled away from top
-            if hasTriggeredLoad {
-                hasTriggeredLoad = false
-                print("📜 SCROLL: Reset trigger flag (scrolled away from top)")
-            }
-            return
-        }
-        guard !hasTriggeredLoad else {
-            return
-        }
-        guard !viewModel.isLoadingMore else {
-            return
-        }
-        guard viewModel.room.historyComplete != true else {
-            return
-        }
-        guard viewModel.messages.count > 0 else {
-            return
-        }
-        
-        // Знаходимо найстаріше повідомлення та використовуємо його ID (matching TypeScript)
-        let oldestMessage = viewModel.messages.first(where: { $0.id != "delimiter-new" }) ?? viewModel.messages.first
-        
-        guard let message = oldestMessage else { return }
-        
-        // Використовуємо message.id конвертований в Int64 (matching TypeScript: Number(firstMessageId))
-        let beforeMessageId: Int64? = Int64(message.id)
-        
-        if let messageId = beforeMessageId {
-            print("📜 ✅✅✅ TRIGGERING loadMoreMessages - beforeMessageId: \(messageId) ✅✅✅")
-            hasTriggeredLoad = true
-            viewModel.loadMoreMessages(max: 30, beforeTimestamp: messageId)
-        }
-    }
 }
 
 // MARK: - Chat Header
@@ -706,8 +794,14 @@ struct MessageBubbleView: View {
     let previousMessage: Message?
     let onLongPress: (() -> Void)?
     let onRetry: (() -> Void)?
+    let onReactionTap: ((String) -> Void)?
+    let onReply: (() -> Void)?
+    let onEdit: (() -> Void)?
+    let onDelete: (() -> Void)?
+    let onReport: (() -> Void)?
     
     @State private var showContextMenu = false
+    @State private var showReactionPicker = false
     
     var body: some View {
         // Check if this is a delimiter message
@@ -720,23 +814,23 @@ struct MessageBubbleView: View {
         // Check if previous message is from same user
         let isConsecutive = previousMessage?.user.id == message.user.id
         
-        return AnyView(
-            HStack(alignment: .bottom, spacing: 4) {
-                // Avatar on left (for others' messages)
+        // Build avatar view separately to reduce complexity
+        @ViewBuilder
+        func buildAvatarView() -> some View {
             if !isUser {
                     if showAvatar && !isConsecutive {
-                        SizedAvatarView(user: message.user, size: 32)
+                    SizedAvatarView(user: message.user, size: 32)
                     } else {
-                        // Spacer to align consecutive messages
-                        Color.clear
-                    .frame(width: 32, height: 32)
+                    Color.clear.frame(width: 32, height: 32)
                 }
                 } else {
                     Spacer()
             }
+            }
             
-                VStack(alignment: isUser ? .trailing : .leading, spacing: 2) {
-                    // Message bubble
+        // Build message content separately
+        @ViewBuilder
+        func buildMessageContent() -> some View {
             VStack(alignment: isUser ? .trailing : .leading, spacing: 4) {
                         // Show username only for others and if not consecutive
                         if !isUser && (!isConsecutive || !showAvatar) {
@@ -747,7 +841,55 @@ struct MessageBubbleView: View {
                 }
                 
                 // Check if this is a media message and determine MIME type
+                buildMediaOrTextContent()
+                
+                // Reactions
+                if let reactions = message.reaction, !reactions.isEmpty {
+                    ReactionBadgesView(reactions: reactions)
+                        .padding(.top, 4)
+                }
+                
+                // Time and status
+                HStack(spacing: 4) {
+                    if !isUser {
+                        Spacer()
+                    }
+                    Text(message.date, style: .time)
+                        .font(.caption2)
+                        .foregroundColor(isUser ? .white.opacity(0.7) : .gray)
+                    
+                    if isUser {
+                        MessageStatusIndicatorView(message: message, onRetry: onRetry)
+                    }
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(isUser ? Color.blue : Color.white)
+            .cornerRadius(16)
+            .shadow(color: .black.opacity(0.05), radius: 1, x: 0, y: 1)
+            .overlay(
                 Group {
+                    if showReactionPicker {
+                        ReactionPickerView(
+                            onReactionSelected: { emoji in
+                                onReactionTap?(emoji)
+                                showReactionPicker = false
+                            },
+                            onDismiss: {
+                                showReactionPicker = false
+                            }
+                        )
+                        .offset(y: -60)
+                    }
+                },
+                alignment: .top
+            )
+        }
+        
+        // Build media or text content
+        @ViewBuilder
+        func buildMediaOrTextContent() -> some View {
                     let hasMediaFlag = message.isMediafile == "true"
                     let hasMediaBody = message.body.lowercased() == "media"
                     let hasLocation = message.location != nil && !message.location!.isEmpty
@@ -771,50 +913,35 @@ struct MessageBubbleView: View {
                         )
                     } else {
                         if message.body.lowercased() != "media" {
-                            UniversalMarkdownTextView(
-                                text: message.body,
-                                foregroundColor: isUser ? .white : .black
-                            )
-                            .fixedSize(horizontal: false, vertical: true)
-                            .multilineTextAlignment(.leading)
+                    UniversalMarkdownTextView(
+                        text: message.body,
+                        foregroundColor: isUser ? .white : .black
+                    )
+                                .fixedSize(horizontal: false, vertical: true)
+                                .multilineTextAlignment(.leading)
                         }
                     }
                 }
                         
-                        HStack(spacing: 4) {
-                            if !isUser {
-                                Spacer() // Push time to right for others too
-                            }
-                            Text(message.date, style: .time)
-                                .font(.caption2)
-                                .foregroundColor(isUser ? .white.opacity(0.7) : .gray)
-                            
-                            // Message status indicator (only for user's messages)
-                            if isUser {
-                                MessageStatusIndicatorView(message: message, onRetry: onRetry)
-                            }
-                        }
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(isUser ? Color.blue : Color.white)
-                    .cornerRadius(16)
-                    .shadow(color: .black.opacity(0.05), radius: 1, x: 0, y: 1)
+        return AnyView(
+            HStack(alignment: .bottom, spacing: 4) {
+                buildAvatarView()
+                
+                VStack(alignment: isUser ? .trailing : .leading, spacing: 2) {
+                    buildMessageContent()
                 }
                 .frame(maxWidth: {
                         #if os(iOS)
                     return UIScreen.main.bounds.width * 0.75
                         #else
-                    return 300 // Fixed max width for macOS
+                    return 300
                         #endif
                 }(), alignment: isUser ? .trailing : .leading)
                 .contextMenu {
                     MessageContextMenuItems(
                         message: message,
                         isUser: isUser,
-                        onReply: {
-                            // TODO: Implement reply
-                        },
+                        onReply: onReply,
                         onCopy: {
                             #if os(iOS)
                             UIPasteboard.general.string = message.body
@@ -823,29 +950,25 @@ struct MessageBubbleView: View {
                             NSPasteboard.general.setString(message.body, forType: .string)
                             #endif
                         },
-                        onEdit: isUser ? {
-                            // TODO: Implement edit
-                        } : nil,
-                        onDelete: isUser ? {
-                            // TODO: Implement delete
-                        } : nil,
-                        onReport: !isUser ? {
-                            // TODO: Implement report
-                        } : nil
+                        onEdit: onEdit,
+                        onDelete: onDelete,
+                        onReport: onReport
                     )
                 }
                 .onLongPressGesture {
                     onLongPress?()
+                    if onReactionTap != nil {
+                        showReactionPicker = true
+                    }
                     HapticFeedback.buttonPress()
                 }
                 
+                // Right avatar
                 if isUser {
                     if showAvatar && !isConsecutive {
                         SizedAvatarView(user: message.user, size: 32)
                     } else {
-                        // Spacer to align consecutive messages
-                        Color.clear
-                            .frame(width: 32, height: 32)
+                        Color.clear.frame(width: 32, height: 32)
                     }
                 } else {
                     Spacer()
@@ -958,8 +1081,14 @@ struct SizedAvatarView: View {
                         .frame(width: size, height: size)
                     .clipShape(Circle())
                 case .failure(let error):
+                    // Only log non-cancellation errors (cancellation is normal when views update)
+                    let _ = {
+                        if let urlError = error as? URLError, urlError.code != .cancelled {
+                            // Log actual errors (network failures, invalid URLs, etc.)
+                            print("⚠️ Error loading avatar (non-cancellation): \(error.localizedDescription)")
+                        }
+                    }()
                     // Fallback to initials if image fails to load
-                    let _ = print("Error loading avatar: \(error)")
                     InitialsAvatar(initials: initials, size: size)
                 case .empty:
                     // Show placeholder while loading, or initials
@@ -1226,7 +1355,7 @@ struct ChatInputView: View {
             }
             
             // Audio recorder when recording
-            #if os(iOS)
+                #if os(iOS)
             if isRecordingAudio {
                 AudioRecorderView(
                     isRecording: $isRecordingAudio,
@@ -1255,35 +1384,35 @@ struct ChatInputView: View {
     #if os(iOS)
     private var inputView: some View {
         HStack(spacing: 12) {
-            Menu {
+                Menu {
                 Button(action: {
-                    showImagePicker = true
-                }) {
-                    Label("Photo or Video", systemImage: "photo")
+                        showImagePicker = true
+                    }) {
+                        Label("Photo or Video", systemImage: "photo")
+                    }
+                    Button(action: {
+                        showDocumentPicker = true
+                    }) {
+                        Label("File", systemImage: "doc")
+                    }
+                } label: {
+                    Image(systemName: "plus.circle.fill")
+                        .font(.title2)
+                        .foregroundColor(.blue)
                 }
-                Button(action: {
-                    showDocumentPicker = true
-                }) {
-                    Label("File", systemImage: "doc")
+                .sheet(isPresented: $showImagePicker) {
+                    ImagePicker(onImageSelected: { imageData, mimeType in
+                        onSendMedia(imageData, mimeType)
+                    })
                 }
-            } label: {
-                Image(systemName: "plus.circle.fill")
-                    .font(.title2)
-                    .foregroundColor(.blue)
-            }
-            .sheet(isPresented: $showImagePicker) {
-                ImagePicker(onImageSelected: { imageData, mimeType in
-                    onSendMedia(imageData, mimeType)
-                })
-            }
-            .sheet(isPresented: $showDocumentPicker) {
-                DocumentPicker(onDocumentSelected: { fileData, fileName, mimeType in
-                    onSendMedia(fileData, mimeType)
-                })
-            }
+                .sheet(isPresented: $showDocumentPicker) {
+                    DocumentPicker(onDocumentSelected: { fileData, fileName, mimeType in
+                        onSendMedia(fileData, mimeType)
+                    })
+                }
             
             // Audio recording button
-            Button(action: {
+                Button(action: {
                 isRecordingAudio = true
             }) {
                 Image(systemName: "mic.fill")
@@ -1295,24 +1424,24 @@ struct ChatInputView: View {
             }
             
             // Text input with web-like styling
-            if #available(iOS 16.0, *) {
-                TextField("Type a message", text: $text, axis: .vertical)
+                if #available(iOS 16.0, *) {
+                    TextField("Type a message", text: $text, axis: .vertical)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 10)
                     .background(Color(red: 0.96, green: 0.97, blue: 0.99))
                     .cornerRadius(12)
-                    .lineLimit(1...5)
+                        .lineLimit(1...5)
                     .overlay(
                         RoundedRectangle(cornerRadius: 12)
                             .stroke(text.isEmpty ? Color.clear : Color.blue.opacity(0.3), lineWidth: 1)
                     )
-            } else {
-                TextField("Type a message", text: $text)
+                } else {
+                    TextField("Type a message", text: $text)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 10)
                     .background(Color(red: 0.96, green: 0.97, blue: 0.99))
                     .cornerRadius(12)
-                    .lineLimit(3)
+                        .lineLimit(3)
                     .overlay(
                         RoundedRectangle(cornerRadius: 12)
                             .stroke(text.isEmpty ? Color.clear : Color.blue.opacity(0.3), lineWidth: 1)
@@ -1335,8 +1464,8 @@ struct ChatInputView: View {
         .background(Color.white)
         .cornerRadius(15, corners: [.topLeft, .topRight])
         .shadow(color: Color.black.opacity(0.05), radius: 8, x: 0, y: -2)
-    }
-    #else
+                }
+                #else
     private var inputView: some View {
         HStack(spacing: 12) {
             Button(action: {
@@ -1347,24 +1476,24 @@ struct ChatInputView: View {
                     .foregroundColor(.blue)
             }
             
-            TextField("Type a message", text: $text)
-                .textFieldStyle(.roundedBorder)
-            
-            Button(action: {
-                if !text.isEmpty {
-                    onSend()
+                TextField("Type a message", text: $text)
+                    .textFieldStyle(.roundedBorder)
+                
+                Button(action: {
+                    if !text.isEmpty {
+                        onSend()
+                    }
+                }) {
+                    Image(systemName: "arrow.up.circle.fill")
+                        .font(.title2)
+                        .foregroundColor(text.isEmpty ? .gray : .blue)
                 }
-            }) {
-                Image(systemName: "arrow.up.circle.fill")
-                    .font(.title2)
-                    .foregroundColor(text.isEmpty ? .gray : .blue)
+                .disabled(text.isEmpty)
             }
-            .disabled(text.isEmpty)
-        }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
-    }
-    #endif
+        }
+        #endif
 }
 
 // MARK: - Media Message Preview
@@ -1471,9 +1600,14 @@ struct VideoPreview: View {
         VStack(alignment: .leading, spacing: 4) {
             Button(action: onTap) {
                 if let url = URL(string: videoURL) {
+                    #if os(iOS)
                     VideoPlayer(player: AVPlayer(url: url))
                         .frame(width: 300, height: 200)
                         .cornerRadius(12)
+                    #else
+                    Text("Video preview")
+                        .foregroundColor(.secondary)
+                    #endif
                 } else {
                     // Fallback if URL is invalid
                     HStack {
@@ -1617,7 +1751,12 @@ struct FilePreviewModal: View {
                         if mimeType.starts(with: "image/") {
                             FullScreenImageView(imageURL: fileURL, fileName: message.originalName ?? message.fileName ?? "Image")
                         } else if mimeType.starts(with: "video/") {
+                            #if os(iOS)
                             FullScreenVideoView(videoURL: fileURL)
+                            #else
+                            Text("Video playback not available on macOS")
+                                .foregroundColor(.secondary)
+                            #endif
                         } else if mimeType.contains("pdf") {
                             PDFViewerView(pdfURL: fileURL)
                         } else {
@@ -1748,6 +1887,7 @@ struct FullScreenImageView: View {
 }
 
 // MARK: - Full Screen Video View
+#if os(iOS)
 struct FullScreenVideoView: View {
     let videoURL: String
     
@@ -1755,6 +1895,7 @@ struct FullScreenVideoView: View {
         VideoPlayer(player: AVPlayer(url: URL(string: videoURL)!))
     }
 }
+#endif
 
 // MARK: - PDF Viewer View
 struct PDFViewerView: View {
@@ -1855,8 +1996,6 @@ func formatFileSize(_ sizeString: String) -> String {
 
 // MARK: - WebView for PDF (iOS only)
 #if os(iOS)
-import WebKit
-
 struct WebView: UIViewRepresentable {
     let url: URL
     
@@ -1872,14 +2011,8 @@ struct WebView: UIViewRepresentable {
 }
 #endif
 
-// MARK: - Video Player Import
-import AVKit
-
 // MARK: - Image Picker (iOS)
 #if os(iOS)
-import PhotosUI
-import UniformTypeIdentifiers
-
 struct ImagePicker: UIViewControllerRepresentable {
     let onImageSelected: (Data, String) -> Void
     

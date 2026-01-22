@@ -140,15 +140,33 @@ struct UserRowView: View {
         HStack(spacing: 12) {
             // User Avatar
             if let imageURL = user.profileImage, let url = URL(string: imageURL) {
-                AsyncImage(url: url) { image in
-                    image
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
-                } placeholder: {
-                    InitialsAvatarView(user: user)
+                AsyncImage(url: url) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                            .frame(width: 44, height: 44)
+                            .clipShape(Circle())
+                    case .failure(let error):
+                        // Only log non-cancellation errors
+                        let _ = {
+                            if let urlError = error as? URLError, urlError.code != .cancelled {
+                                // Log actual errors (not cancellations)
+                                print("⚠️ Error loading user avatar (non-cancellation): \(error.localizedDescription)")
+                            }
+                        }()
+                        // Always return initials view on failure
+                        InitialsAvatarView(user: user)
+                            .frame(width: 44, height: 44)
+                    case .empty:
+                        InitialsAvatarView(user: user)
+                            .frame(width: 44, height: 44)
+                    @unknown default:
+                        InitialsAvatarView(user: user)
+                            .frame(width: 44, height: 44)
+                    }
                 }
-                .frame(width: 44, height: 44)
-                .clipShape(Circle())
             } else {
                 InitialsAvatarView(user: user)
                     .frame(width: 44, height: 44)

@@ -469,6 +469,94 @@ public struct RoomsAPI {
         }
     }
     
+    // MARK: - Report Message
+    
+    /// Report a message
+    /// POST /chats/reports/{chatName}/messages/{messageId}
+    public static func postReportMessage(
+        chatName: String,
+        messageId: String,
+        category: String,
+        text: String? = nil,
+        baseURL: URL = URL(string: "https://api.ethoradev.com/v1")!,
+        appId: String? = nil,
+        didRefresh: Bool = false
+    ) async throws -> Bool {
+        let token = await MainActor.run {
+            UserStore.shared.token
+        }
+        
+        guard let token = token else {
+            throw RoomsAPIError.networkError("No user token available. Please login first.")
+        }
+        
+        let appIdToUse = appId ?? AppConfig.defaultAppId
+        let url = baseURL.appendingPathComponent("chats/reports/\(chatName)/messages/\(messageId)")
+        
+        struct ReportMessageBody: Codable {
+            let category: String
+            let text: String?
+        }
+        
+        let body = ReportMessageBody(category: category, text: text)
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue(token, forHTTPHeaderField: "Authorization")
+        request.setValue(appIdToUse, forHTTPHeaderField: "x-app-id")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.httpBody = try JSONEncoder().encode(body)
+        
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            
+            if let httpResponse = response as? HTTPURLResponse {
+                if httpResponse.statusCode == 401 && !didRefresh {
+                    let refreshToken = await MainActor.run {
+                        UserStore.shared.refreshToken
+                    }
+                    
+                    guard let refreshToken = refreshToken else {
+                        throw RoomsAPIError.httpError(401, "Token expired and no refresh token available")
+                    }
+                    
+                    do {
+                        let (newToken, newRefreshToken) = try await AuthAPI.refreshToken(
+                            refreshToken: refreshToken,
+                            baseURL: baseURL
+                        )
+                        
+                        await MainActor.run {
+                            UserStore.shared.updateTokens(token: newToken, refreshToken: newRefreshToken)
+                        }
+                        
+                        return try await postReportMessage(
+                            chatName: chatName,
+                            messageId: messageId,
+                            category: category,
+                            text: text,
+                            baseURL: baseURL,
+                            appId: appIdToUse,
+                            didRefresh: true
+                        )
+                    } catch {
+                        throw RoomsAPIError.httpError(401, "Token expired and refresh failed: \(error.localizedDescription)")
+                    }
+                }
+                
+                if !(200..<300).contains(httpResponse.statusCode) {
+                    let errorBody = String(data: data, encoding: .utf8) ?? "<no body>"
+                    throw RoomsAPIError.httpError(httpResponse.statusCode, errorBody)
+                }
+            }
+            
+            return true
+        } catch let urlError {
+            throw RoomsAPIError.networkError(urlError.localizedDescription)
+        }
+    }
+    
     // MARK: - Add Room Members
     
     /// Add members to a room

@@ -580,6 +580,9 @@ public struct ChatConfig {
     // Event Handlers
     public var eventHandlers: ChatEventHandlers?
     
+    // Custom Components
+    public var customComponents: CustomComponentsProtocol?
+    
     public init() {
         // Default initialization
     }

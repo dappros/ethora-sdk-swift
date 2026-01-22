@@ -17,12 +17,15 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
     @Published var composingUsers: [String] = []
     @Published var isEditing: Bool = false
     @Published var editText: String?
+    @Published var editMessageId: String?
     @Published var isLoading: Bool = false
     @Published var isLoadingMore: Bool = false  // For scroll-to-load
     @Published var isRefreshing: Bool = false  // For pull-to-refresh
+    @Published var loadError: String? = nil  // Error message when loading fails
     
     private let client: XMPPClient
     public let currentUserId: String
+    public let config: ChatConfig?
     
     // Helper to get current user's XMPP username from UserStore
     public var currentUserXmppUsername: String? {
@@ -49,10 +52,11 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
     // Callback to notify when room messages are updated
     public var onMessagesUpdated: ((Room) -> Void)?
     
-    public init(room: Room, client: XMPPClient, currentUserId: String) {
+    public init(room: Room, client: XMPPClient, currentUserId: String, config: ChatConfig? = nil) {
         self.room = room
         self.client = client
         self.currentUserId = currentUserId
+        self.config = config
         
         // Load cached messages immediately
         loadCachedMessages()
@@ -61,11 +65,12 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
     }
     
     private func setupObservers() {
-        // Set up delegate to receive real-time messages
-        // The XMPPClient delegate will call handleIncomingMessage for real-time messages
-        // History messages are handled directly in loadMessages()
-        client.delegate = self
-        print("✅ ChatRoomViewModel: Set as XMPPClient delegate")
+        // DON'T set as delegate - use NotificationCenter instead to avoid overwriting other chat rooms' delegates
+        // The XMPPClient should use NotificationCenter for broadcasting messages to all interested parties
+        // Only set delegate if no other delegate is set (to avoid conflicts)
+        // For now, we'll use NotificationCenter for all message handling
+        // client.delegate = self  // REMOVED: Causes conflicts when multiple chat rooms are open
+        print("✅ ChatRoomViewModel: Using NotificationCenter for message handling (no delegate conflict)")
         
         // Observe composing (typing indicator) notifications
         NotificationCenter.default.addObserver(
@@ -82,6 +87,157 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
             name: NSNotification.Name("XMPPHistoryComplete"),
             object: nil
         )
+        
+        // Observe reaction notifications
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleReactionNotification(_:)),
+            name: NSNotification.Name("XMPPReactionReceived"),
+            object: nil
+        )
+        
+        // Observe delete message notifications
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleDeleteNotification(_:)),
+            name: NSNotification.Name("XMPPMessageDeleted"),
+            object: nil
+        )
+        
+        // Observe edit message notifications
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleEditNotification(_:)),
+            name: NSNotification.Name("XMPPMessageEdited"),
+            object: nil
+        )
+        
+        // Observe incoming real-time messages via NotificationCenter (instead of delegate)
+        // This allows multiple chat rooms to receive messages without conflicts
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleIncomingMessageNotification(_:)),
+            name: NSNotification.Name("XMPPMessageReceived"),
+            object: nil
+        )
+        
+        // Observe history load failures for retry logic
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleHistoryLoadFailedNotification(_:)),
+            name: NSNotification.Name("XMPPHistoryLoadFailed"),
+            object: nil
+        )
+    }
+    
+    // MARK: - History Load Failure Handler
+    
+    @objc private func handleHistoryLoadFailedNotification(_ notification: Notification) {
+        guard let userInfo = notification.userInfo,
+              let roomJID = userInfo["roomJID"] as? String else {
+            return
+        }
+        
+        // Only handle failures for this room
+        let normalizedFailedRoom = roomJID.components(separatedBy: "/").first ?? roomJID
+        let normalizedCurrentRoom = room.jid.components(separatedBy: "/").first ?? room.jid
+        
+        guard normalizedFailedRoom == normalizedCurrentRoom else {
+            return
+        }
+        
+        print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        print("❌ ChatRoomViewModel: History load failed notification received")
+        print("   Room: \(roomJID)")
+        if let errorType = userInfo["errorType"] as? String {
+            print("   Error Type: \(errorType)")
+        }
+        if let errorCondition = userInfo["errorCondition"] as? String {
+            print("   Error Condition: \(errorCondition)")
+        }
+        if let errorText = userInfo["errorText"] as? String, !errorText.isEmpty {
+            print("   Error Text: \(errorText)")
+        }
+        print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        
+        Task { @MainActor in
+            isLoading = false
+            isRefreshing = false
+            
+            // Set user-friendly error message
+            if let errorCondition = userInfo["errorCondition"] as? String {
+                switch errorCondition {
+                case "not-allowed":
+                    loadError = "You don't have permission to view this chat's history."
+                case "item-not-found":
+                    loadError = "Chat history not found."
+                case "forbidden":
+                    loadError = "Access to chat history is forbidden."
+                case "feature-not-implemented":
+                    loadError = "Message history is not available for this chat."
+                default:
+                    loadError = "Failed to load messages. Pull down to retry."
+                }
+            } else if let errorText = userInfo["errorText"] as? String, !errorText.isEmpty {
+                loadError = errorText
+            } else {
+                loadError = "Failed to load messages. Pull down to retry."
+            }
+            
+            // Schedule retry with exponential backoff
+            scheduleHistoryRetry()
+        }
+    }
+    
+    // MARK: - Retry Logic
+    
+    private var historyRetryAttempts = 0
+    private let maxHistoryRetryAttempts = 3
+    
+    private func scheduleHistoryRetry() {
+        guard historyRetryAttempts < maxHistoryRetryAttempts else {
+            print("⚠️ Max retry attempts reached for history loading")
+            return
+        }
+        
+        historyRetryAttempts += 1
+        let delay = Double(historyRetryAttempts) * 2.0 // 2s, 4s, 6s
+        
+        print("⏳ Scheduling history retry attempt \(historyRetryAttempts)/\(maxHistoryRetryAttempts) in \(delay)s")
+        
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            
+            // Only retry if still no messages and client is connected
+            if messages.isEmpty && client.isFullyConnected() {
+                print("🔄 Retrying history load (attempt \(historyRetryAttempts))")
+                loadError = nil
+                loadMessages(forceReload: true)
+            }
+        }
+    }
+    
+    /// Reset retry counter (call this when history loads successfully)
+    private func resetHistoryRetry() {
+        historyRetryAttempts = 0
+    }
+    
+    @objc private func handleIncomingMessageNotification(_ notification: Notification) {
+        guard let userInfo = notification.userInfo,
+              let message = userInfo["message"] as? Message else {
+            return
+        }
+        
+        // Only handle messages for this room
+        let normalizedMessageRoom = message.roomJid.components(separatedBy: "/").first ?? message.roomJid
+        let normalizedCurrentRoom = room.jid.components(separatedBy: "/").first ?? room.jid
+        
+        guard normalizedMessageRoom == normalizedCurrentRoom else {
+            return
+        }
+        
+        // Handle the incoming message
+        handleIncomingMessage(message)
     }
     
     @objc private func handleComposingNotification(_ notification: Notification) {
@@ -126,11 +282,177 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
         
         print("📚 ChatRoomViewModel: History complete updated - complete: \(historyComplete)")
         
-        // Update room's historyComplete flag
+        // Clear errors and reset retry counter when history is successfully loaded
         Task { @MainActor in
+            if loadError != nil && !messages.isEmpty {
+                loadError = nil
+            }
+            
+            // Reset retry counter on successful load
+            resetHistoryRetry()
+            
+            // Update room's historyComplete flag
             self.room.historyComplete = historyComplete
             if historyComplete {
                 print("✅ ChatRoomViewModel: History is complete for room \(room.jid) - scroll-to-load disabled")
+            }
+        }
+    }
+    
+    @objc private func handleReactionNotification(_ notification: Notification) {
+        guard let userInfo = notification.userInfo,
+              let notificationRoomJID = userInfo["roomJID"] as? String,
+              let messageId = userInfo["messageId"] as? String,
+              let reactions = userInfo["reactions"] as? [String],
+              let from = userInfo["from"] as? String,
+              let data = userInfo["data"] as? [String: String] else {
+            return
+        }
+        
+        // Only handle for this room
+        let normalizedNotificationRoom = notificationRoomJID.components(separatedBy: "/").first ?? notificationRoomJID
+        let normalizedCurrentRoom = room.jid.components(separatedBy: "/").first ?? room.jid
+        
+        guard normalizedNotificationRoom == normalizedCurrentRoom else {
+            return
+        }
+        
+        print("👍 ChatRoomViewModel: Reaction received for message \(messageId)")
+        
+        // Update local messages array
+        Task { @MainActor in
+            if let index = messages.firstIndex(where: { $0.id == messageId }) {
+                var updatedMessage = messages[index]
+                if updatedMessage.reaction == nil {
+                    updatedMessage.reaction = [:]
+                }
+                let fromId = from.components(separatedBy: "@").first ?? from
+                if reactions.isEmpty {
+                    updatedMessage.reaction?.removeValue(forKey: fromId)
+                } else {
+                    updatedMessage.reaction?[fromId] = ReactionMessage(emoji: reactions, data: data)
+                }
+                messages[index] = updatedMessage
+                room.messages = messages
+            }
+        }
+    }
+    
+    @objc private func handleDeleteNotification(_ notification: Notification) {
+        guard let userInfo = notification.userInfo,
+              let notificationRoomJID = userInfo["roomJID"] as? String,
+              let messageId = userInfo["messageId"] as? String else {
+            return
+        }
+        
+        // Only handle for this room
+        let normalizedNotificationRoom = notificationRoomJID.components(separatedBy: "/").first ?? notificationRoomJID
+        let normalizedCurrentRoom = room.jid.components(separatedBy: "/").first ?? room.jid
+        
+        guard normalizedNotificationRoom == normalizedCurrentRoom else {
+            return
+        }
+        
+        print("🗑️ ChatRoomViewModel: Message deleted from XMPP for message \(messageId)")
+        
+        // Update local messages array - mark as deleted
+        Task { @MainActor in
+            if let index = messages.firstIndex(where: { $0.id == messageId }) {
+                var updatedMessage = messages[index]
+                let deletedMessage = Message(
+                    id: updatedMessage.id,
+                    user: updatedMessage.user,
+                    date: updatedMessage.date,
+                    body: updatedMessage.body,
+                    roomJid: updatedMessage.roomJid,
+                    key: updatedMessage.key,
+                    coinsInMessage: updatedMessage.coinsInMessage,
+                    numberOfReplies: updatedMessage.numberOfReplies,
+                    isSystemMessage: updatedMessage.isSystemMessage,
+                    isMediafile: updatedMessage.isMediafile,
+                    locationPreview: updatedMessage.locationPreview,
+                    mimetype: updatedMessage.mimetype,
+                    location: updatedMessage.location,
+                    pending: updatedMessage.pending,
+                    timestamp: updatedMessage.timestamp,
+                    showInChannel: updatedMessage.showInChannel,
+                    activeMessage: updatedMessage.activeMessage,
+                    isReply: updatedMessage.isReply,
+                    isDeleted: true,
+                    mainMessage: updatedMessage.mainMessage,
+                    reply: updatedMessage.reply,
+                    reaction: updatedMessage.reaction,
+                    fileName: updatedMessage.fileName,
+                    translations: updatedMessage.translations,
+                    langSource: updatedMessage.langSource,
+                    originalName: updatedMessage.originalName,
+                    size: updatedMessage.size,
+                    xmppId: updatedMessage.xmppId,
+                    xmppFrom: updatedMessage.xmppFrom,
+                    waveForm: updatedMessage.waveForm
+                )
+                messages[index] = deletedMessage
+                room.messages = messages
+            }
+        }
+    }
+    
+    @objc private func handleEditNotification(_ notification: Notification) {
+        guard let userInfo = notification.userInfo,
+              let notificationRoomJID = userInfo["roomJID"] as? String,
+              let messageId = userInfo["messageId"] as? String,
+              let newText = userInfo["newText"] as? String else {
+            return
+        }
+        
+        // Only handle for this room
+        let normalizedNotificationRoom = notificationRoomJID.components(separatedBy: "/").first ?? notificationRoomJID
+        let normalizedCurrentRoom = room.jid.components(separatedBy: "/").first ?? room.jid
+        
+        guard normalizedNotificationRoom == normalizedCurrentRoom else {
+            return
+        }
+        
+        print("✏️ ChatRoomViewModel: Message edited from XMPP for message \(messageId)")
+        
+        // Update local messages array - update body
+        Task { @MainActor in
+            if let index = messages.firstIndex(where: { $0.id == messageId }) {
+                var updatedMessage = messages[index]
+                let editedMessage = Message(
+                    id: updatedMessage.id,
+                    user: updatedMessage.user,
+                    date: updatedMessage.date,
+                    body: newText,
+                    roomJid: updatedMessage.roomJid,
+                    key: updatedMessage.key,
+                    coinsInMessage: updatedMessage.coinsInMessage,
+                    numberOfReplies: updatedMessage.numberOfReplies,
+                    isSystemMessage: updatedMessage.isSystemMessage,
+                    isMediafile: updatedMessage.isMediafile,
+                    locationPreview: updatedMessage.locationPreview,
+                    mimetype: updatedMessage.mimetype,
+                    location: updatedMessage.location,
+                    pending: updatedMessage.pending,
+                    timestamp: updatedMessage.timestamp,
+                    showInChannel: updatedMessage.showInChannel,
+                    activeMessage: updatedMessage.activeMessage,
+                    isReply: updatedMessage.isReply,
+                    isDeleted: updatedMessage.isDeleted,
+                    mainMessage: updatedMessage.mainMessage,
+                    reply: updatedMessage.reply,
+                    reaction: updatedMessage.reaction,
+                    fileName: updatedMessage.fileName,
+                    translations: updatedMessage.translations,
+                    langSource: updatedMessage.langSource,
+                    originalName: updatedMessage.originalName,
+                    size: updatedMessage.size,
+                    xmppId: updatedMessage.xmppId,
+                    xmppFrom: updatedMessage.xmppFrom,
+                    waveForm: updatedMessage.waveForm
+                )
+                messages[index] = editedMessage
+                room.messages = messages
             }
         }
     }
@@ -212,64 +534,76 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
             return
         }
         
-        // According to TypeScript: use message ID (converted to number) for 'before' parameter
-        // TypeScript: loadMoreMessages(firstMessage.roomJid, 30, Number(firstMessageId))
-        // Find oldest message and use its ID
+        // Match web version EXACTLY: loadMoreMessages(firstMessage.roomJid, 30, Number(firstMessageId))
+        // The 'before' parameter should be the message ID converted to number using Number()
+        // In TypeScript: Number(firstMessageId) converts string ID to number
+        
+        // Use the beforeTimestamp passed from ChatRoomView (which already does Number(firstMessageId) conversion)
+        // If not provided, find the first message and convert its ID
         let beforeMessageId: Int64? = {
-            // If ID provided directly, use it
-            if let beforeTimestamp = beforeTimestamp {
-                return beforeTimestamp
+            // If beforeTimestamp was provided, use it (it's already converted from message.id)
+            if let before = beforeTimestamp {
+                print("📜 Using provided beforeTimestamp: \(before)")
+                return before
             }
             
-            // Find the oldest message (skip delimiter-new if present)
+            // Find the oldest message (skip delimiter-new if present) - matches web version
             let firstMessage = messages.first(where: { $0.id != "delimiter-new" }) ?? messages.first
             
             guard let message = firstMessage else {
+                print("❌ No first message found to use as before parameter")
                 return nil
             }
             
-            // Use message.id converted to Int64 (matching TypeScript: Number(firstMessageId))
+            // Match TypeScript: Number(firstMessageId) - try to convert message.id to number
             if let idAsNumber = Int64(message.id) {
+                print("📜 Converted message.id to number: \(message.id) -> \(idAsNumber)")
                 return idAsNumber
             }
             
-            // Fallback: if ID is not numeric, try to use timestamp
+            // If message.id is not numeric (e.g., UUID), try timestamp
             if let timestamp = message.timestamp {
+                print("📜 Using message.timestamp: \(timestamp)")
                 return timestamp
             }
             
-            // Last resort: convert date to timestamp
-            return Int64(message.date.timeIntervalSince1970 * 1000)
+            // Last resort: convert date to timestamp (milliseconds)
+            let dateTimestamp = Int64(message.date.timeIntervalSince1970 * 1000)
+            print("📜 Using date conversion: \(dateTimestamp)")
+            return dateTimestamp
         }()
         
+        guard let before = beforeMessageId else {
+            print("❌ loadMoreMessages: Could not determine before parameter")
+            return
+        }
+        
         print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        print("🎯 BEFORE MESSAGE ID TO SEND: \(beforeMessageId?.description ?? "nil")")
+        print("🎯 FINAL BEFORE PARAMETER TO SEND:")
+        print("   Value: \(before)")
         if let firstMsg = messages.first(where: { $0.id != "delimiter-new" }) ?? messages.first {
-            print("   Oldest message:")
-            print("      id: \(firstMsg.id)")
-            print("      id as Int64: \(Int64(firstMsg.id)?.description ?? "nil")")
+            print("   Source message:")
+            print("      id: '\(firstMsg.id)'")
+            print("      id as Int64: \(Int64(firstMsg.id)?.description ?? "FAILED - not numeric")")
             print("      timestamp: \(firstMsg.timestamp?.description ?? "nil")")
             print("      date: \(firstMsg.date)")
-            print("      body: \(firstMsg.body.prefix(50))...")
         }
         print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
         
         // Save scroll position before loading (Telegram-like behavior)
-        // Використовуємо фактичну кількість повідомлень, збережену на початку функції
-        if let firstMessage = messages.first {
-            scrollPositionBeforeLoad = (messageId: firstMessage.id, messageIndex: 0)
-            messagesCountBeforeLoad = actualMessageCountBeforeLoad
-            print("📌 Saved scroll position: messageId=\(firstMessage.id), index=0, count=\(messagesCountBeforeLoad) (actual count before load)")
-        }
+        saveScrollPositionBeforeLoad()
         
         isLoadingMore = true
         
-        // Send get-history request with message ID (matching TypeScript: Number(firstMessageId))
+        // Send get-history request - matches TypeScript: loadMoreMessages(roomJid, 30, Number(firstMessageId))
+        // The 'before' parameter is the message ID as a number
         client.operations.sendGetHistory(
             chatJID: room.jid,
             max: max,
-            before: beforeMessageId
+            before: before
         )
+        
+        print("✅ loadMoreMessages: get-history query sent with before=\(before)")
         
         // Set timeout to reset loading state (safety timeout)
         loadingMoreTask?.cancel()
@@ -278,6 +612,15 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
             print("⏰ loadMoreMessages: Timeout reached (30s), resetting isLoadingMore")
             isLoadingMore = false
             scrollPositionBeforeLoad = nil
+        }
+    }
+    
+    /// Save scroll position before loading more messages
+    public func saveScrollPositionBeforeLoad() {
+        if let firstMessage = messages.first(where: { $0.id != "delimiter-new" }) ?? messages.first {
+            scrollPositionBeforeLoad = (messageId: firstMessage.id, messageIndex: 0)
+            messagesCountBeforeLoad = messages.count
+            print("📌 Saved scroll position: messageId=\(firstMessage.id), count=\(messages.count)")
         }
     }
     
@@ -295,30 +638,46 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
     
     /// Pull to refresh - reload latest messages
     /// Завантажує останні повідомлення (без параметра before)
+    /// Also clears errors and retries loading if there was an error
     public func refreshMessages() {
         print("🔄 Pull to refresh triggered")
+        
+        // Clear any previous errors
+        loadError = nil
+        
         isLoadingMore = false
         isRefreshing = true
         loadingMoreTask?.cancel()
         
         // Зберігаємо ID останнього повідомлення перед оновленням
         lastMessageIdBeforeRefresh = messages.last?.id
+        let messageCountBeforeRefresh = messages.count
         
-        // Send get-history without before parameter to get latest messages
-        // Це завантажить останні 30 повідомлень
-        client.operations.sendGetHistory(
-            chatJID: room.jid,
-            max: 30,
-            before: nil as Int64?
-        )
+        // Check if client is online
+        guard client.checkOnline() else {
+            loadError = "Client is not online. Please check your connection."
+            isRefreshing = false
+            print("⚠️ Cannot refresh: client is offline")
+            return
+        }
         
-        print("📥 Запит на завантаження останніх повідомлень відправлено (без before)")
+        // Actually reload messages - this will send get-history query
+        // Use forceReload to ensure we get fresh messages even if cached
+        loadMessages(max: 30, before: nil, forceReload: true)
         
-        // Автоматично скидаємо прапорець через 3 секунди, якщо повідомлення не прийшли
+        print("📥 Refresh: loadMessages called with forceReload=true")
+        
+        // Автоматично скидаємо прапорець через 5 секунд, якщо повідомлення не прийшли
         Task {
-            try? await Task.sleep(nanoseconds: 3_000_000_000) // 3 секунди
+            try? await Task.sleep(nanoseconds: 5_000_000_000) // 5 секунд
             if isRefreshing {
                 isRefreshing = false
+                // Set error if still refreshing after timeout and no new messages
+                let messageCountAfterRefresh = messages.count
+                if messageCountAfterRefresh == messageCountBeforeRefresh || messages.isEmpty {
+                    loadError = "Failed to load new messages. Pull down to retry."
+                    print("❌ Refresh failed: no new messages received")
+                }
                 print("⏱️ Refresh timeout - скидаємо прапорець")
             }
         }
@@ -337,22 +696,55 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
         
         print("📋 ChatRoomViewModel: loadMessages called")
         print("   Room: \(room.jid), max: \(max), before: \(before?.description ?? "nil")")
+        print("   Client status: \(client.status.rawValue), presencesReady: \(client.presencesReady)")
         
-        // Check if client is online before sending query
-        guard client.checkOnline() else {
-            print("⚠️ Client is not online, cannot send get-history query. Status: \(client.status)")
-            // Wait a bit and retry if client becomes online
+        // Clear any previous errors
+        loadError = nil
+        
+        // Check if client is fully connected (online AND presences ready)
+        // This prevents sending queries before the XMPP connection is fully established
+        guard client.isFullyConnected() else {
+            let isOnline = client.checkOnline()
+            let presencesReady = client.presencesReady
+            
+            if !isOnline {
+                print("⚠️ Client is not online. Status: \(client.status.rawValue)")
+            } else if !presencesReady {
+                print("⚠️ Client is online but presences not ready yet")
+            }
+            
+            // Show cached messages while waiting
+            if let cachedMessages = MessageCache.shared.loadMessages(forRoomJID: room.jid) {
+                messages = cachedMessages
+                room.messages = cachedMessages
+                messagesLoaded = true
+                print("📂 ChatRoomViewModel: Showing \(cachedMessages.count) cached messages while waiting for connection")
+            }
+            
+            isLoading = false
+            
+            // Wait for client to become fully connected with exponential backoff
             Task {
-                // Wait up to 5 seconds for client to come online
-                for _ in 0..<10 {
-                    try? await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
-                    if client.checkOnline() {
-                        print("✅ Client is now online, sending get-history query...")
+                var attempts = 0
+                let maxAttempts = 10
+                
+                while attempts < maxAttempts {
+                    attempts += 1
+                    let delay = min(Double(attempts) * 0.5, 3.0) // 0.5s, 1s, 1.5s, ... up to 3s
+                    try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                    
+                    if client.isFullyConnected() {
+                        print("✅ Client is now fully connected (attempt \(attempts)), sending get-history query...")
+                        loadError = nil
                         loadMessages(max: max, before: before, forceReload: forceReload)
                         return
                     }
+                    
+                    print("⏳ Waiting for full connection... attempt \(attempts)/\(maxAttempts)")
                 }
-                print("❌ Client did not come online within 5 seconds")
+                
+                print("❌ Client did not become fully connected within timeout")
+                loadError = "Connection timeout. Pull down to retry."
             }
             return
         }
@@ -390,8 +782,12 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
             try? await Task.sleep(nanoseconds: 10_000_000_000) // 10 seconds
             if isLoading {
                 print("⏱️ Loading timeout reached. Hiding loader.")
-        isLoading = false
+                isLoading = false
                 messagesLoaded = true
+                // Set error if no messages were received
+                if messages.isEmpty {
+                    loadError = "Failed to load messages. Pull down to retry."
+                }
             }
         }
     }
@@ -408,14 +804,32 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
     
     /// Called when view appears - ensures messages are displayed
     public func onViewAppeared() {
+        // Guard: Don't load if already loading to prevent multiple simultaneous requests
+        guard !isLoading && !isLoadingMore else {
+            print("📋 ChatRoomViewModel: Already loading, skipping onViewAppeared load")
+            return
+        }
+        
         // If messages are already loaded, just ensure they're displayed
         if messagesLoaded && !messages.isEmpty {
             print("📋 ChatRoomViewModel: View appeared, displaying \(messages.count) existing messages")
             // Trigger a refresh to ensure UI updates
             objectWillChange.send()
         } else {
-            // Load messages if not already loaded
-            loadMessages()
+            // Wait a bit to ensure XMPP connection is stable before loading
+            Task { @MainActor in
+                // Small delay to ensure connection is stable
+                try? await Task.sleep(nanoseconds: 200_000_000) // 200ms
+                
+                // Check connection again before loading
+                guard client.checkOnline() else {
+                    print("⚠️ ChatRoomViewModel: Client not online, will retry when connection is established")
+                    return
+                }
+                
+                // Load messages if not already loaded
+                loadMessages()
+            }
         }
     }
     
@@ -498,9 +912,76 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
         messages.append(optimisticMessage)
     }
     
+    /// Send reply to a message
+    public func sendReply(messageId: String, text: String, alsoSendToMain: Bool) {
+        guard !text.isEmpty else { return }
+        
+        print("💬 ChatRoomViewModel: Sending reply to message \(messageId)")
+        
+        // Get current user info from UserStore
+        let user = UserStore.shared.currentUser
+        let firstName = user?.firstName ?? "User"
+        let lastName = user?.lastName ?? "Name"
+        let walletAddress = user?.walletAddress ?? ""
+        let photo = user?.profileImage ?? ""
+        
+        // Send reply message with mainMessage set
+        client.operations.sendTextMessage(
+            roomJID: room.jid,
+            firstName: firstName,
+            lastName: lastName,
+            photo: photo,
+            walletAddress: walletAddress,
+            userMessage: text,
+            isReply: true,
+            mainMessage: messageId
+        )
+        
+        // If alsoSendToMain is true, send another message without mainMessage
+        if alsoSendToMain {
+            client.operations.sendTextMessage(
+                roomJID: room.jid,
+                firstName: firstName,
+                lastName: lastName,
+                photo: photo,
+                walletAddress: walletAddress,
+                userMessage: text,
+                isReply: false,
+                mainMessage: nil
+            )
+        }
+        
+        // Add optimistic reply message to UI
+        let optimisticReply = Message(
+            id: "pending-reply-\(Int64(Date().timeIntervalSince1970 * 1000))",
+            user: User(
+                id: currentUserId,
+                name: "\(firstName) \(lastName)",
+                firstName: firstName,
+                lastName: lastName,
+                profileImage: photo,
+                xmppUsername: currentUserId
+            ),
+            date: Date(),
+            body: text,
+            roomJid: room.jid,
+            pending: true,
+            timestamp: Int64(Date().timeIntervalSince1970 * 1000),
+            isReply: true,
+            mainMessage: messageId
+        )
+        
+        messages.append(optimisticReply)
+    }
+    
     /// Handle incoming real-time message
     /// Matches TypeScript: store.dispatch(addRoomMessage({ roomJID, message }))
     public func handleIncomingMessage(_ message: Message) {
+        // Clear any errors when we successfully receive a message
+        if loadError != nil {
+            loadError = nil
+        }
+        
         // Match TypeScript: Only add if message has body
         // if (!message?.body) return;
         guard !message.body.isEmpty else {
@@ -581,6 +1062,27 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
         let messageCountBeforeAdd = messages.count
         messages.append(message)
         
+        // Clear error when messages are successfully received
+        if loadError != nil {
+            loadError = nil
+            print("✅ Error cleared - messages received successfully")
+        }
+        
+        // Clear isRefreshing flag when new messages arrive during refresh
+        if isRefreshing {
+            // Check if we got a new message (different from last before refresh)
+            if let lastMessageId = messages.last?.id, lastMessageId != lastMessageIdBeforeRefresh {
+                isRefreshing = false
+                lastMessageIdBeforeRefresh = nil
+                print("✅ Pull-to-refresh completed: new messages received")
+            } else if messageCountBeforeAdd == 0 && messages.count > 0 {
+                // If we had no messages and now we have some, refresh is complete
+                isRefreshing = false
+                lastMessageIdBeforeRefresh = nil
+                print("✅ Pull-to-refresh completed: messages loaded")
+            }
+        }
+        
         print("📊 Message added to array:")
         print("   Count before: \(messageCountBeforeAdd)")
         print("   Count after: \(messages.count)")
@@ -603,11 +1105,7 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
         MessageCache.shared.saveMessages(messages, forRoomJID: room.jid)
         
         // Якщо це pull-to-refresh і з'явилося нове повідомлення, скидаємо прапорець
-        if isRefreshing, let lastMessageId = messages.last?.id, lastMessageId != lastMessageIdBeforeRefresh {
-            isRefreshing = false
-            lastMessageIdBeforeRefresh = nil
-            print("✅ Pull-to-refresh завершено: нові повідомлення завантажено")
-        }
+        // This is handled in the message append logic above, so we don't need duplicate logic here
         
         print("✅ Message with body '\(message.body.prefix(30))...' added to room with id '\(room.jid)'")
         print("   Final messages count: \(messages.count)")
@@ -628,6 +1126,12 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
                 isLoading = false
                 messagesLoaded = true
                 loadingStartTime = nil
+                
+                // Clear error if we received messages successfully
+                if receivedMessageCount > 0 {
+                    loadError = nil
+                }
+                
                 print("✅ Loading complete. Received \(receivedMessageCount) messages. Hiding loader.")
             }
         } else {
@@ -770,11 +1274,63 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
     }
     
     public func editMessage(_ messageId: String, newText: String) {
+        print("✏️ ChatRoomViewModel: Editing message \(messageId)")
+        
+        // Send edit request via XMPP
         client.operations.editMessage(
             chatId: room.jid,
             messageId: messageId,
             text: newText
         )
+        
+        // Update local message optimistically
+        if let index = messages.firstIndex(where: { $0.id == messageId }) {
+            var updatedMessage = messages[index]
+            // Create updated message with new body
+            let newMessage = Message(
+                id: updatedMessage.id,
+                user: updatedMessage.user,
+                date: updatedMessage.date,
+                body: newText,
+                roomJid: updatedMessage.roomJid,
+                key: updatedMessage.key,
+                coinsInMessage: updatedMessage.coinsInMessage,
+                numberOfReplies: updatedMessage.numberOfReplies,
+                isSystemMessage: updatedMessage.isSystemMessage,
+                isMediafile: updatedMessage.isMediafile,
+                locationPreview: updatedMessage.locationPreview,
+                mimetype: updatedMessage.mimetype,
+                location: updatedMessage.location,
+                pending: updatedMessage.pending,
+                timestamp: updatedMessage.timestamp,
+                showInChannel: updatedMessage.showInChannel,
+                activeMessage: updatedMessage.activeMessage,
+                isReply: updatedMessage.isReply,
+                isDeleted: updatedMessage.isDeleted,
+                mainMessage: updatedMessage.mainMessage,
+                reply: updatedMessage.reply,
+                reaction: updatedMessage.reaction,
+                fileName: updatedMessage.fileName,
+                translations: updatedMessage.translations,
+                langSource: updatedMessage.langSource,
+                originalName: updatedMessage.originalName,
+                size: updatedMessage.size,
+                xmppId: updatedMessage.xmppId,
+                xmppFrom: updatedMessage.xmppFrom,
+                waveForm: updatedMessage.waveForm
+            )
+            messages[index] = newMessage
+            room.messages = messages
+            
+            // Update RoomStore
+            var updates = PartialMessageUpdate()
+            updates.body = newText
+            RoomStore.shared.updateMessage(
+                roomJID: room.jid,
+                messageId: messageId,
+                updates: updates
+            )
+        }
     }
     
     public func resendMessage(_ message: Message) {
@@ -800,20 +1356,208 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
     }
     
     public func deleteMessage(_ messageId: String) {
+        print("🗑️ ChatRoomViewModel: Deleting message \(messageId)")
+        
+        // Send delete request via XMPP
         client.operations.deleteMessage(room: room.jid, msgId: messageId)
+        
+        // Update local message optimistically - mark as deleted
+        if let index = messages.firstIndex(where: { $0.id == messageId }) {
+            var updatedMessage = messages[index]
+            // Create updated message with isDeleted = true
+            let deletedMessage = Message(
+                id: updatedMessage.id,
+                user: updatedMessage.user,
+                date: updatedMessage.date,
+                body: updatedMessage.body,
+                roomJid: updatedMessage.roomJid,
+                key: updatedMessage.key,
+                coinsInMessage: updatedMessage.coinsInMessage,
+                numberOfReplies: updatedMessage.numberOfReplies,
+                isSystemMessage: updatedMessage.isSystemMessage,
+                isMediafile: updatedMessage.isMediafile,
+                locationPreview: updatedMessage.locationPreview,
+                mimetype: updatedMessage.mimetype,
+                location: updatedMessage.location,
+                pending: updatedMessage.pending,
+                timestamp: updatedMessage.timestamp,
+                showInChannel: updatedMessage.showInChannel,
+                activeMessage: updatedMessage.activeMessage,
+                isReply: updatedMessage.isReply,
+                isDeleted: true,
+                mainMessage: updatedMessage.mainMessage,
+                reply: updatedMessage.reply,
+                reaction: updatedMessage.reaction,
+                fileName: updatedMessage.fileName,
+                translations: updatedMessage.translations,
+                langSource: updatedMessage.langSource,
+                originalName: updatedMessage.originalName,
+                size: updatedMessage.size,
+                xmppId: updatedMessage.xmppId,
+                xmppFrom: updatedMessage.xmppFrom,
+                waveForm: updatedMessage.waveForm
+            )
+            messages[index] = deletedMessage
+            room.messages = messages
+            
+            // Update RoomStore
+            var updates = PartialMessageUpdate()
+            updates.isDeleted = true
+            RoomStore.shared.updateMessage(
+                roomJID: room.jid,
+                messageId: messageId,
+                updates: updates
+            )
+        }
+    }
+    
+    /// Add reaction to a message
+    public func addReaction(messageId: String, emoji: String) {
+        // Get current user info
+        guard let user = UserStore.shared.currentUser else {
+            print("❌ Cannot add reaction: user not found")
+            return
+        }
+        
+        let firstName = user.firstName ?? "User"
+        let lastName = user.lastName ?? "Name"
+        
+        // Get current reactions for this message to toggle
+        let currentMessage = messages.first { $0.id == messageId }
+        let currentReactions = currentMessage?.reaction?[currentUserId]?.emoji ?? []
+        
+        // Toggle reaction: if already reacted with this emoji, remove it; otherwise add it
+        var newReactions = currentReactions
+        if let index = newReactions.firstIndex(of: emoji) {
+            newReactions.remove(at: index)
+        } else {
+            newReactions.append(emoji)
+        }
+        
+        // Create reaction data
+        let reactionData = ReactionData(firstName: firstName, lastName: lastName)
+        
+        // Send reaction via XMPP
+        client.operations.sendMessageReaction(
+            messageId: messageId,
+            roomJid: room.jid,
+            reactionsList: newReactions,
+            data: reactionData
+        )
+        
+        // Update local state optimistically
+        // Get JID from client - avoid accessing xmppStream directly due to ambiguity
+        let fromJid: String = {
+            // Access via reflection or use a helper method
+            // For now, return empty string as JID is not critical for reactions
+            return ""
+        }()
+        let dataDict: [String: String] = [
+            "senderFirstName": firstName,
+            "senderLastName": lastName
+        ]
+        
+        RoomStore.shared.setReactions(
+            roomJID: room.jid,
+            messageId: messageId,
+            reactions: newReactions,
+            from: fromJid,
+            data: dataDict
+        )
+        
+        // Update local messages array
+        if let index = messages.firstIndex(where: { $0.id == messageId }) {
+            var updatedMessage = messages[index]
+            if updatedMessage.reaction == nil {
+                updatedMessage.reaction = [:]
+            }
+            let fromId = fromJid.components(separatedBy: "@").first ?? fromJid
+            if newReactions.isEmpty {
+                updatedMessage.reaction?.removeValue(forKey: fromId)
+            } else {
+                updatedMessage.reaction?[fromId] = ReactionMessage(emoji: newReactions, data: dataDict)
+            }
+            messages[index] = updatedMessage
+            room.messages = messages
+        }
     }
     
     public func cancelEdit() {
         isEditing = false
         editText = nil
+        editMessageId = nil
     }
     
+    private var typingTimer: Task<Void, Never>?
+    private var stopTypingTimer: Task<Void, Never>?
+    private var isTypingActive: Bool = false
+    
     public func startTyping() {
-        // Send typing indicator
+        // Cancel any existing stop typing timer
+        stopTypingTimer?.cancel()
+        stopTypingTimer = nil
+        
+        // If already typing, don't send again
+        guard !isTypingActive else { return }
+        
+        // Cancel previous typing timer if exists
+        typingTimer?.cancel()
+        
+        // Debounce: Only send after 1 second of typing
+        typingTimer = Task {
+            try? await Task.sleep(nanoseconds: 1_000_000_000) // 1 second
+            
+            // Check if task was cancelled
+            guard !Task.isCancelled else { return }
+            
+            // Get current user info
+            guard let user = UserStore.shared.currentUser else { return }
+            let fullName = "\(user.firstName ?? "") \(user.lastName ?? "")".trimmingCharacters(in: .whitespaces)
+            
+            if !fullName.isEmpty {
+                print("⌨️ ChatRoomViewModel: Sending typing indicator")
+                client.operations.sendTypingRequest(
+                    chatId: room.jid,
+                    fullName: fullName,
+                    start: true
+                )
+                isTypingActive = true
+            }
+        }
+        
+        // Auto-stop typing after 3 seconds of inactivity
+        stopTypingTimer = Task {
+            try? await Task.sleep(nanoseconds: 3_000_000_000) // 3 seconds
+            guard !Task.isCancelled else { return }
+            stopTyping()
+        }
     }
     
     public func stopTyping() {
-        // Send stop typing indicator
+        // Cancel typing timer
+        typingTimer?.cancel()
+        typingTimer = nil
+        
+        // Cancel stop typing timer
+        stopTypingTimer?.cancel()
+        stopTypingTimer = nil
+        
+        // Only send stop if we were actually typing
+        guard isTypingActive else { return }
+        
+        // Get current user info
+        guard let user = UserStore.shared.currentUser else { return }
+        let fullName = "\(user.firstName ?? "") \(user.lastName ?? "")".trimmingCharacters(in: .whitespaces)
+        
+        if !fullName.isEmpty {
+            print("⌨️ ChatRoomViewModel: Sending stop typing indicator")
+            client.operations.sendTypingRequest(
+                chatId: room.jid,
+                fullName: fullName,
+                start: false
+            )
+            isTypingActive = false
+        }
     }
 }
 
