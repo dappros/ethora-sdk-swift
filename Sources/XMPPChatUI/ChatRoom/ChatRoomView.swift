@@ -122,6 +122,7 @@ public struct ChatRoomView: View {
                             ForEach(Array(viewModel.messages.enumerated()), id: \.element.id) { index, message in
                                 let previousMessage = index > 0 ? viewModel.messages[index - 1] : nil
                                 let nextMessage = index < viewModel.messages.count - 1 ? viewModel.messages[index + 1] : nil
+                                // Показываем аватар на последнем сообщении в группе (следующее сообщение от другого пользователя или его нет)
                                 let showAvatar = nextMessage?.user.id != message.user.id
                                 
                                 // Check if we need to show date separator
@@ -820,12 +821,14 @@ struct MessageBubbleView: View {
         @ViewBuilder
         func buildAvatarView() -> some View {
             if !isUser {
-                if showAvatar && !isConsecutive {
+                // Показываем аватар на последнем сообщении в группе (если showAvatar == true)
+                if showAvatar {
                     SizedAvatarView(user: message.user, size: 32)
                 } else {
                     Color.clear.frame(width: 32, height: 32)
                 }
             } else {
+                // Для сообщений пользователя не показываем аватар слева
                 Color.clear.frame(width: 0, height: 0)
             }
         }
@@ -1003,14 +1006,8 @@ struct MessageBubbleView: View {
                     }
                 }
                 
-                // Right avatar
-                if isUser {
-                    if showAvatar && !isConsecutive {
-                        SizedAvatarView(user: message.user, size: 32)
-                    } else {
-                        Color.clear.frame(width: 32, height: 32)
-                    }
-                } else {
+                // Right avatar - не показываем для сообщений пользователя
+                if !isUser {
                     Spacer()
                 }
             }
