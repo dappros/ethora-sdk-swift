@@ -122,14 +122,26 @@ public struct ChatRoomView: View {
                             ForEach(Array(viewModel.messages.enumerated()), id: \.element.id) { index, message in
                                 let previousMessage = index > 0 ? viewModel.messages[index - 1] : nil
                                 let nextMessage = index < viewModel.messages.count - 1 ? viewModel.messages[index + 1] : nil
-                                // Показываем аватар на последнем сообщении в группе (следующее сообщение от другого пользователя или его нет)
-                                let showAvatar = nextMessage?.user.id != message.user.id
                                 
                                 // Check if we need to show date separator
                                 let showDateSeparator = shouldShowDateSeparator(
                                     currentMessage: message,
                                     previousMessage: previousMessage
                                 )
+                                
+                                // Проверяем, разделено ли следующее сообщение датой от текущего
+                                let nextMessageHasDateSeparator = nextMessage != nil ? shouldShowDateSeparator(
+                                    currentMessage: nextMessage!,
+                                    previousMessage: message
+                                ) : false
+                                
+                                // Показываем аватар на последнем сообщении в группе:
+                                // - если следующее сообщение от другого пользователя, ИЛИ
+                                // - если следующее сообщение разделено датой, ИЛИ
+                                // - если следующего сообщения нет (последнее сообщение)
+                                let showAvatar = nextMessage == nil || 
+                                                 nextMessage?.user.id != message.user.id || 
+                                                 nextMessageHasDateSeparator
                                 
                                 // Date separator
                                 if showDateSeparator {
