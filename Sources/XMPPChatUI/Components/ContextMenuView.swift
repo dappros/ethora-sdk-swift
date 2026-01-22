@@ -23,11 +23,11 @@ public struct MessageContextMenu: ViewModifier {
     public func body(content: Content) -> some View {
         content
             .contextMenu {
-                if let onReply = onReply {
-                    Button(action: onReply) {
-                        Label("Reply", systemImage: "arrowshape.turn.up.left")
-                    }
-                }
+                // if let onReply = onReply {
+                //     Button(action: onReply) {
+                //         Label("Reply", systemImage: "arrowshape.turn.up.left")
+                //     }
+                // }
                 
                 if let onCopy = onCopy {
                     Button(action: onCopy) {
@@ -53,11 +53,11 @@ public struct MessageContextMenu: ViewModifier {
                     }
                 }
                 
-                if let onReport = onReport {
-                    Button(role: .destructive, action: onReport) {
-                        Label("Report", systemImage: "exclamationmark.triangle")
-                    }
-                }
+//                if let onReport = onReport {
+//                    Button(role: .destructive, action: onReport) {
+//                        Label("Report", systemImage: "exclamationmark.triangle")
+//                    }
+//                }
                 
                 if let onPin = onPin {
                     Button(action: onPin) {
