@@ -157,12 +157,13 @@ public struct ChatRoomView: View {
                                     onLongPress: {
                                         // Context menu will be shown via .contextMenu modifier
                                     },
-                                    onRetry: {
-                                        // Retry sending failed message
-                                        if message.pending == false && message.xmppId == nil {
-                                            viewModel.resendMessage(message)
-                                        }
-                                    },
+                                    onRetry: nil,
+                                    // onRetry: {
+                                    //     // Retry sending failed message
+                                    //     if message.pending == false && message.xmppId == nil {
+                                    //         viewModel.resendMessage(message)
+                                    //     }
+                                    // },
                                     onReactionTap: { emoji in
                                         viewModel.addReaction(messageId: message.id, emoji: emoji)
                                     },
@@ -179,10 +180,11 @@ public struct ChatRoomView: View {
                                     onDelete: isUser ? {
                                         viewModel.deleteMessage(message.id)
                                     } : nil,
-                                    onReport: !isUser ? {
-                                        messageToReport = message
-                                        showReportModal = true
-                                    } : nil
+                                    onReport: nil
+//                                    onReport: !isUser ? {
+//                                        messageToReport = message
+//                                        showReportModal = true
+//                                    } : nil
                             )
                             .id(message.id)
             }
@@ -818,15 +820,15 @@ struct MessageBubbleView: View {
         @ViewBuilder
         func buildAvatarView() -> some View {
             if !isUser {
-                    if showAvatar && !isConsecutive {
+                if showAvatar && !isConsecutive {
                     SizedAvatarView(user: message.user, size: 32)
-                    } else {
+                } else {
                     Color.clear.frame(width: 32, height: 32)
                 }
-                } else {
-                    Spacer()
+            } else {
+                Color.clear.frame(width: 0, height: 0)
             }
-            }
+        }
             
         // Build message content separately
         @ViewBuilder
@@ -925,42 +927,80 @@ struct MessageBubbleView: View {
                         
         return AnyView(
             HStack(alignment: .bottom, spacing: 4) {
+                if isUser {
+                    Spacer()
+                }
+                
                 buildAvatarView()
                 
-                VStack(alignment: isUser ? .trailing : .leading, spacing: 2) {
-                    buildMessageContent()
-                }
-                .frame(maxWidth: {
-                        #if os(iOS)
-                    return UIScreen.main.bounds.width * 0.75
-                        #else
-                    return 300
-                        #endif
-                }(), alignment: isUser ? .trailing : .leading)
-                .contextMenu {
-                    MessageContextMenuItems(
-                        message: message,
-                        isUser: isUser,
-                        onReply: onReply,
-                        onCopy: {
+                Group {
+                    if isUser {
+                        VStack(alignment: .trailing, spacing: 2) {
+                            buildMessageContent()
+                                .contextMenu {
+                                    MessageContextMenuItems(
+                                        message: message,
+                                        isUser: isUser,
+                                        onReply: onReply,
+                                        onCopy: {
+                                            #if os(iOS)
+                                            UIPasteboard.general.string = message.body
+                                            #else
+                                            NSPasteboard.general.clearContents()
+                                            NSPasteboard.general.setString(message.body, forType: .string)
+                                            #endif
+                                        },
+                                        onEdit: onEdit,
+                                        onDelete: onDelete,
+                                        onReport: onReport
+                                    )
+                                }
+                                .onLongPressGesture {
+                                    onLongPress?()
+                                    if onReactionTap != nil {
+                                        showReactionPicker = true
+                                    }
+                                    HapticFeedback.buttonPress()
+                                }
+                        }
+                        .frame(maxWidth: {
                             #if os(iOS)
-                            UIPasteboard.general.string = message.body
+                            return UIScreen.main.bounds.width * 0.75
                             #else
-                            NSPasteboard.general.clearContents()
-                            NSPasteboard.general.setString(message.body, forType: .string)
+                            return 300
                             #endif
-                        },
-                        onEdit: onEdit,
-                        onDelete: onDelete,
-                        onReport: onReport
-                    )
-                }
-                .onLongPressGesture {
-                    onLongPress?()
-                    if onReactionTap != nil {
-                        showReactionPicker = true
+                        }(), alignment: .trailing)
+                    } else {
+                        VStack(alignment: .leading, spacing: 2) {
+                            buildMessageContent()
+                                .contextMenu {
+                                    MessageContextMenuItems(
+                                        message: message,
+                                        isUser: isUser,
+                                        onReply: onReply,
+                                        onCopy: {
+                                            #if os(iOS)
+                                            UIPasteboard.general.string = message.body
+                                            #else
+                                            NSPasteboard.general.clearContents()
+                                            NSPasteboard.general.setString(message.body, forType: .string)
+                                            #endif
+                                        },
+                                        onEdit: onEdit,
+                                        onDelete: onDelete,
+                                        onReport: onReport
+                                    )
+                                }
+                                .onLongPressGesture {
+                                    onLongPress?()
+                                    if onReactionTap != nil {
+                                        showReactionPicker = true
+                                    }
+                                    HapticFeedback.buttonPress()
+                                }
+                        }
+                        .fixedSize(horizontal: true, vertical: false)
                     }
-                    HapticFeedback.buttonPress()
                 }
                 
                 // Right avatar
@@ -1023,11 +1063,11 @@ struct MessageContextMenuItems: View {
     
     var body: some View {
         Group {
-            if let onReply = onReply {
-                Button(action: onReply) {
-                    Label("Reply", systemImage: "arrowshape.turn.up.left")
-                }
-            }
+            // if let onReply = onReply {
+            //     Button(action: onReply) {
+            //         Label("Reply", systemImage: "arrowshape.turn.up.left")
+            //     }
+            // }
             
             if let onCopy = onCopy {
                 Button(action: onCopy) {
@@ -1047,11 +1087,11 @@ struct MessageContextMenuItems: View {
                 }
             }
             
-            if !isUser, let onReport = onReport {
-                Button(role: .destructive, action: onReport) {
-                    Label("Report", systemImage: "exclamationmark.triangle")
-                }
-            }
+//            if !isUser, let onReport = onReport {
+//                Button(role: .destructive, action: onReport) {
+//                    Label("Report", systemImage: "exclamationmark.triangle")
+//                }
+//            }
         }
     }
 }
