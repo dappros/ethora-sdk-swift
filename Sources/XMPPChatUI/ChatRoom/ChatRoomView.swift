@@ -252,9 +252,9 @@ public struct ChatRoomView: View {
                                                 category: reason,
                                                 text: additionalInfo.isEmpty ? nil : additionalInfo
                                             )
-                                            print("✅ Message reported successfully")
+                                            //print("✅ Message reported successfully")
                                         } catch {
-                                            print("❌ Failed to report message: \(error.localizedDescription)")
+                                            //print("❌ Failed to report message: \(error.localizedDescription)")
                                         }
                                     }
                                 },
@@ -302,7 +302,7 @@ public struct ChatRoomView: View {
                     .refreshable {
                         // Pull to refresh - load latest messages
                         // This also retries after errors
-                        print("🔄 Pull to refresh triggered from UI")
+                        //print("🔄 Pull to refresh triggered from UI")
                         
                         // Clear any errors when user pulls to refresh
                         viewModel.loadError = nil
@@ -323,13 +323,13 @@ public struct ChatRoomView: View {
                         // Force clear isRefreshing if still set after timeout
                         if viewModel.isRefreshing {
                             viewModel.isRefreshing = false
-                            print("⏱️ Force clearing isRefreshing after timeout")
+                            //print("⏱️ Force clearing isRefreshing after timeout")
                         }
                         
                         if !viewModel.isRefreshing {
-                            print("✅ Pull-to-refresh завершено: нові повідомлення завантажено")
+                            //print("✅ Pull-to-refresh завершено: нові повідомлення завантажено")
                         } else {
-                            print("⏱️ Timeout очікування нових повідомлень після pull-to-refresh")
+                            //print("⏱️ Timeout очікування нових повідомлень після pull-to-refresh")
                         }
                     }
                     .onPreferenceChange(ScrollMetricsKey.self) { metrics in
@@ -348,12 +348,12 @@ public struct ChatRoomView: View {
                         let newCount = userInfo["newCount"] as? Int ?? viewModel.messages.count
                         let loadedCount = userInfo["loadedCount"] as? Int ?? (newCount - oldCount)
                         
-                        print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-                        print("📜 SCROLL: Messages loaded notification received")
-                        print("   📊 Message count before load: \(oldCount)")
-                        print("   📊 Message count after load: \(newCount)")
-                        print("   📊 Messages loaded: \(loadedCount)")
-                        print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+                        //print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+                        //print("📜 SCROLL: Messages loaded notification received")
+                        //print("   📊 Message count before load: \(oldCount)")
+                        //print("   📊 Message count after load: \(newCount)")
+                        //print("   📊 Messages loaded: \(loadedCount)")
+                        //print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
                         
                         // Telegram-like: Restore scroll position after loading older messages
                         if let scrollInfo = viewModel.getScrollPositionInfo() {
@@ -362,7 +362,7 @@ public struct ChatRoomView: View {
                                 // Find the message that was at the top before loading
                                 // After loading, it should be at the same visual position
                                 if let messageIndex = viewModel.messages.firstIndex(where: { $0.id == scrollInfo.messageId }) {
-                                    print("📌 Restoring scroll position: messageId=\(scrollInfo.messageId), oldIndex=\(scrollInfo.messageIndex), newIndex=\(messageIndex), oldCount=\(oldCount), newCount=\(newCount)")
+                                    //print("📌 Restoring scroll position: messageId=\(scrollInfo.messageId), oldIndex=\(scrollInfo.messageIndex), newIndex=\(messageIndex), oldCount=\(oldCount), newCount=\(newCount)")
                                     
                                     // Small delay to ensure messages are rendered
                                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
@@ -657,7 +657,7 @@ public struct ChatRoomView: View {
                          ?? viewModel.messages.first
         
         guard let message = firstMessage else { 
-            print("⚠️ checkIfLoadMoreMessages: No first message found")
+            //print("⚠️ checkIfLoadMoreMessages: No first message found")
             return 
         }
         
@@ -666,34 +666,34 @@ public struct ChatRoomView: View {
         let beforeTimestamp: Int64? = {
             // First, try to convert message.id directly to Int64 (like Number() in TypeScript)
             if let numericId = Int64(message.id) {
-                print("📜 Using message.id as numeric: \(numericId)")
+                //print("📜 Using message.id as numeric: \(numericId)")
                 return numericId
             }
             
             // If message.id is not numeric (e.g., UUID), try timestamp
             if let timestamp = message.timestamp {
-                print("📜 Using message.timestamp: \(timestamp)")
+                //print("📜 Using message.timestamp: \(timestamp)")
                 return timestamp
             }
             
             // Last resort: convert date to timestamp (milliseconds)
             let dateTimestamp = Int64(message.date.timeIntervalSince1970 * 1000)
-            print("📜 Using date conversion: \(dateTimestamp)")
+            //print("📜 Using date conversion: \(dateTimestamp)")
             return dateTimestamp
         }()
         
         guard let before = beforeTimestamp else {
-            print("❌ checkIfLoadMoreMessages: Could not determine beforeTimestamp for message.id=\(message.id)")
+            //print("❌ checkIfLoadMoreMessages: Could not determine beforeTimestamp for message.id=\(message.id)")
             return
         }
         
-        print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        print("📜 Triggering loadMoreMessages:")
-        print("   scrollTop: \(Int(metrics.scrollTop))")
-        print("   firstMessage.id: \(message.id)")
-        print("   firstMessage.timestamp: \(message.timestamp?.description ?? "nil")")
-        print("   beforeTimestamp (to send): \(before)")
-        print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        //print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        //print("📜 Triggering loadMoreMessages:")
+        //print("   scrollTop: \(Int(metrics.scrollTop))")
+        //print("   firstMessage.id: \(message.id)")
+        //print("   firstMessage.timestamp: \(message.timestamp?.description ?? "nil")")
+        //print("   beforeTimestamp (to send): \(before)")
+        //print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
         
         // Save scroll position before loading
         if let firstMsg = viewModel.messages.first {
@@ -1085,7 +1085,7 @@ struct SizedAvatarView: View {
                     let _ = {
                         if let urlError = error as? URLError, urlError.code != .cancelled {
                             // Log actual errors (network failures, invalid URLs, etc.)
-                            print("⚠️ Error loading avatar (non-cancellation): \(error.localizedDescription)")
+                            //print("⚠️ Error loading avatar (non-cancellation): \(error.localizedDescription)")
                         }
                     }()
                     // Fallback to initials if image fails to load
@@ -1847,10 +1847,10 @@ struct FilePreviewModal: View {
                 #endif
                 
                 isDownloading = false
-                print("✅ File downloaded successfully")
+                //print("✅ File downloaded successfully")
             } catch {
                 isDownloading = false
-                print("❌ Download failed: \(error.localizedDescription)")
+                //print("❌ Download failed: \(error.localizedDescription)")
             }
         }
     }
@@ -2103,7 +2103,7 @@ struct DocumentPicker: UIViewControllerRepresentable {
             
             // Start accessing security-scoped resource
             guard url.startAccessingSecurityScopedResource() else {
-                print("❌ Failed to access security-scoped resource")
+                //print("❌ Failed to access security-scoped resource")
                 return
             }
             defer { url.stopAccessingSecurityScopedResource() }
@@ -2132,7 +2132,7 @@ struct DocumentPicker: UIViewControllerRepresentable {
                     self.onDocumentSelected(data, fileName, mimeType)
                 }
             } catch {
-                print("❌ Failed to read file: \(error.localizedDescription)")
+                //print("❌ Failed to read file: \(error.localizedDescription)")
             }
         }
     }

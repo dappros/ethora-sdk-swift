@@ -14,8 +14,8 @@ extension XMPPOperations {
     public func presenceInRoom(roomJID: String, settleDelay: TimeInterval = 0) async {
         guard let stream = client?.xmppStream else { return }
         guard let jid = stream.jid else {
-            NSLog("❌ Cannot send presence - no JID available")
-            print("❌ Cannot send presence - no JID available")
+            //NSlog("❌ Cannot send presence - no JID available")
+            //print("❌ Cannot send presence - no JID available")
             return
         }
         
@@ -23,7 +23,7 @@ extension XMPPOperations {
         // Extract bare JID (without resource) for comparison
         let bareRoomJID = roomJID.components(separatedBy: "/").first ?? roomJID
         if client?.hasPresenceResponseForRoom(bareRoomJID) == true {
-            print("⏭️ Skipping presence send to room '\(bareRoomJID)' - already received response")
+            //print("⏭️ Skipping presence send to room '\(bareRoomJID)' - already received response")
             return
         }
         
@@ -58,8 +58,8 @@ extension XMPPOperations {
         }
         
         stream.send(presenceStanza)
-        NSLog("📤 Sent presence to room: %@ (nickname: %@)", roomJID, username)
-        print("📤 Sent presence to room: \(roomJID) (nickname: \(username))")
+        //NSlog("📤 Sent presence to room: %@ (nickname: %@)", roomJID, username)
+        //print("📤 Sent presence to room: \(roomJID) (nickname: \(username))")
     }
     
     /// Send presence to all rooms (allRoomPresences from TypeScript)
@@ -73,8 +73,8 @@ extension XMPPOperations {
                 }
             }
         }
-        NSLog("✅ Sent presence to %lu rooms", roomJIDs.count)
-        print("✅ Sent presence to \(roomJIDs.count) rooms")
+        //NSlog("✅ Sent presence to %lu rooms", roomJIDs.count)
+        //print("✅ Sent presence to \(roomJIDs.count) rooms")
     }
 }
 

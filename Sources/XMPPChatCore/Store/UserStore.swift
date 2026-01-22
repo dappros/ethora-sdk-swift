@@ -63,7 +63,7 @@ public class UserStore: ObservableObject {
             UserDefaults.standard.set(userData, forKey: "ethora_user_data")
         }
         
-        print("✅ UserStore: User logged in - \(user.email ?? "unknown")")
+        //print("✅ UserStore: User logged in - \(user.email ?? "unknown")")
     }
     
     /// Update tokens after refresh
@@ -72,7 +72,7 @@ public class UserStore: ObservableObject {
         self.refreshToken = refreshToken
         UserDefaults.standard.set(token, forKey: "ethora_user_token")
         UserDefaults.standard.set(refreshToken, forKey: "ethora_user_refresh_token")
-        print("✅ UserStore: Tokens refreshed")
+        //print("✅ UserStore: Tokens refreshed")
     }
     
     /// Clear user data (logout)
@@ -92,7 +92,7 @@ public class UserStore: ObservableObject {
             MessageCache.shared.clearAll()
         }
         
-        print("✅ UserStore: User logged out and cache cleared")
+        //print("✅ UserStore: User logged out and cache cleared")
     }
     
     /// Check if user is cached (has valid token and user data)

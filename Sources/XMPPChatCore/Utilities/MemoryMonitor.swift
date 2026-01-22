@@ -48,7 +48,7 @@ public class XMPPMemoryMonitor {
             let current = usage
             
             if current > average * 1.5 {
-                print("⚠️ Potential memory leak detected: \(current)MB (average: \(average)MB)")
+                //print("⚠️ Potential memory leak detected: \(current)MB (average: \(average)MB)")
             }
         }
     }

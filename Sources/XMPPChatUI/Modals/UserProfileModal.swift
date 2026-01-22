@@ -60,7 +60,7 @@ public struct UserProfileModal: View {
                                 let _ = {
                                     if let urlError = error as? URLError, urlError.code != .cancelled {
                                         // Log actual errors (not cancellations)
-                                        print("⚠️ Error loading profile image (non-cancellation): \(error.localizedDescription)")
+                                        //print("⚠️ Error loading profile image (non-cancellation): \(error.localizedDescription)")
                                     }
                                 }()
                                 // Always return initials view on failure

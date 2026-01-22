@@ -119,7 +119,7 @@ public struct AudioWaveformView: View {
                     generateWaveform(from: samples)
                 }
             } catch {
-                print("Error generating waveform: \(error)")
+                //print("Error generating waveform: \(error)")
                 // Fallback to placeholder
                 await MainActor.run {
                     waveformPoints = (0..<100).map { index in

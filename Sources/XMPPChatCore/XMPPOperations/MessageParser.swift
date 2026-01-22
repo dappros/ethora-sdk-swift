@@ -170,13 +170,13 @@ public final class MessageParser {
         
         // Debug logging for media messages
         if d.dataAttrs["isMediafile"] == "true" {
-            print("📎 MessageParser: Parsing media message")
-            print("   location: \(location ?? "nil")")
-            print("   locationPreview: \(locationPreview ?? "nil")")
-            print("   mimetype: \(mimetype ?? "nil")")
-            print("   originalName: \(originalName ?? "nil")")
-            print("   fileName: \(fileName ?? "nil")")
-            print("   size: \(size ?? "nil")")
+            //print("📎 MessageParser: Parsing media message")
+            //print("   location: \(location ?? "nil")")
+            //print("   locationPreview: \(locationPreview ?? "nil")")
+            //print("   mimetype: \(mimetype ?? "nil")")
+            //print("   originalName: \(originalName ?? "nil")")
+            //print("   fileName: \(fileName ?? "nil")")
+            //print("   size: \(size ?? "nil")")
         }
 
         return Message(

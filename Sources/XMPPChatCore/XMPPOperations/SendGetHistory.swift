@@ -44,28 +44,19 @@ extension XMPPOperations {
             return
         }
         
-        // Validate 'before' parameter - must be a valid timestamp
-        // Timestamps should be between year 2000 and year 2100 in milliseconds
+        // Use 'before' parameter directly - match web version behavior
+        // Web version: before ? xml('before', {}, before.toString()) : xml('before')
+        // No validation - XMPP server will handle whether the value is valid
         let validBefore: Int64? = {
             guard let before = before else { return nil }
             
-            // Valid timestamp range (milliseconds since 1970)
-            let minTimestamp: Int64 = 946684800000  // Jan 1, 2000
-            let maxTimestamp: Int64 = 4102444800000 // Jan 1, 2100
-            
-            if before > minTimestamp && before < maxTimestamp {
-                print("✅ Valid 'before' timestamp: \(before)")
+            // Only reject negative values or zero (invalid message IDs)
+            // Otherwise, use the value as-is (matching web version)
+            if before > 0 {
                 return before
             }
             
-            // If it looks like seconds instead of milliseconds, convert
-            if before > 946684800 && before < 4102444800 {
-                let converted = before * 1000
-                print("⚠️ Converted 'before' from seconds to milliseconds: \(before) -> \(converted)")
-                return converted
-            }
-            
-            print("⚠️ Invalid 'before' timestamp: \(before), sending empty <before/> to get latest messages")
+            // Negative or zero values are invalid
             return nil
         }()
         

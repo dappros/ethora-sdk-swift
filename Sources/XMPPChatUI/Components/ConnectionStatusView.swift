@@ -84,7 +84,7 @@ public struct ConnectionStatusView: View {
         monitor.pathUpdateHandler = { path in
             Task { @MainActor in
                 self.hasInternetConnection = path.status == .satisfied
-                print("🌐 ConnectionStatusView: Network status changed - hasInternet: \(self.hasInternetConnection)")
+                //print("🌐 ConnectionStatusView: Network status changed - hasInternet: \(self.hasInternetConnection)")
             }
         }
         
@@ -174,15 +174,15 @@ public class ConnectionManager: ObservableObject {
             let errorDescription = userInfo["errorDescription"] as? String
             
             // Log connection status change for debugging
-            print("🔌 ConnectionManager: Status changed to '\(statusString)'")
+            //print("🔌 ConnectionManager: Status changed to '\(statusString)'")
             if let reason = reason {
-                print("   Reason: \(reason)")
+                //print("   Reason: \(reason)")
             }
             if let errorCode = errorCode {
-                print("   Error Code: \(errorCode)")
+                //print("   Error Code: \(errorCode)")
             }
             if let errorDescription = errorDescription {
-                print("   Error Description: \(errorDescription)")
+                //print("   Error Description: \(errorDescription)")
             }
             
             Task { @MainActor in
@@ -190,11 +190,11 @@ public class ConnectionManager: ObservableObject {
                 case "connected":
                     self.status = .connected
                     self.disconnectReason = nil
-                    print("✅ ConnectionManager: Connected successfully")
+                    //print("✅ ConnectionManager: Connected successfully")
                 case "connecting":
                     self.status = .connecting
                     self.disconnectReason = reason ?? "Connecting to server..."
-                    print("🔄 ConnectionManager: Connecting...")
+                    //print("🔄 ConnectionManager: Connecting...")
                 case "disconnected":
                     self.status = .disconnected
                     self.disconnectReason = self.formatDisconnectReason(
@@ -202,11 +202,11 @@ public class ConnectionManager: ObservableObject {
                         errorCode: errorCode,
                         errorDescription: errorDescription
                     )
-                    print("❌ ConnectionManager: Disconnected - \(self.disconnectReason ?? "Unknown reason")")
+                    //print("❌ ConnectionManager: Disconnected - \(self.disconnectReason ?? "Unknown reason")")
                 case "reconnecting":
                     self.status = .reconnecting
                     self.disconnectReason = reason ?? "Reconnecting..."
-                    print("🔄 ConnectionManager: Reconnecting...")
+                    //print("🔄 ConnectionManager: Reconnecting...")
                 default:
                     break
                 }

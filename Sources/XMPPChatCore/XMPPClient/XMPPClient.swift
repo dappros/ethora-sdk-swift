@@ -135,15 +135,15 @@ public class XMPPClient {
     private func initializeClient() {
         // Prevent multiple simultaneous connection attempts
         guard !isConnecting else {
-            NSLog("⚠️ Connection already in progress, skipping initializeClient")
-            print("⚠️ Connection already in progress, skipping initializeClient")
+            //NSlog("⚠️ Connection already in progress, skipping initializeClient")
+            //print("⚠️ Connection already in progress, skipping initializeClient")
             return
         }
         
         // If connection was replaced, don't reconnect (another connection is active)
         if connectionReplaced {
-            NSLog("⚠️ Connection was replaced by new connection, not reconnecting")
-            print("⚠️ Connection was replaced by new connection, not reconnecting")
+            //NSlog("⚠️ Connection was replaced by new connection, not reconnecting")
+            //print("⚠️ Connection was replaced by new connection, not reconnecting")
             connectionReplaced = false // Reset flag
             isConnecting = false // Ensure flag is reset
             return
@@ -151,8 +151,8 @@ public class XMPPClient {
         
         // Check if already connected
         if status == .online {
-            NSLog("⚠️ Already connected, skipping initializeClient")
-            print("⚠️ Already connected, skipping initializeClient")
+            //NSlog("⚠️ Already connected, skipping initializeClient")
+            //print("⚠️ Already connected, skipping initializeClient")
             return
         }
         
@@ -181,9 +181,9 @@ public class XMPPClient {
             }
             
             // Match TypeScript: console.log('+-+-+-+-+-+-+-+-+ ', { username: this.username });
-            NSLog("+-+-+-+-+-+-+-+-+ ")
-            print("+-+-+-+-+-+-+-+-+ ")
-            print("username: \(username)")
+            //NSlog("+-+-+-+-+-+-+-+-+ ")
+            //print("+-+-+-+-+-+-+-+-+ ")
+            //print("username: \(username)")
             
             self.devServer = url
             
@@ -203,8 +203,8 @@ public class XMPPClient {
                 do {
                     xmppStream?.connect(username: username, password: password, resource: resource)
                 } catch {
-                    NSLog("Error starting client: %@", error.localizedDescription)
-                    print("Error starting client: \(error.localizedDescription)")
+                    //NSlog("Error starting client: %@", error.localizedDescription)
+                    //print("Error starting client: \(error.localizedDescription)")
                     isConnecting = false
                 }
             }
@@ -214,8 +214,8 @@ public class XMPPClient {
             
             logStep("initializeClient:started")
         } catch {
-            NSLog("Error initializing client: %@", error.localizedDescription)
-            print("Error initializing client: \(error.localizedDescription)")
+            //NSlog("Error initializing client: %@", error.localizedDescription)
+            //print("Error initializing client: \(error.localizedDescription)")
             isConnecting = false
         }
     }
@@ -258,12 +258,12 @@ public class XMPPClient {
             clearPresenceResponseTracking()
             
             // Match TypeScript: console.log('Client disconnected');
-            NSLog("Client disconnected")
-            print("Client disconnected")
+            //NSlog("Client disconnected")
+            //print("Client disconnected")
         } catch {
             // Match TypeScript: console.error('Error disconnecting client:', error);
-            NSLog("Error disconnecting client: %@", error.localizedDescription)
-            print("Error disconnecting client: \(error.localizedDescription)")
+            //NSlog("Error disconnecting client: %@", error.localizedDescription)
+            //print("Error disconnecting client: \(error.localizedDescription)")
         }
     }
     
@@ -279,8 +279,8 @@ public class XMPPClient {
     private func scheduleReconnect(reason: String) {
         // Don't reconnect if connection was replaced
         if connectionReplaced {
-            NSLog("⚠️ Not scheduling reconnect - connection was replaced")
-            print("⚠️ Not scheduling reconnect - connection was replaced")
+            //NSlog("⚠️ Not scheduling reconnect - connection was replaced")
+            //print("⚠️ Not scheduling reconnect - connection was replaced")
             connectionReplaced = false // Reset flag
             return
         }
@@ -297,7 +297,7 @@ public class XMPPClient {
         }
         
         // Notify ConnectionManager that we're reconnecting
-        print("🔄 XMPPClient: Reconnecting - reason: \(reason)")
+        //print("🔄 XMPPClient: Reconnecting - reason: \(reason)")
         NotificationCenter.default.post(
             name: NSNotification.Name("XMPPConnectionStatusChanged"),
             object: nil,
@@ -533,12 +533,12 @@ extension XMPPClient: XMPPStreamDelegate {
     public func xmppStreamDidConnect(_ stream: XMPPStream) {
         // Match TypeScript: this.client.on('connecting', () => { ... })
         // Match TypeScript: console.log('Client is connecting...');
-        NSLog("Client is connecting...")
-        print("Client is connecting...")
+        //NSlog("Client is connecting...")
+        //print("Client is connecting...")
         status = .connecting
         logStep("event:connecting")
             // Notify ConnectionManager
-            print("🔄 XMPPClient: Connecting to server...")
+            //print("🔄 XMPPClient: Connecting to server...")
             NotificationCenter.default.post(
                 name: NSNotification.Name("XMPPConnectionStatusChanged"),
                 object: nil,
@@ -570,15 +570,15 @@ extension XMPPClient: XMPPStreamDelegate {
             }
             
             // Match TypeScript: console.log('Client is online.', new Date());
-            NSLog("Client is online. %@", Date().description)
-            print("Client is online. \(Date())")
+            //NSlog("Client is online. %@", Date().description)
+            //print("Client is online. \(Date())")
             
             // Match TypeScript: this.status = 'online';
             status = .online
             isConnecting = false // Connection successful, reset flag
             
             // Notify ConnectionManager
-            print("✅ XMPPClient: Connected successfully")
+            //print("✅ XMPPClient: Connected successfully")
             NotificationCenter.default.post(
                 name: NSNotification.Name("XMPPConnectionStatusChanged"),
                 object: nil,
@@ -614,8 +614,8 @@ extension XMPPClient: XMPPStreamDelegate {
             // This must be done BEFORE sending presence to rooms
             let presenceStanza = XMPPStanza(name: "presence")
             xmppStream?.send(presenceStanza)
-            NSLog("📤 Sent initial presence to XMPP server (announcing online)")
-            print("📤 Sent initial presence to XMPP server (announcing online)")
+            //NSlog("📤 Sent initial presence to XMPP server (announcing online)")
+            //print("📤 Sent initial presence to XMPP server (announcing online)")
             
             // Wait a bit for the server to process the initial presence
             try? await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
@@ -638,37 +638,37 @@ extension XMPPClient: XMPPStreamDelegate {
             
         } catch {
             // Match TypeScript: console.log('Error', error);
-            NSLog("Error %@", error.localizedDescription)
-            print("Error \(error)")
+            //NSlog("Error %@", error.localizedDescription)
+            //print("Error \(error)")
         }
     }
     
     public func xmppStreamDidDisconnect(_ stream: XMPPStream, error: Error?) {
         // Match TypeScript: this.client.on('disconnect', () => { ... })
         // Match TypeScript: console.log('Disconnected from server.');
-        NSLog("Disconnected from server.")
-        print("Disconnected from server.")
+        //NSlog("Disconnected from server.")
+        //print("Disconnected from server.")
         
         // Log disconnect details if available
         if let error = error {
             if let nsError = error as NSError? {
-                NSLog("   Disconnect Error Domain: %@", nsError.domain)
-                NSLog("   Disconnect Error Code: %ld", nsError.code)
-                NSLog("   Disconnect Error Description: %@", nsError.localizedDescription)
+                //NSlog("   Disconnect Error Domain: %@", nsError.domain)
+                //NSlog("   Disconnect Error Code: %ld", nsError.code)
+                //NSlog("   Disconnect Error Description: %@", nsError.localizedDescription)
                 if let reason = nsError.userInfo["reason"] as? String {
-                    NSLog("   Disconnect Reason: %@", reason)
+                    //NSlog("   Disconnect Reason: %@", reason)
                 }
                 if let code = nsError.userInfo["disconnectCode"] as? UInt16 {
-                    NSLog("   WebSocket Close Code: %u", code)
+                    //NSlog("   WebSocket Close Code: %u", code)
                 }
-                print("   Disconnect Error Domain: \(nsError.domain)")
-                print("   Disconnect Error Code: \(nsError.code)")
-                print("   Disconnect Error Description: \(nsError.localizedDescription)")
+                //print("   Disconnect Error Domain: \(nsError.domain)")
+                //print("   Disconnect Error Code: \(nsError.code)")
+                //print("   Disconnect Error Description: \(nsError.localizedDescription)")
                 if let reason = nsError.userInfo["reason"] as? String {
-                    print("   Disconnect Reason: \(reason)")
+                    //print("   Disconnect Reason: \(reason)")
                 }
                 if let code = nsError.userInfo["disconnectCode"] as? UInt16 {
-                    print("   WebSocket Close Code: \(code)")
+                    //print("   WebSocket Close Code: \(code)")
                 }
             }
         }
@@ -718,8 +718,9 @@ extension XMPPClient: XMPPStreamDelegate {
                         disconnectReason = "Connection closed normally"
                     case 1001:
                         disconnectReason = "Server is going away"
-                    case 1006:
-                        disconnectReason = "Connection lost. Check your internet connection"
+//                    case 1006:
+//                         disconnectReason = "Connection lost. Check your internet connection"
+                        
                     case 1008:
                         disconnectReason = "Policy violation"
                     case 1011:
@@ -745,11 +746,11 @@ extension XMPPClient: XMPPStreamDelegate {
         }
         
         // Log disconnect details for debugging
-        print("🔌 XMPPClient: Disconnect notification")
-        print("   Reason: \(disconnectReason ?? "Unknown")")
-        print("   Error Code: \(errorCode?.description ?? "N/A")")
-        print("   Error Description: \(errorDescription ?? "N/A")")
-        print("   Was Replaced: \(wasReplaced)")
+        //print("🔌 XMPPClient: Disconnect notification")
+        //print("   Reason: \(disconnectReason ?? "Unknown")")
+        //print("   Error Code: \(errorCode?.description ?? "N/A")")
+        //print("   Error Description: \(errorDescription ?? "N/A")")
+        //print("   Was Replaced: \(wasReplaced)")
         
         // Notify ConnectionManager with detailed information
         var userInfo: [String: Any] = ["status": "disconnected"]
@@ -774,12 +775,12 @@ extension XMPPClient: XMPPStreamDelegate {
         
         // Only schedule reconnect if connection wasn't replaced
         if wasReplaced || connectionReplaced {
-            NSLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-            NSLog("⚠️⚠️⚠️ NOT RECONNECTING - Connection was replaced ⚠️⚠️⚠️")
-            NSLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-            print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-            print("⚠️⚠️⚠️ NOT RECONNECTING - Connection was replaced ⚠️⚠️⚠️")
-            print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            //NSlog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            //NSlog("⚠️⚠️⚠️ NOT RECONNECTING - Connection was replaced ⚠️⚠️⚠️")
+            //NSlog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            //print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            //print("⚠️⚠️⚠️ NOT RECONNECTING - Connection was replaced ⚠️⚠️⚠️")
+            //print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
             connectionReplaced = false // Reset flag
         } else {
             scheduleReconnect(reason: "event:disconnect")
@@ -789,32 +790,32 @@ extension XMPPClient: XMPPStreamDelegate {
     public func xmppStream(_ stream: XMPPStream, didReceiveStanza stanza: XMPPStanza) {
         // Log raw XMPP stanza - especially important for debugging get-history
         // let rawXML = stanza.toXML()
-        // NSLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        // NSLog("📥📥📥 RAW XMPP STANZA RECEIVED 📥📥📥")
-        // NSLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        // NSLog("   Stanza Name: %@", stanza.name)
-        // NSLog("   Stanza Type: %@", stanza.attributes["type"] ?? "none")
-        // NSLog("   Stanza From: %@", stanza.attributes["from"] ?? "none")
-        // NSLog("   Stanza To: %@", stanza.attributes["to"] ?? "none")
-        // NSLog("   Stanza ID: %@", stanza.attributes["id"] ?? "none")
-        // NSLog("   XML Length: %lu bytes", rawXML.count)
-        // NSLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        // NSLog("📋 FULL RAW XML:")
-        // NSLog("%@", rawXML)
-        // NSLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        // print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        // print("📥📥📥 RAW XMPP STANZA RECEIVED 📥📥📥")
-        // print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        // print("   Stanza Name: \(stanza.name)")
-        // print("   Stanza Type: \(stanza.attributes["type"] ?? "none")")
-        // print("   Stanza From: \(stanza.attributes["from"] ?? "none")")
-        // print("   Stanza To: \(stanza.attributes["to"] ?? "none")")
-        // print("   Stanza ID: \(stanza.attributes["id"] ?? "none")")
-        // print("   XML Length: \(rawXML.count) bytes")
-        // print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        // print("📋 FULL RAW XML:")
-        // print(rawXML)
-        // print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        // //NSlog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        // //NSlog("📥📥📥 RAW XMPP STANZA RECEIVED 📥📥📥")
+        // //NSlog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        // //NSlog("   Stanza Name: %@", stanza.name)
+        // //NSlog("   Stanza Type: %@", stanza.attributes["type"] ?? "none")
+        // //NSlog("   Stanza From: %@", stanza.attributes["from"] ?? "none")
+        // //NSlog("   Stanza To: %@", stanza.attributes["to"] ?? "none")
+        // //NSlog("   Stanza ID: %@", stanza.attributes["id"] ?? "none")
+        // //NSlog("   XML Length: %lu bytes", rawXML.count)
+        // //NSlog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        // //NSlog("📋 FULL RAW XML:")
+        // //NSlog("%@", rawXML)
+        // //NSlog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        // //print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        // //print("📥📥📥 RAW XMPP STANZA RECEIVED 📥📥📥")
+        // //print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        // //print("   Stanza Name: \(stanza.name)")
+        // //print("   Stanza Type: \(stanza.attributes["type"] ?? "none")")
+        // //print("   Stanza From: \(stanza.attributes["from"] ?? "none")")
+        // //print("   Stanza To: \(stanza.attributes["to"] ?? "none")")
+        // //print("   Stanza ID: \(stanza.attributes["id"] ?? "none")")
+        // //print("   XML Length: \(rawXML.count) bytes")
+        // //print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        // //print("📋 FULL RAW XML:")
+        // //print(rawXML)
+        // //print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
         
         // Match TypeScript: this.client.on('stanza', (stanza) => { ... })
         // Match TypeScript: this.lastActivityTs = Date.now();
@@ -843,8 +844,8 @@ extension XMPPClient: XMPPStreamDelegate {
     // Handle error event - Match TypeScript: this.client.on('error', (error) => { ... })
     public func xmppStream(_ stream: XMPPStream, didReceiveError error: Error) {
         // Match TypeScript: console.error('XMPP client error:', error);
-        NSLog("XMPP client error: %@", error.localizedDescription)
-        print("❌ XMPP client error: \(error.localizedDescription)")
+        //NSlog("XMPP client error: %@", error.localizedDescription)
+        //print("❌ XMPP client error: \(error.localizedDescription)")
         
         status = .error
         logStep("event:error")
@@ -865,8 +866,8 @@ extension XMPPClient: XMPPStreamDelegate {
         
         userInfo["reason"] = reason
         
-        print("🔌 XMPPClient: Error disconnect notification")
-        print("   Reason: \(reason)")
+        //print("🔌 XMPPClient: Error disconnect notification")
+        //print("   Reason: \(reason)")
         
         // Notify ConnectionManager
         NotificationCenter.default.post(
@@ -945,9 +946,9 @@ extension XMPPClient: XMPPStreamDelegate {
                     ]
                 )
                 
-                print("✅ XMPPClient: Processed history message - saved to cache, posted notification")
+                //print("✅ XMPPClient: Processed history message - saved to cache, posted notification")
             } else {
-                print("⚠️ XMPPClient: Message already exists in cache, skipping")
+                //print("⚠️ XMPPClient: Message already exists in cache, skipping")
             }
         }
     }
@@ -956,9 +957,9 @@ extension XMPPClient: XMPPStreamDelegate {
         guard let handlers = stanzaHandlers else { return }
         
         // Set up real-time message handler
-        handlers.onMessageReceived = { [weak self] message, roomJID in
-            NSLog("📨 XMPPClient: Real-time message in room %@", roomJID)
-            print("📨 XMPPClient: Real-time message in room \(roomJID)")
+        handlers.onMessageReceived = { [weak self] (message: Message, roomJID: String) in
+            //NSlog("📨 XMPPClient: Real-time message in room %@", roomJID)
+            //print("📨 XMPPClient: Real-time message in room \(roomJID)")
             guard let self = self else { return }
             
             // Notify delegate (for backward compatibility)
@@ -977,18 +978,18 @@ extension XMPPClient: XMPPStreamDelegate {
         }
         
         // Set up history message handler
-        handlers.onHistoryMessageReceived = { [weak self] message, roomJID in
-            NSLog("📜 XMPPClient: History message in room %@", roomJID)
-            print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-            print("📜 XMPPClient: History message received")
-            print("   Room JID: \(roomJID)")
-            print("   Message ID: \(message.id)")
-            print("   Message body: \(message.body.prefix(50))...")
-            print("   Message timestamp: \(message.timestamp?.description ?? "nil")")
-            print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        handlers.onHistoryMessageReceived = { [weak self] (message: Message, roomJID: String) in
+            //NSlog("📜 XMPPClient: History message in room %@", roomJID)
+            //print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            //print("📜 XMPPClient: History message received")
+            //print("   Room JID: \(roomJID)")
+            //print("   Message ID: \(message.id)")
+            //print("   Message body: \(message.body.prefix(50))...")
+            //print("   Message timestamp: \(message.timestamp?.description ?? "nil")")
+            //print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
             
             guard let self = self else {
-                print("⚠️ XMPPClient: self is nil, cannot process history message")
+                //print("⚠️ XMPPClient: self is nil, cannot process history message")
                 return
             }
             
@@ -997,14 +998,14 @@ extension XMPPClient: XMPPStreamDelegate {
             self.processIncomingMessage(message)
             
             // Notify delegate (for ChatRoomViewModel if active)
-            print("📤 XMPPClient: Notifying delegate about history message")
+            //print("📤 XMPPClient: Notifying delegate about history message")
             self.delegate?.xmppClient(self, didReceiveMessage: message)
-            print("✅ XMPPClient: Delegate notified")
+            //print("✅ XMPPClient: Delegate notified")
         }
         
         // Set up reaction handler
-        handlers.onReactionReceived = { [weak self] roomJID, messageId, reactions, from, data in
-            print("👍 XMPPClient: Reaction received in room \(roomJID) for message \(messageId)")
+        handlers.onReactionReceived = { [weak self] (roomJID: String, messageId: String, reactions: [String], from: String, data: [String: String]) in
+            //print("👍 XMPPClient: Reaction received in room \(roomJID) for message \(messageId)")
             guard let self = self else { return }
             
             // Update RoomStore (must be on MainActor)
@@ -1033,8 +1034,8 @@ extension XMPPClient: XMPPStreamDelegate {
         }
         
         // Set up composing (typing) indicator handler
-        handlers.onComposingChanged = { [weak self] roomJID, composingList, isComposing in
-            print("⌨️ XMPPClient: Composing changed in room \(roomJID) - isComposing: \(isComposing), users: \(composingList)")
+        handlers.onComposingChanged = { [weak self] (roomJID: String, composingList: [String], isComposing: Bool) in
+            //print("⌨️ XMPPClient: Composing changed in room \(roomJID) - isComposing: \(isComposing), users: \(composingList)")
             guard let self = self else { return }
             // Post notification for composing change so ChatRoomViewModel can observe it
             NotificationCenter.default.post(
@@ -1049,8 +1050,8 @@ extension XMPPClient: XMPPStreamDelegate {
         }
         
         // Set up delete message handler
-        handlers.onMessageDeleted = { [weak self] roomJID, messageId in
-            print("🗑️ XMPPClient: Message deleted in room \(roomJID) for message \(messageId)")
+        handlers.onMessageDeleted = { [weak self] (roomJID: String, messageId: String) in
+            //print("🗑️ XMPPClient: Message deleted in room \(roomJID) for message \(messageId)")
             guard let self = self else { return }
             
             // Update RoomStore (must be on MainActor)
@@ -1076,8 +1077,8 @@ extension XMPPClient: XMPPStreamDelegate {
         }
         
         // Set up edit message handler
-        handlers.onMessageEdited = { [weak self] roomJID, messageId, newText in
-            print("✏️ XMPPClient: Message edited in room \(roomJID) for message \(messageId)")
+        handlers.onMessageEdited = { [weak self] (roomJID: String, messageId: String, newText: String) in
+            //print("✏️ XMPPClient: Message edited in room \(roomJID) for message \(messageId)")
             guard let self = self else { return }
             
             // Update RoomStore (must be on MainActor)

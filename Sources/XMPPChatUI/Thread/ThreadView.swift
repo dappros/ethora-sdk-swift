@@ -247,7 +247,7 @@ class ThreadViewModel: ObservableObject {
         Task { @MainActor in
             // Get all messages for this room from RoomStore
             guard let room = RoomStore.shared.rooms[roomJID] else {
-                print("⚠️ ThreadViewModel: Room not found: \(roomJID)")
+                //print("⚠️ ThreadViewModel: Room not found: \(roomJID)")
                 return
             }
             
@@ -268,7 +268,7 @@ class ThreadViewModel: ObservableObject {
             self.replies = sortedReplies
             self.replyCount = sortedReplies.count
             
-            print("📝 ThreadViewModel: Loaded \(sortedReplies.count) replies for message \(activeMessage.id)")
+            //print("📝 ThreadViewModel: Loaded \(sortedReplies.count) replies for message \(activeMessage.id)")
         }
     }
 }

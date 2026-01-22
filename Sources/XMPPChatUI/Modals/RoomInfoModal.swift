@@ -53,7 +53,7 @@ public struct RoomInfoModal: View {
                                 let _ = {
                                     if let urlError = error as? URLError, urlError.code != .cancelled {
                                         // Log actual errors (not cancellations)
-                                        print("⚠️ Error loading room image (non-cancellation): \(error.localizedDescription)")
+                                        //print("⚠️ Error loading room image (non-cancellation): \(error.localizedDescription)")
                                     }
                                 }()
                                 // Always return placeholder on failure

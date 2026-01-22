@@ -88,28 +88,28 @@ public class XMPPStream_XMPPFramework {
         
         self.jid = jidString
         
-        NSLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        NSLog("📤 CONNECTING WITH XMPPFRAMEWORK")
-        NSLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        NSLog("   Host: %@", host ?? "unknown")
-        NSLog("   Port: %u", port)
-        NSLog("   Username: %@", username)
-        NSLog("   JID: %@", jidString)
-        NSLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        print("📤 CONNECTING WITH XMPPFRAMEWORK")
-        print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        print("   Host: \(host ?? "unknown")")
-        print("   Port: \(port)")
-        print("   Username: \(username)")
-        print("   JID: \(jidString)")
-        print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        //NSlog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        //NSlog("📤 CONNECTING WITH XMPPFRAMEWORK")
+        //NSlog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        //NSlog("   Host: %@", host ?? "unknown")
+        //NSlog("   Port: %u", port)
+        //NSlog("   Username: %@", username)
+        //NSlog("   JID: %@", jidString)
+        //NSlog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        //print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        //print("📤 CONNECTING WITH XMPPFRAMEWORK")
+        //print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        //print("   Host: \(host ?? "unknown")")
+        //print("   Port: \(port)")
+        //print("   Username: \(username)")
+        //print("   JID: \(jidString)")
+        //print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
         
         do {
             try stream.connect(withTimeout: XMPPStreamTimeoutNone)
         } catch {
-            NSLog("❌ Error connecting: %@", error.localizedDescription)
-            print("❌ Error connecting: \(error.localizedDescription)")
+            //NSlog("❌ Error connecting: %@", error.localizedDescription)
+            //print("❌ Error connecting: \(error.localizedDescription)")
             delegate?.xmppStreamDidDisconnect(self, error: error)
         }
     }
@@ -148,8 +148,8 @@ public class XMPPStream_XMPPFramework {
 // MARK: - XMPPFramework XMPPStreamDelegate
 extension XMPPStream_XMPPFramework: XMPPFramework.XMPPStreamDelegate {
     public func xmppStreamDidConnect(_ sender: XMPPFramework.XMPPStream!) {
-        NSLog("✅ XMPP STREAM CONNECTED")
-        print("✅ XMPP STREAM CONNECTED")
+        //NSlog("✅ XMPP STREAM CONNECTED")
+        //print("✅ XMPP STREAM CONNECTED")
         
         isConnected = true
         delegate?.xmppStreamDidConnect(self)
@@ -158,51 +158,51 @@ extension XMPPStream_XMPPFramework: XMPPFramework.XMPPStreamDelegate {
         if let password = password {
             do {
                 try sender.authenticate(withPassword: password)
-                NSLog("📤 SENDING AUTHENTICATION")
-                print("📤 SENDING AUTHENTICATION")
+                //NSlog("📤 SENDING AUTHENTICATION")
+                //print("📤 SENDING AUTHENTICATION")
             } catch {
-                NSLog("❌ Error authenticating: %@", error.localizedDescription)
-                print("❌ Error authenticating: \(error.localizedDescription)")
+                //NSlog("❌ Error authenticating: %@", error.localizedDescription)
+                //print("❌ Error authenticating: \(error.localizedDescription)")
             }
         }
     }
     
     public func xmppStreamDidAuthenticate(_ sender: XMPPFramework.XMPPStream!) {
-        NSLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        NSLog("✅ STEP 3: XMPP AUTHENTICATION SUCCESS")
-        NSLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        print("✅ STEP 3: XMPP AUTHENTICATION SUCCESS")
-        print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        //NSlog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        //NSlog("✅ STEP 3: XMPP AUTHENTICATION SUCCESS")
+        //NSlog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        //print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        //print("✅ STEP 3: XMPP AUTHENTICATION SUCCESS")
+        //print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
         
         if let jid = sender.myJID {
             self.jid = jid.full
-            NSLog("   JID: %@", jid.full)
-            print("   JID: \(jid.full)")
+            //NSlog("   JID: %@", jid.full)
+            //print("   JID: \(jid.full)")
             delegate?.xmppStreamDidBecomeOnline(self, jid: jid.full)
         }
     }
     
     public func xmppStream(_ sender: XMPPFramework.XMPPStream!, didNotAuthenticate error: DDXMLElement!) {
-        NSLog("❌ XMPP AUTHENTICATION FAILED")
-        print("❌ XMPP AUTHENTICATION FAILED")
+        //NSlog("❌ XMPP AUTHENTICATION FAILED")
+        //print("❌ XMPP AUTHENTICATION FAILED")
         if let errorXML = error {
-            NSLog("   Error: %@", errorXML.xmlString)
-            print("   Error: \(errorXML.xmlString)")
+            //NSlog("   Error: %@", errorXML.xmlString)
+            //print("   Error: \(errorXML.xmlString)")
         }
     }
     
     public func xmppStreamDidDisconnect(_ sender: XMPPFramework.XMPPStream!, withError error: Error!) {
-        NSLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        NSLog("❌ XMPP STREAM DISCONNECTED")
-        NSLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        //NSlog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        //NSlog("❌ XMPP STREAM DISCONNECTED")
+        //NSlog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
         if let error = error {
-            NSLog("   Error: %@", error.localizedDescription)
-            print("   Error: \(error.localizedDescription)")
+            //NSlog("   Error: %@", error.localizedDescription)
+            //print("   Error: \(error.localizedDescription)")
         }
-        print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        print("❌ XMPP STREAM DISCONNECTED")
-        print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        //print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        //print("❌ XMPP STREAM DISCONNECTED")
+        //print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
         
         isConnected = false
         delegate?.xmppStreamDidDisconnect(self, error: error)

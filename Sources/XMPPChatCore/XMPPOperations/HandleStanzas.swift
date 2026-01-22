@@ -77,7 +77,8 @@ public class HandleStanzas {
             stanzaHandlers.onNewRoomCreated(stanza, client: client)
             
         default:
-            print("Unhandled stanza type: \(stanza.name)")
+            //print("Unhandled stanza type: \(stanza.name)")
+            break
         }
     }
 }
