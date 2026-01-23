@@ -7,6 +7,9 @@
 
 import SwiftUI
 import XMPPChatCore
+#if os(iOS)
+import UIKit
+#endif
 
 public struct EditUserProfileModal: View {
     let user: User
@@ -120,7 +123,7 @@ public struct EditUserProfileModal: View {
             }
             .sheet(isPresented: $showImagePicker) {
                 #if os(iOS)
-                ImagePicker(onImageSelected: { imageData, mimeType in
+                ImagePicker(sourceType: .photoLibrary, mediaTypes: ["public.image"], onMediaSelected: { imageData, mimeType in
                     if let image = UIImage(data: imageData) {
                         selectedImage = image
                         // Upload image and update user

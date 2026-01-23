@@ -13,10 +13,12 @@ import XMPPChatCore
 public struct MediaMessageView: View {
     let message: Message
     let isUser: Bool
+    let onMediaTap: ((Message) -> Void)?
     
-    public init(message: Message, isUser: Bool) {
+    public init(message: Message, isUser: Bool, onMediaTap: ((Message) -> Void)? = nil) {
         self.message = message
         self.isUser = isUser
+        self.onMediaTap = onMediaTap
     }
     
     public var body: some View {
@@ -24,16 +26,28 @@ public struct MediaMessageView: View {
             if let mimetype = message.mimetype {
                 switch mimetype {
                 case let mime where mime.hasPrefix("image/"):
-                    ImageMessageView(message: message)
+                    ImageMessageView(message: message, onTap: {
+                        onMediaTap?(message)
+                    })
                 case let mime where mime.hasPrefix("video/"):
-                    VideoMessageView(message: message)
+                    VideoMessageView(message: message, onTap: {
+                        onMediaTap?(message)
+                    })
                 case let mime where mime.hasPrefix("audio/"):
                     AudioMessageView(message: message)
+                case let mime where mime.contains("pdf"):
+                    FileMessageView(message: message, onTap: {
+                        onMediaTap?(message)
+                    })
                 default:
-                    FileMessageView(message: message)
+                    FileMessageView(message: message, onTap: {
+                        onMediaTap?(message)
+                    })
                 }
             } else {
-                FileMessageView(message: message)
+                FileMessageView(message: message, onTap: {
+                    onMediaTap?(message)
+                })
             }
         }
     }
@@ -41,48 +55,64 @@ public struct MediaMessageView: View {
 
 struct ImageMessageView: View {
     let message: Message
+    let onTap: (() -> Void)?
     @State private var image: Image?
     @State private var isLoading = true
+    
+    init(message: Message, onTap: (() -> Void)? = nil) {
+        self.message = message
+        self.onTap = onTap
+    }
     
     var body: some View {
         Group {
             if let location = message.location, let url = URL(string: location) {
-                AsyncImage(url: url) { phase in
-                    switch phase {
-                    case .empty:
-                        ProgressView()
-                            .frame(width: 200, height: 200)
-                    case .success(let img):
-                        img
-                            .resizable()
-                            .aspectRatio(contentMode: .fit)
-                            .frame(maxWidth: 250, maxHeight: 250)
-                            .cornerRadius(12)
-                    case .failure:
-                        Image(systemName: "photo")
-                            .foregroundColor(.gray)
-                    @unknown default:
-                        EmptyView()
+                Button(action: {
+                    onTap?()
+                }) {
+                    AsyncImage(url: url) { phase in
+                        switch phase {
+                        case .empty:
+                            ProgressView()
+                                .frame(width: 200, height: 200)
+                        case .success(let img):
+                            img
+                                .resizable()
+                                .aspectRatio(contentMode: .fit)
+                                .frame(maxWidth: 250, maxHeight: 250)
+                                .cornerRadius(12)
+                        case .failure:
+                            Image(systemName: "photo")
+                                .foregroundColor(.gray)
+                        @unknown default:
+                            EmptyView()
+                        }
                     }
                 }
+                .buttonStyle(PlainButtonStyle())
             } else if let locationPreview = message.locationPreview, let url = URL(string: locationPreview) {
-                AsyncImage(url: url) { phase in
-                    switch phase {
-                    case .empty:
-                        ProgressView()
-                    case .success(let img):
-                        img
-                            .resizable()
-                            .aspectRatio(contentMode: .fit)
-                            .frame(maxWidth: 250, maxHeight: 250)
-                            .cornerRadius(12)
-                    case .failure:
-                        Image(systemName: "photo")
-                            .foregroundColor(.gray)
-                    @unknown default:
-                        EmptyView()
+                Button(action: {
+                    onTap?()
+                }) {
+                    AsyncImage(url: url) { phase in
+                        switch phase {
+                        case .empty:
+                            ProgressView()
+                        case .success(let img):
+                            img
+                                .resizable()
+                                .aspectRatio(contentMode: .fit)
+                                .frame(maxWidth: 250, maxHeight: 250)
+                                .cornerRadius(12)
+                        case .failure:
+                            Image(systemName: "photo")
+                                .foregroundColor(.gray)
+                        @unknown default:
+                            EmptyView()
+                        }
                     }
                 }
+                .buttonStyle(PlainButtonStyle())
             } else {
                 Image(systemName: "photo")
                     .foregroundColor(.gray)
@@ -93,17 +123,35 @@ struct ImageMessageView: View {
 
 struct VideoMessageView: View {
     let message: Message
+    let onTap: (() -> Void)?
     @State private var player: AVPlayer?
+    
+    init(message: Message, onTap: (() -> Void)? = nil) {
+        self.message = message
+        self.onTap = onTap
+    }
     
     var body: some View {
         Group {
             if let location = message.location, let url = URL(string: location) {
-                VideoPlayer(player: player)
-                    .frame(height: 200)
-                    .cornerRadius(12)
-                    .onAppear {
-                        player = AVPlayer(url: url)
+                Button(action: {
+                    onTap?()
+                }) {
+                    ZStack {
+                        VideoPlayer(player: player)
+                            .frame(height: 200)
+                            .cornerRadius(12)
+                        
+                        // Play button overlay
+                        Image(systemName: "play.circle.fill")
+                            .font(.system(size: 50))
+                            .foregroundColor(.white.opacity(0.8))
                     }
+                }
+                .buttonStyle(PlainButtonStyle())
+                .onAppear {
+                    player = AVPlayer(url: url)
+                }
             } else {
                 Image(systemName: "video")
                     .foregroundColor(.gray)
@@ -255,45 +303,45 @@ struct AudioMessageView: View {
 
 struct FileMessageView: View {
     let message: Message
+    let onTap: (() -> Void)?
+    
+    init(message: Message, onTap: (() -> Void)? = nil) {
+        self.message = message
+        self.onTap = onTap
+    }
     
     var body: some View {
-        HStack {
-            Image(systemName: "doc.fill")
-                .font(.title2)
-                .foregroundColor(.blue)
-            
-            VStack(alignment: .leading, spacing: 4) {
-                if let fileName = message.fileName ?? message.originalName {
-                    Text(fileName)
-                        .font(.subheadline)
-                        .foregroundColor(.primary)
+        Button(action: {
+            onTap?()
+        }) {
+            HStack {
+                Image(systemName: message.mimetype?.contains("pdf") == true ? "doc.fill" : "doc.fill")
+                    .font(.title2)
+                    .foregroundColor(.blue)
+                
+                VStack(alignment: .leading, spacing: 4) {
+                    if let fileName = message.fileName ?? message.originalName {
+                        Text(fileName)
+                            .font(.subheadline)
+                            .foregroundColor(.primary)
+                    }
+                    
+                    if let size = message.size {
+                        Text(size)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
                 }
                 
-                if let size = message.size {
-                    Text(size)
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-            }
-            
-            Spacer()
-            
-            Button(action: {
-                // Download file
-                if let location = message.location, let url = URL(string: location) {
-                    #if os(iOS)
-                    UIApplication.shared.open(url)
-                    #elseif os(macOS)
-                    NSWorkspace.shared.open(url)
-                    #endif
-                }
-            }) {
+                Spacer()
+                
                 Image(systemName: "arrow.down.circle")
                     .foregroundColor(.blue)
             }
+            .padding()
+            .background(Color.gray.opacity(0.1))
+            .cornerRadius(12)
         }
-        .padding()
-        .background(Color.gray.opacity(0.1))
-        .cornerRadius(12)
+        .buttonStyle(PlainButtonStyle())
     }
 }

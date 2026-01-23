@@ -65,6 +65,10 @@ public struct ChatRoomView: View {
     @State private var selectedMessageForThread: Message? = nil
     @State private var showReportModal: Bool = false
     @State private var messageToReport: Message? = nil
+    @State private var showFullScreenImage: Bool = false
+    @State private var showFullScreenVideo: Bool = false
+    @State private var showFullScreenPDF: Bool = false
+    @State private var selectedMediaMessage: Message? = nil
     @ObservedObject private var connectionManager: ConnectionManager
     
     public init(viewModel: ChatRoomViewModel) {
@@ -247,7 +251,32 @@ public struct ChatRoomView: View {
                                     onDelete: isUser ? {
                                         viewModel.deleteMessage(message.id)
                                     } : nil,
-                                    onReport: nil
+                                    onReport: nil,
+                                    onMediaTap: { mediaMessage in
+                                        // Open full screen media preview
+                                        selectedMediaMessage = mediaMessage
+                                        
+                                        let mimeType: String = {
+                                            if let existingMimeType = mediaMessage.mimetype, !existingMimeType.isEmpty {
+                                                return existingMimeType
+                                            } else if let location = mediaMessage.location {
+                                                return inferMimeType(from: location)
+                                            } else {
+                                                return "application/octet-stream"
+                                            }
+                                        }()
+                                        
+                                        if mimeType.hasPrefix("image/") {
+                                            showFullScreenImage = true
+                                        } else if mimeType.hasPrefix("video/") {
+                                            showFullScreenVideo = true
+                                        } else if mimeType.contains("pdf") {
+                                            showFullScreenPDF = true
+                                        } else {
+                                            // For other files, open generic file preview modal (existing UI)
+                                            showFullScreenPDF = false
+                                        }
+                                    }
 //                                    onReport: !isUser ? {
 //                                        messageToReport = message
 //                                        showReportModal = true
@@ -372,6 +401,30 @@ public struct ChatRoomView: View {
                             onLeave: nil,
                             onDelete: nil
                         )
+                    }
+                    .fullScreenCover(isPresented: $showFullScreenImage) {
+                        if let message = selectedMediaMessage, let urlString = message.location, let url = URL(string: urlString) {
+                            FullScreenImageView(imageURL: url, onClose: {
+                                showFullScreenImage = false
+                                selectedMediaMessage = nil
+                            })
+                        }
+                    }
+                    .fullScreenCover(isPresented: $showFullScreenVideo) {
+                        if let message = selectedMediaMessage, let urlString = message.location, let url = URL(string: urlString) {
+                            FullScreenVideoView(videoURL: url, onClose: {
+                                showFullScreenVideo = false
+                                selectedMediaMessage = nil
+                            })
+                        }
+                    }
+                    .sheet(isPresented: $showFullScreenPDF) {
+                        if let message = selectedMediaMessage, let urlString = message.location, let url = URL(string: urlString) {
+                            FullScreenPDFView(pdfURL: url, fileName: message.fileName ?? message.originalName ?? "Document.pdf", onClose: {
+                                showFullScreenPDF = false
+                                selectedMediaMessage = nil
+                            })
+                        }
                     }
                     .background(
                         // Track scroll position and content dimensions
@@ -1088,6 +1141,7 @@ struct MessageBubbleView: View {
     let onEdit: (() -> Void)?
     let onDelete: (() -> Void)?
     let onReport: (() -> Void)?
+    let onMediaTap: ((Message) -> Void)?
     
     @State private var showContextMenu = false
     @State private var showReactionPicker = false
@@ -1206,7 +1260,10 @@ struct MessageBubbleView: View {
                         MediaMessagePreview(
                             message: message,
                             mimeType: mimeType,
-                            isUser: isUser
+                            isUser: isUser,
+                            onMediaTap: { mediaMessage in
+                                onMediaTap?(mediaMessage)
+                            }
                         )
                     } else {
                         if message.body.lowercased() != "media" {
@@ -1746,7 +1803,7 @@ struct ChatInputView: View {
                         .foregroundColor(.blue)
                 }
                 .sheet(isPresented: $showImagePicker) {
-                    ImagePicker(onImageSelected: { imageData, mimeType in
+                    ImagePicker(sourceType: .photoLibrary, mediaTypes: ["public.image", "public.movie"], onMediaSelected: { imageData, mimeType in
                         onSendMedia(imageData, mimeType)
                     })
                 }
@@ -1846,8 +1903,7 @@ struct MediaMessagePreview: View {
     let message: Message
     let mimeType: String
     let isUser: Bool
-    
-    @State private var showFullScreen = false
+    let onMediaTap: ((Message) -> Void)?
     
     var body: some View {
         Group {
@@ -1856,20 +1912,20 @@ struct MediaMessagePreview: View {
                     imageURL: message.location ?? "",
                     previewURL: message.locationPreview,
                     fileName: message.originalName ?? message.fileName ?? "Image",
-                    onTap: { showFullScreen = true }
+                    onTap: { onMediaTap?(message) }
                 )
             } else if mimeType.starts(with: "video/") {
                 VideoPreview(
                     videoURL: message.location ?? "",
                     fileName: message.originalName ?? message.fileName ?? "Video",
-                    onTap: { showFullScreen = true }
+                    onTap: { onMediaTap?(message) }
                 )
             } else if mimeType.contains("pdf") {
                 PDFPreview(
                     fileURL: message.location ?? "",
                     fileName: message.originalName ?? message.fileName ?? "Document.pdf",
                     size: message.size,
-                    onTap: { showFullScreen = true }
+                    onTap: { onMediaTap?(message) }
                 )
             } else {
                 FilePreview(
@@ -1878,15 +1934,9 @@ struct MediaMessagePreview: View {
                     mimeType: mimeType,
                     size: message.size,
                     previewURL: message.locationPreview,
-                    onTap: { showFullScreen = true }
+                    onTap: { onMediaTap?(message) }
                 )
             }
-        }
-        .sheet(isPresented: $showFullScreen) {
-            FilePreviewModal(
-                message: message,
-                onClose: { showFullScreen = false }
-            )
         }
     }
 }
@@ -2091,19 +2141,19 @@ struct FilePreviewModal: View {
             ZStack {
                 Color.black.ignoresSafeArea()
                 
-                if let mimeType = message.mimetype, let fileURL = message.location {
+                if let mimeType = message.mimetype, let fileURL = message.location, let url = URL(string: fileURL) {
                     Group {
                         if mimeType.starts(with: "image/") {
-                            FullScreenImageView(imageURL: fileURL, fileName: message.originalName ?? message.fileName ?? "Image")
+                            FullScreenImageView(imageURL: url, onClose: onClose)
                         } else if mimeType.starts(with: "video/") {
                             #if os(iOS)
-                            FullScreenVideoView(videoURL: fileURL)
+                            FullScreenVideoView(videoURL: url, onClose: onClose)
                             #else
                             Text("Video playback not available on macOS")
                                 .foregroundColor(.secondary)
                             #endif
                         } else if mimeType.contains("pdf") {
-                            PDFViewerView(pdfURL: fileURL)
+                            FullScreenPDFView(pdfURL: url, fileName: message.originalName ?? message.fileName ?? "Document.pdf", onClose: onClose)
                         } else {
                             UnsupportedFileView(
                                 fileURL: fileURL,
@@ -2201,46 +2251,6 @@ struct FilePreviewModal: View {
     }
 }
 
-// MARK: - Full Screen Image View
-struct FullScreenImageView: View {
-    let imageURL: String
-    let fileName: String
-    
-    var body: some View {
-        AsyncImage(url: URL(string: imageURL)) { phase in
-            switch phase {
-            case .empty:
-                ProgressView()
-                    .progressViewStyle(CircularProgressViewStyle(tint: .white))
-            case .success(let image):
-                image
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-            case .failure:
-                VStack {
-                    Image(systemName: "photo")
-                        .font(.largeTitle)
-                        .foregroundColor(.white)
-                    Text("Failed to load image")
-                        .foregroundColor(.white)
-                }
-            @unknown default:
-                EmptyView()
-            }
-        }
-    }
-}
-
-// MARK: - Full Screen Video View
-#if os(iOS)
-struct FullScreenVideoView: View {
-    let videoURL: String
-    
-    var body: some View {
-        VideoPlayer(player: AVPlayer(url: URL(string: videoURL)!))
-    }
-}
-#endif
 
 // MARK: - PDF Viewer View
 struct PDFViewerView: View {
@@ -2323,6 +2333,166 @@ func inferMimeType(from url: String) -> String {
     return ""
 }
 
+// MARK: - Full Screen Image View
+struct FullScreenImageView: View {
+    let imageURL: URL
+    let onClose: () -> Void
+    @State private var scale: CGFloat = 1.0
+    @State private var lastScale: CGFloat = 1.0
+    @State private var offset: CGSize = .zero
+    @State private var lastOffset: CGSize = .zero
+    
+    var body: some View {
+        ZStack {
+            Color.black.ignoresSafeArea()
+            
+            AsyncImage(url: imageURL) { phase in
+                switch phase {
+                case .empty:
+                    ProgressView()
+                        .tint(.white)
+                case .success(let image):
+                    image
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .scaleEffect(scale)
+                        .offset(offset)
+                        .gesture(
+                            MagnificationGesture()
+                                .onChanged { value in
+                                    scale = lastScale * value
+                                }
+                                .onEnded { _ in
+                                    lastScale = scale
+                                    if scale < 1.0 {
+                                        withAnimation {
+                                            scale = 1.0
+                                            lastScale = 1.0
+                                            offset = .zero
+                                            lastOffset = .zero
+                                        }
+                                    } else if scale > 3.0 {
+                                        withAnimation {
+                                            scale = 3.0
+                                            lastScale = 3.0
+                                        }
+                                    }
+                                }
+                        )
+                        .gesture(
+                            DragGesture()
+                                .onChanged { value in
+                                    offset = CGSize(
+                                        width: lastOffset.width + value.translation.width,
+                                        height: lastOffset.height + value.translation.height
+                                    )
+                                }
+                                .onEnded { _ in
+                                    lastOffset = offset
+                                }
+                        )
+                case .failure:
+                    VStack {
+                        Image(systemName: "photo")
+                            .font(.largeTitle)
+                            .foregroundColor(.white)
+                        Text("Failed to load image")
+                            .foregroundColor(.white)
+                    }
+                @unknown default:
+                    EmptyView()
+                }
+            }
+            
+            // Close button
+            VStack {
+                HStack {
+                    Spacer()
+                    Button(action: onClose) {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.title)
+                            .foregroundColor(.white)
+                            .padding()
+                    }
+                }
+                Spacer()
+            }
+        }
+    }
+}
+
+// MARK: - Full Screen Video View
+#if os(iOS)
+struct FullScreenVideoView: View {
+    let videoURL: URL
+    let onClose: () -> Void
+    @State private var player: AVPlayer?
+    
+    var body: some View {
+        ZStack {
+            Color.black.ignoresSafeArea()
+            
+            if let player = player {
+                VideoPlayer(player: player)
+                    .ignoresSafeArea()
+                    .onAppear {
+                        player.play()
+                    }
+            } else {
+                ProgressView()
+                    .tint(.white)
+                    .onAppear {
+                        player = AVPlayer(url: videoURL)
+                    }
+            }
+            
+            // Close button
+            VStack {
+                HStack {
+                    Spacer()
+                    Button(action: {
+                        player?.pause()
+                        onClose()
+                    }) {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.title)
+                            .foregroundColor(.white)
+                            .padding()
+                    }
+                }
+                Spacer()
+            }
+        }
+    }
+}
+#endif
+
+// MARK: - Full Screen PDF View
+struct FullScreenPDFView: View {
+    let pdfURL: URL
+    let fileName: String
+    let onClose: () -> Void
+    
+    var body: some View {
+        NavigationView {
+            #if os(iOS)
+            PDFViewer(url: pdfURL)
+                .navigationTitle(fileName)
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        Button("Close") {
+                            onClose()
+                        }
+                    }
+                }
+            #else
+            Text("PDF Viewer not available on macOS")
+            #endif
+        }
+    }
+}
+
 func formatFileSize(_ sizeString: String) -> String {
     guard let size = Int64(sizeString) else {
         return "Unknown size"
@@ -2359,11 +2529,24 @@ struct WebView: UIViewRepresentable {
 // MARK: - Image Picker (iOS)
 #if os(iOS)
 struct ImagePicker: UIViewControllerRepresentable {
-    let onImageSelected: (Data, String) -> Void
+    let sourceType: UIImagePickerController.SourceType
+    let mediaTypes: [String]
+    let onMediaSelected: (Data, String) -> Void
     
     func makeUIViewController(context: Context) -> PHPickerViewController {
         var configuration = PHPickerConfiguration()
-        configuration.filter = .any(of: [.images, .videos])
+        
+        // Configure based on media types
+        if mediaTypes.contains("public.image") && mediaTypes.contains("public.movie") {
+            configuration.filter = .any(of: [.images, .videos])
+        } else if mediaTypes.contains("public.image") {
+            configuration.filter = .images
+        } else if mediaTypes.contains("public.movie") {
+            configuration.filter = .videos
+        } else {
+            configuration.filter = .any(of: [.images, .videos])
+        }
+        
         configuration.selectionLimit = 1
         
         let picker = PHPickerViewController(configuration: configuration)
@@ -2376,14 +2559,14 @@ struct ImagePicker: UIViewControllerRepresentable {
     }
     
     func makeCoordinator() -> Coordinator {
-        Coordinator(onImageSelected: onImageSelected)
+        Coordinator(onMediaSelected: onMediaSelected)
     }
     
     class Coordinator: NSObject, PHPickerViewControllerDelegate {
-        let onImageSelected: (Data, String) -> Void
+        let onMediaSelected: (Data, String) -> Void
         
-        init(onImageSelected: @escaping (Data, String) -> Void) {
-            self.onImageSelected = onImageSelected
+        init(onMediaSelected: @escaping (Data, String) -> Void) {
+            self.onMediaSelected = onMediaSelected
         }
         
         func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
@@ -2401,15 +2584,22 @@ struct ImagePicker: UIViewControllerRepresentable {
                             mimeType = "image/png"
                         } else if result.itemProvider.hasItemConformingToTypeIdentifier(UTType.heic.identifier) {
                             mimeType = "image/heic"
+                        } else if result.itemProvider.hasItemConformingToTypeIdentifier(UTType.gif.identifier) {
+                            mimeType = "image/gif"
                         }
-                        self.onImageSelected(data, mimeType)
+                        self.onMediaSelected(data, mimeType)
                     }
                 }
             } else if result.itemProvider.hasItemConformingToTypeIdentifier(UTType.movie.identifier) {
                 result.itemProvider.loadDataRepresentation(forTypeIdentifier: UTType.movie.identifier) { data, error in
                     guard let data = data, error == nil else { return }
                     DispatchQueue.main.async {
-                        self.onImageSelected(data, "video/mp4")
+                        // Determine video MIME type
+                        var mimeType = "video/mp4"
+                        if result.itemProvider.hasItemConformingToTypeIdentifier(UTType.quickTimeMovie.identifier) {
+                            mimeType = "video/quicktime"
+                        }
+                        self.onMediaSelected(data, mimeType)
                     }
                 }
             }

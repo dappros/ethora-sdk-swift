@@ -7,6 +7,9 @@
 
 import SwiftUI
 import XMPPChatCore
+#if os(iOS)
+import UIKit
+#endif
 
 public struct ConfigurableChatInputView: View {
     @Binding var messageText: String
@@ -91,113 +94,188 @@ struct DefaultChatInputView: View {
     let messageTextFilter: MessageTextFilterConfig?
     
     @State private var showMediaPicker = false
+    @State private var selectedMediaData: Data? = nil
+    @State private var selectedMediaType: String? = nil
+    @State private var selectedMediaFileName: String? = nil
+    #if os(iOS)
+    @State private var selectedMediaImage: UIImage? = nil
+    #endif
     @FocusState private var isFocused: Bool
     
     var body: some View {
-        HStack(spacing: 16) {
-            if isEditing {
-                Button("Cancel") {
-                    onCancelEdit?()
-                }
-                .foregroundColor(.secondary)
-                .padding(.trailing, 8)
+        VStack(spacing: 0) {
+            // Media Preview
+            if let mediaData = selectedMediaData, let mediaType = selectedMediaType {
+                #if os(iOS)
+                MediaPreviewView(
+                    mediaData: mediaData,
+                    mediaType: mediaType,
+                    fileName: selectedMediaFileName,
+                    image: selectedMediaImage,
+                    onCancel: {
+                        selectedMediaData = nil
+                        selectedMediaType = nil
+                        selectedMediaFileName = nil
+                        selectedMediaImage = nil
+                    }
+                )
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
+                #else
+                MediaPreviewView(
+                    mediaData: mediaData,
+                    mediaType: mediaType,
+                    fileName: selectedMediaFileName,
+                    image: nil,
+                    onCancel: {
+                        selectedMediaData = nil
+                        selectedMediaType = nil
+                        selectedMediaFileName = nil
+                    }
+                )
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
+                #endif
             }
             
-            if !disableMedia {
-                Button(action: {
-                    showMediaPicker = true
-                }) {
-                    Image(systemName: "paperclip")
-                        .font(.system(size: 20, weight: .medium))
-                        .foregroundColor(.black)
-                        .frame(width: 40, height: 40)
-                        .background(Color.white)
-                        .clipShape(Circle())
-                        .overlay(
-                            Circle()
-                                .stroke(Color.gray.opacity(0.3), lineWidth: 0.5)
-                        )
-                }
-            }
-            
-            ZStack(alignment: .leading) {
-                if messageText.isEmpty {
-                    Text(placeholderText)
-                        .foregroundColor(.gray.opacity(0.6))
-                        .padding(.horizontal, 16)
+            HStack(spacing: 16) {
+                if isEditing {
+                    Button("Cancel") {
+                        onCancelEdit?()
+                    }
+                    .foregroundColor(.secondary)
+                    .padding(.trailing, 8)
                 }
                 
-                Group {
-                    if #available(iOS 16.0, macOS 13.0, *) {
-                        TextField("", text: $messageText, axis: .vertical)
-                            .lineLimit(1...5)
-                    } else {
-                        TextField("", text: $messageText)
-                            .lineLimit(5)
+                if !disableMedia {
+                    Button(action: {
+                        showMediaPicker = true
+                    }) {
+                        Image(systemName: "paperclip")
+                            .font(.system(size: 20, weight: .medium))
+                            .foregroundColor(.black)
+                            .frame(width: 40, height: 40)
+                            .background(Color.white)
+                            .clipShape(Circle())
+                            .overlay(
+                                Circle()
+                                    .stroke(Color.gray.opacity(0.3), lineWidth: 0.5)
+                            )
                     }
                 }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-                .foregroundColor(.black)
-            }
-            .background(Color.white)
-            .cornerRadius(20)
-            .overlay(
-                RoundedRectangle(cornerRadius: 20)
-                    .stroke(Color.gray.opacity(0.3), lineWidth: 0.5)
-            )
-            .accentColor(.blue)
-            .focused($isFocused)
-            .onSubmit {
-                if !messageText.isEmpty {
-                    sendMessage()
+                
+                ZStack(alignment: .leading) {
+                    if messageText.isEmpty && selectedMediaData == nil {
+                        Text(placeholderText)
+                            .foregroundColor(.gray.opacity(0.6))
+                            .padding(.horizontal, 16)
+                    }
+                    
+                    Group {
+                        if #available(iOS 16.0, macOS 13.0, *) {
+                            TextField("", text: $messageText, axis: .vertical)
+                                .lineLimit(1...5)
+                        } else {
+                            TextField("", text: $messageText)
+                                .lineLimit(5)
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+                    .foregroundColor(.black)
                 }
-            }
-            .onChange(of: messageText) { newValue in
-                if let filter = messageTextFilter, filter.enabled {
-                    messageText = filter.filterFunction(newValue)
-                }
-            }
-            
-            if let secondaryButton = secondarySendButton, secondaryButton.enabled {
-                Button(action: {
-                    sendMessage()
-                }) {
-                    if let label = secondaryButton.label {
-                        AnyView(label)
-                    } else {
-                        AnyView(Text("Send"))
+                .background(Color.white)
+                .cornerRadius(20)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 20)
+                        .stroke(Color.gray.opacity(0.3), lineWidth: 0.5)
+                )
+                .accentColor(.blue)
+                .focused($isFocused)
+                .onSubmit {
+                    if !messageText.isEmpty {
+                        sendMessage()
                     }
                 }
-                .buttonStyle(.borderedProminent)
-            } else {
-                Button(action: {
-                    sendMessage()
-                }) {
-                    Image(systemName: "paperplane.fill")
-                        .font(.system(size: 18, weight: .medium))
-                        .foregroundColor(.white)
-                        .frame(width: 40, height: 40)
-                        .background(messageText.isEmpty ? Color.gray : Color.blue)
-                        .clipShape(Circle())
-                        .overlay(
-                            Circle()
-                                .stroke(Color.gray.opacity(0.3), lineWidth: 0.5)
-                        )
+                .onChange(of: messageText) { newValue in
+                    if let filter = messageTextFilter, filter.enabled {
+                        messageText = filter.filterFunction(newValue)
+                    }
                 }
-                .disabled(messageText.isEmpty)
+                
+                if let secondaryButton = secondarySendButton, secondaryButton.enabled {
+                    Button(action: {
+                        if selectedMediaData != nil {
+                            // Send media
+                            if let data = selectedMediaData, let type = selectedMediaType {
+                                onSendMedia?(data, type)
+                                selectedMediaData = nil
+                                selectedMediaType = nil
+                                selectedMediaFileName = nil
+                                #if os(iOS)
+                                selectedMediaImage = nil
+                                #endif
+                            }
+                        } else {
+                            sendMessage()
+                        }
+                    }) {
+                        if let label = secondaryButton.label {
+                            AnyView(label)
+                        } else {
+                            AnyView(Text("Send"))
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                } else {
+                    Button(action: {
+                        if selectedMediaData != nil {
+                            // Send media
+                            if let data = selectedMediaData, let type = selectedMediaType {
+                                onSendMedia?(data, type)
+                                selectedMediaData = nil
+                                selectedMediaType = nil
+                                selectedMediaFileName = nil
+                                #if os(iOS)
+                                selectedMediaImage = nil
+                                #endif
+                            }
+                        } else {
+                            sendMessage()
+                        }
+                    }) {
+                        Image(systemName: "paperplane.fill")
+                            .font(.system(size: 18, weight: .medium))
+                            .foregroundColor(.white)
+                            .frame(width: 40, height: 40)
+                            .background((messageText.isEmpty && selectedMediaData == nil) ? Color.gray : Color.blue)
+                            .clipShape(Circle())
+                            .overlay(
+                                Circle()
+                                    .stroke(Color.gray.opacity(0.3), lineWidth: 0.5)
+                            )
+                    }
+                    .disabled(messageText.isEmpty && selectedMediaData == nil)
+                }
             }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
         #if os(iOS)
         .background(Color(uiColor: .systemBackground))
         #else
         .background(Color(NSColor.controlBackgroundColor))
         #endif
         .sheet(isPresented: $showMediaPicker) {
-            MediaPickerView(onMediaSelected: { data, type in
-                onSendMedia?(data, type)
+            MediaPickerView(onMediaSelected: { data, type, fileName in
+                selectedMediaData = data
+                selectedMediaType = type
+                selectedMediaFileName = fileName
+                #if os(iOS)
+                if type.hasPrefix("image/"), let image = UIImage(data: data) {
+                    selectedMediaImage = image
+                }
+                #endif
             })
         }
     }
@@ -213,17 +291,72 @@ struct DefaultChatInputView: View {
 }
 
 struct MediaPickerView: View {
-    let onMediaSelected: (Data, String) -> Void
+    let onMediaSelected: (Data, String, String?) -> Void
     @Environment(\.dismiss) var dismiss
+    @State private var showImagePicker = false
+    @State private var showVideoPicker = false
+    @State private var showDocumentPicker = false
+    @State private var sourceType: UIImagePickerController.SourceType = .photoLibrary
     
     var body: some View {
         NavigationView {
-            VStack {
-                Text("Media Picker")
-                    .font(.headline)
-                // Implement media picker UI
-                // For now, placeholder
+            VStack(spacing: 20) {
+                // Photo option
+                Button(action: {
+                    sourceType = .photoLibrary
+                    showImagePicker = true
+                }) {
+                    HStack {
+                        Image(systemName: "photo")
+                            .font(.title2)
+                            .foregroundColor(.blue)
+                        Text("Photo")
+                            .font(.headline)
+                        Spacer()
+                    }
+                    .padding()
+                    .background(Color.gray.opacity(0.1))
+                    .cornerRadius(12)
+                }
+                
+                // Video option
+                Button(action: {
+                    sourceType = .photoLibrary
+                    showVideoPicker = true
+                }) {
+                    HStack {
+                        Image(systemName: "video")
+                            .font(.title2)
+                            .foregroundColor(.blue)
+                        Text("Video")
+                            .font(.headline)
+                        Spacer()
+                    }
+                    .padding()
+                    .background(Color.gray.opacity(0.1))
+                    .cornerRadius(12)
+                }
+                
+                // File option
+                Button(action: {
+                    showDocumentPicker = true
+                }) {
+                    HStack {
+                        Image(systemName: "doc")
+                            .font(.title2)
+                            .foregroundColor(.blue)
+                        Text("File")
+                            .font(.headline)
+                        Spacer()
+                    }
+                    .padding()
+                    .background(Color.gray.opacity(0.1))
+                    .cornerRadius(12)
+                }
+                
+                Spacer()
             }
+            .padding()
             .navigationTitle("Select Media")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
@@ -235,6 +368,111 @@ struct MediaPickerView: View {
                     }
                 }
             }
+            .sheet(isPresented: $showImagePicker) {
+                ImagePicker(sourceType: sourceType, mediaTypes: ["public.image"], onMediaSelected: { data, mimeType in
+                    onMediaSelected(data, mimeType, nil)
+                    dismiss()
+                })
+            }
+            .sheet(isPresented: $showVideoPicker) {
+                ImagePicker(sourceType: sourceType, mediaTypes: ["public.movie"], onMediaSelected: { data, mimeType in
+                    onMediaSelected(data, mimeType, nil)
+                    dismiss()
+                })
+            }
+            .sheet(isPresented: $showDocumentPicker) {
+                DocumentPicker(onDocumentSelected: { fileData, fileName, mimeType in
+                    onMediaSelected(fileData, mimeType, fileName)
+                    dismiss()
+                })
+            }
         }
+    }
+}
+
+// MARK: - Media Preview View
+struct MediaPreviewView: View {
+    let mediaData: Data
+    let mediaType: String
+    let fileName: String?
+    #if os(iOS)
+    let image: UIImage?
+    #else
+    let image: Any? = nil
+    #endif
+    let onCancel: () -> Void
+    
+    var body: some View {
+        HStack(spacing: 12) {
+            // Preview
+            Group {
+                if mediaType.hasPrefix("image/") {
+                    #if os(iOS)
+                    if let uiImage = image {
+                        Image(uiImage: uiImage)
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                    } else {
+                        Image(systemName: "photo")
+                            .foregroundColor(.gray)
+                    }
+                    #else
+                    Image(systemName: "photo")
+                        .foregroundColor(.gray)
+                    #endif
+                } else if mediaType.hasPrefix("video/") {
+                    Image(systemName: "video.fill")
+                        .foregroundColor(.blue)
+                } else {
+                    Image(systemName: "doc.fill")
+                        .foregroundColor(.blue)
+                }
+            }
+            .frame(width: 60, height: 60)
+            .background(Color.gray.opacity(0.1))
+            .cornerRadius(8)
+            .clipped()
+            
+            // File info
+            VStack(alignment: .leading, spacing: 4) {
+                if let fileName = fileName {
+                    Text(fileName)
+                        .font(.subheadline)
+                        .foregroundColor(.primary)
+                        .lineLimit(1)
+                } else {
+                    Text(mediaType.hasPrefix("image/") ? "Image" : mediaType.hasPrefix("video/") ? "Video" : "File")
+                        .font(.subheadline)
+                        .foregroundColor(.primary)
+                }
+                
+                Text(formatFileSize(mediaData.count))
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            
+            Spacer()
+            
+            // Cancel button
+            Button(action: onCancel) {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.title3)
+                    .foregroundColor(.gray)
+            }
+        }
+        .padding(12)
+        .background(Color.white)
+        .cornerRadius(12)
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Color.gray.opacity(0.3), lineWidth: 0.5)
+        )
+    }
+    
+    private func formatFileSize(_ bytes: Int) -> String {
+        let formatter = ByteCountFormatter()
+        formatter.allowedUnits = [.useKB, .useMB]
+        formatter.countStyle = .file
+        return formatter.string(fromByteCount: Int64(bytes))
     }
 }
