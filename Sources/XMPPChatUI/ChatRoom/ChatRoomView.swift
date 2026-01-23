@@ -119,11 +119,30 @@ public struct ChatRoomView: View {
                                 .id("loader-top")
                             }
                             
-                            // Filter out deleted messages and old pending duplicates
-                            // CRITICAL: Remove pending messages if there's a confirmed version with same content
+                            // Filter messages - matches React Native MessageList.tsx logic exactly
+                            // React Native: const nonDeletedMessages = addReplyMessages.filter((item: IMessage) => !item.deleted && !item.isDeleted);
+                            // Then: item.showInChannel === "true" || ((!item.isReply || item.isReply === "false") && !item.mainMessage)
                             let filteredMessages = viewModel.messages.filter { msg in
-                                // Remove deleted messages
-                                guard msg.isDeleted != true else { return false }
+                                // Match TypeScript: if (!message?.body) return;
+                                guard !msg.body.isEmpty else {
+                                    return false
+                                }
+                                
+                                // Match TypeScript: if (message.deleted || message.isDeleted) return;
+                                guard msg.isDeleted != true else {
+                                    return false
+                                }
+                                
+                                // Match React Native MessageList.tsx filter logic:
+                                // item.showInChannel === "true" || ((!item.isReply || item.isReply === "false") && !item.mainMessage)
+                                let showInChannel = msg.showInChannel == "true"
+                                let isNotReply = msg.isReply != true && (msg.isReply == nil || msg.isReply == false)
+                                let hasNoMainMessage = msg.mainMessage == nil || msg.mainMessage?.isEmpty == true
+                                let shouldShow = showInChannel || (isNotReply && hasNoMainMessage)
+                                
+                                guard shouldShow else {
+                                    return false
+                                }
                                 
                                 // For pending messages, check if there's a confirmed version
                                 if let pending = msg.pending, pending {
