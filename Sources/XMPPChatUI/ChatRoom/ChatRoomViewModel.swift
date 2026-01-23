@@ -1032,7 +1032,7 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
         
         //print("✅ handleIncomingMessage: Room matches, processing message")
         
-         to match: pending message id === incoming message xmppId
+        // Match: pending message id === incoming message xmppId
         if let existingIndex = messages.firstIndex(where: { msg in
             // Exact ID match
             msg.id == message.id ||

@@ -96,7 +96,7 @@ public final class MessageParser {
 
         let body = fullData.getChild("body")?.text
         let deleted = (fullData.getChild("deleted") != nil)
-
+        
         // translations
         var translations: [String: String]? = nil
         if let tNode = fullData.getChild("translations"),
@@ -179,11 +179,13 @@ public final class MessageParser {
             //print("   size: \(size ?? "nil")")
         }
 
+        // Match TypeScript: createMessageFromXml doesn't filter body, but addRoomMessage does
+        // So we create message with body (even if empty), and it will be filtered in handleIncomingMessage
         return Message(
             id: d.id,
             user: user,
             date: d.date,
-            body: d.body ?? "",
+            body: d.body ?? "", // Empty body will be filtered out in handleIncomingMessage
             roomJid: d.roomJid,
             isSystemMessage: d.dataAttrs["isSystemMessage"],
             isMediafile: d.dataAttrs["isMediafile"],
