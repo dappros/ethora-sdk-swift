@@ -8,6 +8,9 @@
 import Foundation
 import Combine
 import XMPPChatCore
+#if os(iOS)
+import UIKit
+#endif
 
 @MainActor
 public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
@@ -1340,76 +1343,158 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
     }
     
     public func sendMedia(data: Data, type: String) {
+        print("📤 ChatRoomViewModel.sendMedia: Called with type: \(type), size: \(data.count) bytes")
+        
         guard let user = UserStore.shared.currentUser else {
-            //print("❌ ChatRoomViewModel.sendMedia: No current user")
+            print("❌ ChatRoomViewModel.sendMedia: No current user")
             return
         }
         
         // Generate unique message ID
         let messageId = "send-media-message-\(Int64(Date().timeIntervalSince1970 * 1000))"
         
-        // Extract file name from type or use default
-        let fileName = "media_\(Int64(Date().timeIntervalSince1970 * 1000))"
-        let fileExtension: String
-        if type.starts(with: "image/") {
-            fileExtension = type.contains("png") ? "png" : "jpg"
-        } else if type.starts(with: "video/") {
-            fileExtension = "mp4"
-        } else if type.contains("pdf") {
-            fileExtension = "pdf"
-        } else {
-            fileExtension = "bin"
-        }
-        let fullFileName = "\(fileName).\(fileExtension)"
-        
         Task {
             do {
+                // Convert HEIC to JPEG if needed
+                var finalData = data
+                var finalMimeType = type
+                var finalFileName = "media_\(Int64(Date().timeIntervalSince1970 * 1000))"
+                
+                #if os(iOS)
+                if type == "image/heic" || type == "image/heif" {
+                    print("🔄 ChatRoomViewModel.sendMedia: Converting HEIC to JPEG...")
+                    if let uiImage = UIImage(data: data) {
+                        if let jpegData = uiImage.jpegData(compressionQuality: 0.8) {
+                            finalData = jpegData
+                            finalMimeType = "image/jpeg"
+                            finalFileName = "\(finalFileName).jpg"
+                            print("✅ ChatRoomViewModel.sendMedia: Converted HEIC to JPEG (\(data.count) -> \(jpegData.count) bytes)")
+                        } else {
+                            print("❌ ChatRoomViewModel.sendMedia: Failed to convert HEIC to JPEG")
+                            return
+                        }
+                    } else {
+                        print("❌ ChatRoomViewModel.sendMedia: Failed to create UIImage from HEIC data")
+                        return
+                    }
+                } else {
+                    // Determine file extension from MIME type
+                    let fileExtension: String
+                    if type.starts(with: "image/") {
+                        if type.contains("png") {
+                            fileExtension = "png"
+                        } else if type.contains("gif") {
+                            fileExtension = "gif"
+                        } else {
+                            fileExtension = "jpg"
+                        }
+                    } else if type.starts(with: "video/") {
+                        fileExtension = "mp4"
+                    } else if type.contains("pdf") {
+                        fileExtension = "pdf"
+                    } else {
+                        fileExtension = "bin"
+                    }
+                    finalFileName = "\(finalFileName).\(fileExtension)"
+                }
+                #else
+                // For macOS, determine file extension from MIME type
+                let fileExtension: String
+                if type.starts(with: "image/") {
+                    if type.contains("png") {
+                        fileExtension = "png"
+                    } else if type.contains("gif") {
+                        fileExtension = "gif"
+                    } else {
+                        fileExtension = "jpg"
+                    }
+                } else if type.starts(with: "video/") {
+                    fileExtension = "mp4"
+                } else if type.contains("pdf") {
+                    fileExtension = "pdf"
+                } else {
+                    fileExtension = "bin"
+                }
+                finalFileName = "\(finalFileName).\(fileExtension)"
+                #endif
+                
+                print("📤 ChatRoomViewModel.sendMedia: Final filename: \(finalFileName), MIME type: \(finalMimeType), size: \(finalData.count) bytes")
+                
                 // Upload file to server
                 guard let token = UserStore.shared.token else {
-                    //print("❌ ChatRoomViewModel.sendMedia: No authentication token")
+                    print("❌ ChatRoomViewModel.sendMedia: No authentication token")
                     return
                 }
                 
-                //print("📤 ChatRoomViewModel.sendMedia: Uploading file \(fullFileName) (\(data.count) bytes)")
+                print("📤 ChatRoomViewModel.sendMedia: Uploading file \(finalFileName) (\(finalData.count) bytes) to server...")
                 let uploadResponse = try await AuthAPI.uploadFile(
-                    fileData: data,
-                    fileName: fullFileName,
-                    mimeType: type,
+                    fileData: finalData,
+                    fileName: finalFileName,
+                    mimeType: finalMimeType,
                     token: token
                 )
                 
                 guard let uploadResult = uploadResponse.results.first else {
-                    //print("❌ ChatRoomViewModel.sendMedia: No upload result")
+                    print("❌ ChatRoomViewModel.sendMedia: No upload result in response")
                     return
                 }
                 
-                //print("✅ ChatRoomViewModel.sendMedia: File uploaded successfully")
-                //print("   Location: \(uploadResult.location)")
-                //print("   ID: \(uploadResult._id)")
+                guard let resultId = uploadResult._id,
+                      let resultFilename = uploadResult.filename,
+                      let resultMimetype = uploadResult.mimetype,
+                      let resultSize = uploadResult.size,
+                      let resultLocation = uploadResult.location,
+                      let resultCreatedAt = uploadResult.createdAt else {
+                    print("❌ ChatRoomViewModel.sendMedia: Missing required fields in upload result")
+                    print("   _id: \(uploadResult._id ?? "nil")")
+                    print("   filename: \(uploadResult.filename ?? "nil")")
+                    print("   mimetype: \(uploadResult.mimetype ?? "nil")")
+                    print("   size: \(uploadResult.size?.description ?? "nil")")
+                    print("   location: \(uploadResult.location ?? "nil")")
+                    print("   createdAt: \(uploadResult.createdAt ?? "nil")")
+                    return
+                }
+                
+                print("✅ ChatRoomViewModel.sendMedia: File uploaded successfully")
+                print("   Location: \(resultLocation)")
+                print("   ID: \(resultId)")
+                print("   Filename: \(resultFilename)")
+                print("   Size: \(resultSize) bytes")
                 
                 // Create media message data
+                // Convert size from Int to String for MediaMessageData
+                // Convert expiresAt from Int to String (0 means no expiration, or timestamp)
+                let expiresAtString: String?
+                if let expiresAt = uploadResult.expiresAt {
+                    expiresAtString = expiresAt == 0 ? nil : String(expiresAt)
+                } else {
+                    expiresAtString = nil
+                }
+                
                 let mediaData = MediaMessageData(
                     firstName: user.firstName ?? "",
                     lastName: user.lastName ?? "",
                     walletAddress: user.walletAddress ?? "",
                     chatName: room.title,
-                    createdAt: uploadResult.createdAt,
-                    fileName: uploadResult.filename,
+                    createdAt: resultCreatedAt,
+                    fileName: resultFilename,
                     userId: uploadResult.userId ?? user.id,
                     isVisible: uploadResult.isVisible ?? true,
                     userAvatar: user.profileImage,
-                    expiresAt: uploadResult.expiresAt,
-                    location: uploadResult.location,
+                    expiresAt: expiresAtString, // Convert Int to String or nil
+                    location: resultLocation,
                     locationPreview: uploadResult.locationPreview,
-                    mimetype: uploadResult.mimetype,
-                    originalName: uploadResult.originalname ?? uploadResult.filename,
+                    mimetype: resultMimetype,
+                    originalName: uploadResult.originalname ?? resultFilename,
                     ownerKey: uploadResult.ownerKey,
-                    size: uploadResult.size,
+                    size: String(resultSize), // Convert Int to String
                     duration: uploadResult.duration,
                     updatedAt: uploadResult.updatedAt,
-                    attachmentId: uploadResult._id,
+                    attachmentId: resultId,
                     roomJid: room.jid
                 )
+                
+                print("📤 ChatRoomViewModel.sendMedia: Sending media message via XMPP to room: \(room.jid)")
                 
                 // Send media message via XMPP
                 client.operations.sendMediaMessage(
@@ -1418,10 +1503,11 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
                     id: messageId
                 )
                 
-                //print("✅ ChatRoomViewModel.sendMedia: Media message sent via XMPP")
+                print("✅ ChatRoomViewModel.sendMedia: Media message sent via XMPP")
                 
             } catch {
-                //print("❌ ChatRoomViewModel.sendMedia: Error - \(error.localizedDescription)")
+                print("❌ ChatRoomViewModel.sendMedia: Error - \(error.localizedDescription)")
+                print("   Error details: \(error)")
             }
         }
     }

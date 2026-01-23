@@ -472,12 +472,12 @@ public struct AuthAPI {
         request.setValue("*/*", forHTTPHeaderField: "Accept")
         
         // Create multipart form data
-        let boundary = UUID().uuidString
+        let boundary = "Boundary-\(UUID().uuidString)"
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
         
         var body = Data()
         
-        // Add file field
+        // Add file field - try "files" first (as in original code, might be array)
         body.append("--\(boundary)\r\n".data(using: .utf8)!)
         body.append("Content-Disposition: form-data; name=\"files\"; filename=\"\(fileName)\"\r\n".data(using: .utf8)!)
         body.append("Content-Type: \(mimeType)\r\n\r\n".data(using: .utf8)!)
@@ -487,6 +487,15 @@ public struct AuthAPI {
         
         request.httpBody = body
         
+        print("🌐 AuthAPI.uploadFile: Request details:")
+        print("   URL: \(url.absoluteString)")
+        print("   Method: POST")
+        print("   Boundary: \(boundary)")
+        print("   File name: \(fileName)")
+        print("   MIME type: \(mimeType)")
+        print("   File size: \(fileData.count) bytes")
+        print("   Body size: \(body.count) bytes")
+        
         let (data, response) = try await URLSession.shared.data(for: request)
         
         guard let httpResponse = response as? HTTPURLResponse else {
@@ -495,7 +504,7 @@ public struct AuthAPI {
         
         guard (200..<300).contains(httpResponse.statusCode) else {
             let errorBody = String(data: data, encoding: .utf8) ?? "<no body>"
-            //print("❌ AuthAPI.uploadFile HTTP Error \(httpResponse.statusCode): \(errorBody)")
+            print("❌ AuthAPI.uploadFile HTTP Error \(httpResponse.statusCode): \(errorBody)")
             throw AuthAPIError.httpError(httpResponse.statusCode, errorBody)
         }
         
@@ -504,12 +513,16 @@ public struct AuthAPI {
         
         do {
             let uploadResponse = try decoder.decode(UploadResponse.self, from: data)
-            //print("✅ AuthAPI.uploadFile: SUCCESS! Uploaded \(uploadResponse.results.count) file(s)")
+            print("✅ AuthAPI.uploadFile: SUCCESS! Uploaded \(uploadResponse.results.count) file(s)")
             return uploadResponse
         } catch {
             let jsonString = String(data: data, encoding: .utf8) ?? "<no data>"
-            //print("❌ AuthAPI.uploadFile Decode Error: \(error)")
-            //print("📄 Response body: \(jsonString)")
+            print("❌ AuthAPI.uploadFile Decode Error: \(error)")
+            print("📄 Response body: \(jsonString)")
+            print("📄 Response data length: \(data.count) bytes")
+            if let responseString = String(data: data, encoding: .utf8) {
+                print("📄 Response as string: \(responseString)")
+            }
             throw AuthAPIError.decodeError(error.localizedDescription)
         }
     }
@@ -522,14 +535,14 @@ public struct UploadResponse: Codable {
 }
 
 public struct UploadResult: Codable {
-    public let _id: String
-    public let filename: String
-    public let mimetype: String
-    public let size: String
-    public let location: String
+    public let _id: String?
+    public let filename: String?
+    public let mimetype: String?
+    public let size: Int? // Server returns size as number, not string
+    public let location: String?
     public let locationPreview: String?
-    public let createdAt: String
-    public let expiresAt: String?
+    public let createdAt: String?
+    public let expiresAt: Int? // Server returns expiresAt as number (0 or timestamp), not string
     public let isVisible: Bool?
     public let userId: String?
     public let originalname: String?
