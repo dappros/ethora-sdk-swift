@@ -57,6 +57,7 @@ public struct ChatRoomView: View {
     @State private var scrollProxy: ScrollViewProxy?
     @FocusState private var isInputFocused: Bool
     @State private var showConnectionStatus: Bool = true
+    @State private var dragOffset: CGFloat = 0
     @State private var showSearch: Bool = false
     @State private var showRoomInfo: Bool = false
     @State private var selectedMessageForMenu: Message? = nil
@@ -215,7 +216,7 @@ public struct ChatRoomView: View {
                                 }()
                                 let isUser = isCurrentUserById || isCurrentUserByXmpp
                                 
-                            MessageBubbleView(
+                                MessageBubbleView(
                                 message: message,
                                     isUser: isUser,
                                     showAvatar: showAvatar,
@@ -253,6 +254,30 @@ public struct ChatRoomView: View {
 //                                    } : nil
                             )
                             .id(message.id)
+                            .onAppear {
+                                // Track when message becomes visible for scroll button
+                                // Use debounce to avoid excessive updates
+                                Task { @MainActor in
+                                    try? await Task.sleep(nanoseconds: 100_000_000) // 100ms debounce
+                                    
+                                    let totalMessages = filteredMessages.count
+                                    // If we see one of the last 5 messages, we're at bottom
+                                    let isNearBottom = index >= totalMessages - 5
+                                    
+                                    if isNearBottom {
+                                        // At bottom - hide button
+                                        showScrollButton = false
+                                        isUserScrolledUp = false
+                                        atBottom = true
+                                        newMessagesCount = 0
+                                    } else {
+                                        // Scrolled up - show button
+                                        showScrollButton = true
+                                        isUserScrolledUp = true
+                                        atBottom = false
+                                    }
+                                }
+                            }
             }
         }
         .padding()
@@ -349,26 +374,21 @@ public struct ChatRoomView: View {
                         )
                     }
                     .background(
-                        // Track scroll position and dimensions (matches TypeScript checkAtBottom)
-                        GeometryReader { scrollGeometry in
+                        // Track scroll position and content dimensions
+                        GeometryReader { outerGeometry in
                             Color.clear
-                                .preference(
-                                    key: ScrollMetricsKey.self,
-                                    value: ScrollMetrics(
-                                        scrollTop: max(0, -scrollGeometry.frame(in: .named("messageScroll")).minY),
-                                        scrollHeight: scrollGeometry.size.height,
-                                        clientHeight: scrollGeometry.size.height
-                                    )
-                                )
-                        }
-                    )
-                    .background(
-                        // Track total content height using LazyVStack
-                        GeometryReader { contentGeometry in
-                            Color.clear
-                                .preference(
-                                    key: ContentHeightKey.self,
-                                    value: contentGeometry.size.height
+                                .background(
+                                    GeometryReader { innerGeometry in
+                                        Color.clear
+                                            .preference(
+                                                key: ScrollMetricsKey.self,
+                                                value: ScrollMetrics(
+                                                    scrollTop: max(0, innerGeometry.frame(in: .named("messageScroll")).minY),
+                                                    scrollHeight: innerGeometry.size.height,
+                                                    clientHeight: outerGeometry.size.height
+                                                )
+                                            )
+                                    }
                                 )
                         }
                     )
@@ -568,43 +588,6 @@ public struct ChatRoomView: View {
                     .background(Color.clear)
                 }
                 
-                // Scroll to Bottom Button (matches TypeScript ScrollToBottomButton)
-                if showScrollButton {
-                    VStack {
-                        Spacer()
-                        HStack {
-                            Spacer()
-                            Button(action: {
-                                if let proxy = scrollProxy {
-                                    scrollToBottom(proxy: proxy)
-                                }
-                            }) {
-                                ZStack {
-                                    Circle()
-                                        .fill(Color.blue)
-                                        .frame(width: 40, height: 40)
-                                        .shadow(color: .black.opacity(0.2), radius: 5, x: 0, y: 2)
-                                    
-                                    Image(systemName: "arrow.down")
-                                        .foregroundColor(.white)
-                                        .font(.system(size: 16, weight: .semibold))
-                                    
-                                    if newMessagesCount > 0 {
-                                        Text("\(newMessagesCount)")
-                                            .font(.system(size: 12, weight: .bold))
-                                            .foregroundColor(.white)
-                                            .padding(4)
-                                            .background(Color.red)
-                                            .clipShape(Circle())
-                                            .offset(x: 14, y: -14)
-                                    }
-                                }
-                            }
-                            .padding(.trailing, 20)
-                            .padding(.bottom, 20)
-                        }
-                    }
-                }
             }
             
             // Input Area
@@ -660,12 +643,77 @@ public struct ChatRoomView: View {
         #endif
         .onAppear {
             viewModel.onViewAppeared()
+            // Reset scroll button state when room appears (matches React Native useEffect)
+            showScrollButton = false
+            isUserScrolledUp = false
+            atBottom = true
+            newMessagesCount = 0
         }
         .onDisappear {
             // Save scroll position when leaving the chat
             // Use the last message as a fallback if we don't have a tracked visible message
             viewModel.saveScrollPosition(messageId: nil)
         }
+        .onChange(of: viewModel.room.jid) { _ in
+            // Reset scroll button state when room changes (matches React Native useEffect)
+            showScrollButton = false
+            isUserScrolledUp = false
+            atBottom = true
+            newMessagesCount = 0
+        }
+        .overlay(
+            // Scroll to Bottom Button - OVERLAY on top of everything
+            // React Native: position: absolute, bottom: 20, right: 20, width: 40, height: 40
+            // TEMPORARY: Always show for testing
+            Group {
+                if showScrollButton {
+                    VStack {
+                        Spacer()
+                        HStack {
+                            Spacer()
+                            Button(action: {
+                                if let proxy = scrollProxy {
+                                    scrollToBottom(proxy: proxy)
+                                    // Hide button immediately when clicked (matches React Native)
+                                    showScrollButton = false
+                                    isUserScrolledUp = false
+                                    atBottom = true
+                                    newMessagesCount = 0
+                                }
+                            }) {
+                                ZStack {
+                                    // Match React Native: backgroundColor: config?.colors?.secondary || "#007AFF"
+                                    Circle()
+                                        .fill(viewModel.config?.colors?.secondaryColor ?? Color(hex: "#007AFF"))
+                                        .frame(width: 40, height: 40)
+                                        .shadow(color: .black.opacity(0.2), radius: 5, x: 0, y: 2)
+                                    
+                                    // Match React Native: ArowDownIcon
+                                    Image(systemName: "arrow.down")
+                                        .foregroundColor(.white)
+                                        .font(.system(size: 16, weight: .semibold))
+                                    
+                                    // Optional: Show new messages count badge (if needed)
+                                    if newMessagesCount > 0 {
+                                        Text("\(newMessagesCount)")
+                                            .font(.system(size: 12, weight: .bold))
+                                            .foregroundColor(.white)
+                                            .padding(4)
+                                            .background(Color.red)
+                                            .clipShape(Circle())
+                                            .offset(x: 14, y: -14)
+                                    }
+                                }
+                            }
+                            .padding(.trailing, 20)
+                            .padding(.bottom, 80)
+                        }
+                    }
+                    .allowsHitTesting(true)
+                }
+            },
+            alignment: .bottomTrailing
+        )
     }
     
     // MARK: - Helper Functions
@@ -681,32 +729,50 @@ public struct ChatRoomView: View {
         }
     }
     
-    /// Check if at bottom and handle scroll button (matches TypeScript checkAtBottom)
+    /// Check if at bottom and handle scroll button (matches React Native MessageList.tsx exactly)
+    /// React Native: if (contentOffset < 150) { setIsUserAtBottom(true); setShowNewMessageIndicator(false); }
+    ///                else { setIsUserAtBottom(false); if (hasUserScrolled) { setShowNewMessageIndicator(true); } }
     private func checkAtBottom(metrics: ScrollMetrics, proxy: ScrollViewProxy) {
-            // Calculate distance from bottom (matches TypeScript exactly)
-            let distanceFromBottom = metrics.scrollHeight - metrics.clientHeight - metrics.scrollTop
-            
-            let isNearBottom = distanceFromBottom <= 150
-            let isAtBottom = distanceFromBottom <= 5
-            
-            atBottom = isAtBottom
-            isUserScrolledUp = !isNearBottom
-            
-            let scrolledUp = distanceFromBottom > 150
-            
-        // Match web version logic exactly:
-        // - Show button when scrolled up (> 150px from bottom)
-        // - Hide button and scroll when at bottom (<= 5px from bottom)
-        // - Hide button when near bottom (between 5px and 150px)
-            if scrolledUp {
-                showScrollButton = true
-            } else if isAtBottom {
-                scrollToBottom(proxy: proxy)
+        // In SwiftUI ScrollView:
+        // - scrollTop: position from top (0 when at top, increases when scrolling down)
+        // - scrollHeight: total content height
+        // - clientHeight: visible viewport height
+        // - distanceFromBottom = scrollHeight - clientHeight - scrollTop
+        
+        // TEMPORARY DEBUG: Always log to see what's happening
+        let distanceFromBottom = metrics.scrollHeight - metrics.clientHeight - metrics.scrollTop
+        print("🔍 checkAtBottom:")
+        print("   scrollTop: \(Int(metrics.scrollTop))")
+        print("   scrollHeight: \(Int(metrics.scrollHeight))")
+        print("   clientHeight: \(Int(metrics.clientHeight))")
+        print("   distanceFromBottom: \(Int(distanceFromBottom))")
+        print("   current showScrollButton: \(showScrollButton)")
+        
+        // Guard: If content doesn't need scrolling, hide button
+        guard metrics.scrollHeight > metrics.clientHeight else {
+            print("   → No scrolling needed, hiding button")
             showScrollButton = false
+            isUserScrolledUp = false
+            atBottom = true
+            return
+        }
+        
+        // Match React Native: if (contentOffset < 150) - user is at bottom
+        // In our case: if distanceFromBottom <= 150, user is at bottom (hide button)
+        // If distanceFromBottom > 150, user scrolled up (show button)
+        if distanceFromBottom <= 150 {
+            // User is at bottom - hide button
+            print("   → At bottom (distance=\(Int(distanceFromBottom))), HIDING button")
+            showScrollButton = false
+            isUserScrolledUp = false
+            atBottom = true
             newMessagesCount = 0
-        } else if isNearBottom {
-            // Near bottom but not exactly at bottom: hide button
-            showScrollButton = false
+        } else {
+            // User scrolled up - show button
+            print("   → Scrolled up (distance=\(Int(distanceFromBottom))), SHOWING button")
+            showScrollButton = true
+            isUserScrolledUp = true
+            atBottom = false
         }
     }
     
@@ -774,12 +840,13 @@ public struct ChatRoomView: View {
     
     /// Debounced scroll handler - combines checkAtBottom and checkIfLoadMoreMessages
     private func handleScroll(metrics: ScrollMetrics, proxy: ScrollViewProxy) {
-        // Debounce to prevent excessive calls (100ms - better performance than 50ms)
+        // Update state immediately (no debounce for button visibility)
+        // Check if at bottom (for scroll button visibility)
+        checkAtBottom(metrics: metrics, proxy: proxy)
+        
+        // Debounce only for loading more messages
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 100_000_000) // 100ms debounce
-            
-            // Check if at bottom (for scroll button visibility)
-            checkAtBottom(metrics: metrics, proxy: proxy)
             
             // Check if should load more (single trigger point)
             checkIfLoadMoreMessages(metrics: metrics)
