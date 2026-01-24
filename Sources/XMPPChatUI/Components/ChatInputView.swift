@@ -354,6 +354,28 @@ struct MediaPickerView: View {
                     .cornerRadius(12)
                 }
                 
+                // Test PDF option (for testing)
+                #if os(iOS)
+                Button(action: {
+                    if let pdfData = createTestPDF() {
+                        onMediaSelected(pdfData, "application/pdf", "test_document.pdf")
+                        dismiss()
+                    }
+                }) {
+                    HStack {
+                        Image(systemName: "doc.text.fill")
+                            .font(.title2)
+                            .foregroundColor(.green)
+                        Text("Create Test PDF")
+                            .font(.headline)
+                        Spacer()
+                    }
+                    .padding()
+                    .background(Color.gray.opacity(0.1))
+                    .cornerRadius(12)
+                }
+                #endif
+                
                 Spacer()
             }
             .padding()
@@ -476,3 +498,74 @@ struct MediaPreviewView: View {
         return formatter.string(fromByteCount: Int64(bytes))
     }
 }
+
+// MARK: - Test PDF Creator
+#if os(iOS)
+import PDFKit
+
+func createTestPDF() -> Data? {
+    let pdfMetaData = [
+        kCGPDFContextCreator: "XMPP Chat App",
+        kCGPDFContextAuthor: "Test User",
+        kCGPDFContextTitle: "Test Document"
+    ]
+    let format = UIGraphicsPDFRendererFormat()
+    format.documentInfo = pdfMetaData as [String: Any]
+    
+    let pageWidth = 8.5 * 72.0
+    let pageHeight = 11 * 72.0
+    let pageRect = CGRect(x: 0, y: 0, width: pageWidth, height: pageHeight)
+    
+    let renderer = UIGraphicsPDFRenderer(bounds: pageRect, format: format)
+    
+    let data = renderer.pdfData { (context) in
+        context.beginPage()
+        
+        let titleFont = UIFont.boldSystemFont(ofSize: 24)
+        let bodyFont = UIFont.systemFont(ofSize: 16)
+        
+        let titleText = "Test PDF Document"
+        let titleAttributes: [NSAttributedString.Key: Any] = [
+            .font: titleFont,
+            .foregroundColor: UIColor.black
+        ]
+        let titleSize = titleText.size(withAttributes: titleAttributes)
+        let titleRect = CGRect(
+            x: (pageRect.width - titleSize.width) / 2,
+            y: 100,
+            width: titleSize.width,
+            height: titleSize.height
+        )
+        titleText.draw(in: titleRect, withAttributes: titleAttributes)
+        
+        let bodyText = """
+        This is a test PDF document created for testing file upload functionality.
+        
+        Created: \(Date().formatted(date: .abbreviated, time: .shortened))
+        
+        You can use this document to test:
+        - PDF file upload
+        - PDF file viewing
+        - File sharing in chat
+        
+        Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.
+        """
+        
+        let bodyAttributes: [NSAttributedString.Key: Any] = [
+            .font: bodyFont,
+            .foregroundColor: UIColor.black
+        ]
+        
+        let bodyRect = CGRect(
+            x: 72,
+            y: 200,
+            width: pageRect.width - 144,
+            height: pageRect.height - 300
+        )
+        
+        bodyText.draw(in: bodyRect, withAttributes: bodyAttributes)
+    }
+    
+    return data
+}
+#endif

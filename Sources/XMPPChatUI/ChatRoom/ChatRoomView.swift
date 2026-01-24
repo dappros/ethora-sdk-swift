@@ -2341,66 +2341,83 @@ struct FullScreenImageView: View {
     @State private var lastScale: CGFloat = 1.0
     @State private var offset: CGSize = .zero
     @State private var lastOffset: CGSize = .zero
+    @State private var loadedImage: UIImage? = nil
+    @State private var isLoading = true
+    @State private var errorMessage: String? = nil
     
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
             
-            AsyncImage(url: imageURL) { phase in
-                switch phase {
-                case .empty:
-                    ProgressView()
-                        .tint(.white)
-                case .success(let image):
-                    image
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .scaleEffect(scale)
-                        .offset(offset)
-                        .gesture(
-                            MagnificationGesture()
-                                .onChanged { value in
-                                    scale = lastScale * value
-                                }
-                                .onEnded { _ in
-                                    lastScale = scale
-                                    if scale < 1.0 {
-                                        withAnimation {
-                                            scale = 1.0
-                                            lastScale = 1.0
-                                            offset = .zero
-                                            lastOffset = .zero
-                                        }
-                                    } else if scale > 3.0 {
-                                        withAnimation {
-                                            scale = 3.0
-                                            lastScale = 3.0
-                                        }
+            if isLoading && loadedImage == nil {
+                ProgressView()
+                    .tint(.white)
+                    .onAppear {
+                        loadImage()
+                    }
+            } else if let image = loadedImage {
+                Image(uiImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .scaleEffect(scale)
+                    .offset(offset)
+                    .gesture(
+                        MagnificationGesture()
+                            .onChanged { value in
+                                scale = lastScale * value
+                            }
+                            .onEnded { _ in
+                                lastScale = scale
+                                if scale < 1.0 {
+                                    withAnimation {
+                                        scale = 1.0
+                                        lastScale = 1.0
+                                        offset = .zero
+                                        lastOffset = .zero
+                                    }
+                                } else if scale > 3.0 {
+                                    withAnimation {
+                                        scale = 3.0
+                                        lastScale = 3.0
                                     }
                                 }
-                        )
-                        .gesture(
-                            DragGesture()
-                                .onChanged { value in
-                                    offset = CGSize(
-                                        width: lastOffset.width + value.translation.width,
-                                        height: lastOffset.height + value.translation.height
-                                    )
-                                }
-                                .onEnded { _ in
-                                    lastOffset = offset
-                                }
-                        )
-                case .failure:
-                    VStack {
-                        Image(systemName: "photo")
-                            .font(.largeTitle)
-                            .foregroundColor(.white)
-                        Text("Failed to load image")
-                            .foregroundColor(.white)
+                            }
+                    )
+                    .gesture(
+                        DragGesture()
+                            .onChanged { value in
+                                offset = CGSize(
+                                    width: lastOffset.width + value.translation.width,
+                                    height: lastOffset.height + value.translation.height
+                                )
+                            }
+                            .onEnded { _ in
+                                lastOffset = offset
+                            }
+                    )
+            } else if let error = errorMessage {
+                VStack(spacing: 16) {
+                    Image(systemName: "photo")
+                        .font(.largeTitle)
+                        .foregroundColor(.white)
+                    Text("Failed to load image")
+                        .foregroundColor(.white)
+                        .font(.headline)
+                    Text(error)
+                        .foregroundColor(.white.opacity(0.7))
+                        .font(.caption)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal)
+                    Button("Retry") {
+                        isLoading = true
+                        loadedImage = nil
+                        errorMessage = nil
+                        loadImage()
                     }
-                @unknown default:
-                    EmptyView()
+                    .padding()
+                    .background(Color.white.opacity(0.2))
+                    .foregroundColor(.white)
+                    .cornerRadius(8)
                 }
             }
             
@@ -2416,6 +2433,52 @@ struct FullScreenImageView: View {
                     }
                 }
                 Spacer()
+            }
+        }
+    }
+    
+    private func loadImage() {
+        print("🖼️ FullScreenImageView: Loading image from URL: \(imageURL.absoluteString)")
+        
+        Task {
+            do {
+                let (data, response) = try await URLSession.shared.data(from: imageURL)
+                
+                guard let httpResponse = response as? HTTPURLResponse else {
+                    await MainActor.run {
+                        errorMessage = "Invalid response"
+                        isLoading = false
+                    }
+                    return
+                }
+                
+                guard (200..<300).contains(httpResponse.statusCode) else {
+                    await MainActor.run {
+                        errorMessage = "HTTP Error: \(httpResponse.statusCode)"
+                        isLoading = false
+                    }
+                    return
+                }
+                
+                guard let image = UIImage(data: data) else {
+                    await MainActor.run {
+                        errorMessage = "Failed to create image from data"
+                        isLoading = false
+                    }
+                    return
+                }
+                
+                await MainActor.run {
+                    loadedImage = image
+                    isLoading = false
+                    print("✅ FullScreenImageView: Image loaded successfully")
+                }
+            } catch {
+                await MainActor.run {
+                    errorMessage = error.localizedDescription
+                    isLoading = false
+                    print("❌ FullScreenImageView: Error loading image: \(error.localizedDescription)")
+                }
             }
         }
     }
