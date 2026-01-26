@@ -68,7 +68,11 @@ public struct RoomListView: View {
                 } else {
                     ForEach(filteredRooms) { room in
                         NavigationLink(destination: destinationView(for: room)) {
-                            RoomListItemView(room: room)
+                            RoomListItemView(
+                                room: room,
+                                currentUserId: viewModel.currentUserId,
+                                messages: room.messages
+                            )
                         }
                     }
                 }
@@ -215,6 +219,8 @@ public struct RoomListView: View {
 // MARK: - Room List Item
 struct RoomListItemView: View {
     let room: Room
+    let currentUserId: String
+    let messages: [Message]
     
     var body: some View {
         HStack(spacing: 12) {
@@ -263,29 +269,17 @@ struct RoomListItemView: View {
                 }
                 
                 HStack {
-                    // Show last message from messages array if available, otherwise use lastMessage property
-                    if let lastMessage = getLastMessage(from: room) {
-                        HStack(spacing: 4) {
-                            // Show sender name if it's not empty
-                            let senderName = lastMessage.user.fullName
-                            if !senderName.isEmpty {
-                                Text("\(senderName): ")
-                                    .font(.subheadline)
-                                    .fontWeight(.medium)
-                                    .foregroundColor(.secondary)
-                                    .lineLimit(1)
-                            }
-                            
-                            Text(lastMessage.body)
-                                .font(.subheadline)
-                                .foregroundColor(.secondary)
-                                .lineLimit(1)
-                        }
-                    } else {
-                        Text("No messages yet")
+                    // Check if there's an active typing indicator (pending state)
+                    if isTypingActive {
+                        // Show typing indicator instead of last message
+                        Text(typingIndicatorText)
                             .font(.subheadline)
                             .foregroundColor(.secondary)
                             .italic()
+                            .lineLimit(1)
+                    } else {
+                        // Show last message if no typing indicator
+                        showLastMessage()
                     }
                     
                     Spacer()
@@ -303,6 +297,25 @@ struct RoomListItemView: View {
             }
         }
         .padding(.vertical, 4)
+    }
+    
+    // Check if typing indicator is active
+    private var isTypingActive: Bool {
+        guard let composingList = room.composingList,
+              !composingList.isEmpty,
+              room.composing == true else {
+            return false
+        }
+        return !getTypingUserNames(from: composingList).isEmpty
+    }
+    
+    // Get typing indicator text
+    private var typingIndicatorText: String {
+        guard let composingList = room.composingList else {
+            return ""
+        }
+        let typingNames = getTypingUserNames(from: composingList)
+        return typingText(from: typingNames)
     }
     
     private func getInitials(for title: String) -> String {
@@ -324,6 +337,98 @@ struct RoomListItemView: View {
         // Fallback to lastMessage property if available
         // Note: LastMessage might need to be converted to Message if different types
         return nil
+    }
+    
+    // Get user names from composing user IDs (similar to ChatHeaderView)
+    private func getTypingUserNames(from composingList: [String]) -> [String] {
+        // Filter out current user
+        let filteredUsers = composingList.filter { userId in
+            let normalizedUserId = userId.lowercased().trimmingCharacters(in: .whitespaces)
+            let normalizedCurrentId = currentUserId.lowercased().trimmingCharacters(in: .whitespaces)
+            return normalizedUserId != normalizedCurrentId
+        }
+        
+        // Get user names from room.members first, then from messages as fallback
+        return filteredUsers.compactMap { userId in
+            // First try to find in room.members
+            if let members = room.members {
+                if let member = members.first(where: { member in
+                    let normalizedMemberId = member.id.lowercased().trimmingCharacters(in: .whitespaces)
+                    let normalizedMemberXmpp = member.xmppUsername?.lowercased().trimmingCharacters(in: .whitespaces) ?? ""
+                    let normalizedUserId = userId.lowercased().trimmingCharacters(in: .whitespaces)
+                    
+                    return normalizedMemberId == normalizedUserId ||
+                           normalizedMemberXmpp == normalizedUserId ||
+                           member.jid?.lowercased() == normalizedUserId
+                }) {
+                    // Use name, or firstName + lastName, or firstName, or lastName, or xmppUsername as fallback
+                    if let name = member.name, !name.isEmpty {
+                        return name
+                    } else if let firstName = member.firstName, let lastName = member.lastName {
+                        return "\(firstName) \(lastName)"
+                    } else if let firstName = member.firstName {
+                        return firstName
+                    } else if let lastName = member.lastName {
+                        return lastName
+                    } else if let xmppUsername = member.xmppUsername {
+                        return xmppUsername
+                    }
+                }
+            }
+            
+            // Fallback: try to find user in messages
+            if let message = messages.first(where: {
+                $0.user.id == userId ||
+                $0.user.xmppUsername?.lowercased() == userId.lowercased() ||
+                $0.user.xmppUsername?.lowercased() == userId.lowercased().components(separatedBy: "@").first
+            }) {
+                return message.user.fullName
+            }
+            
+            // Last fallback: return userId (shouldn't happen normally)
+            return userId
+        }
+    }
+    
+    // Generate typing text from user names
+    private func typingText(from names: [String]) -> String {
+        if names.isEmpty {
+            return "Someone is typing..."
+        } else if names.count == 1 {
+            return "\(names[0]) is typing..."
+        } else if names.count == 2 {
+            return "\(names[0]) and \(names[1]) are typing..."
+        } else {
+            return "\(names.count) people are typing..."
+        }
+    }
+    
+    // Show last message helper
+    @ViewBuilder
+    private func showLastMessage() -> some View {
+        if let lastMessage = getLastMessage(from: room) {
+            HStack(spacing: 4) {
+                // Show sender name if it's not empty
+                let senderName = lastMessage.user.fullName
+                if !senderName.isEmpty {
+                    Text("\(senderName): ")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                }
+                
+                Text(lastMessage.body)
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+            }
+        } else {
+            Text("No messages yet")
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+                .italic()
+        }
     }
     
     private func timeString(from timestamp: Int64) -> String {
@@ -374,6 +479,9 @@ public class RoomListViewModel: ObservableObject {
     
     // Auto-load history queue
     private var messageLoaderQueue: MessageLoaderQueue?
+    
+    // Composing timeouts per room
+    private var composingTimeouts: [String: Timer] = [:]
     
     // New initializer - token is now managed by UserStore
     public init(
@@ -465,11 +573,90 @@ public class RoomListViewModel: ObservableObject {
                 }
             }
         }
+        
+        // Listen for composing (typing) indicator changes
+        NotificationCenter.default.addObserver(
+            forName: NSNotification.Name("XMPPComposingChanged"),
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            guard let self = self,
+                  let userInfo = notification.userInfo,
+                  let roomJID = userInfo["roomJID"] as? String,
+                  let composingList = userInfo["composingList"] as? [String],
+                  let isComposing = userInfo["isComposing"] as? Bool else {
+                return
+            }
+            
+            // Find the room and update its composing state
+            if let roomIndex = self.rooms.firstIndex(where: { $0.jid == roomJID || $0.jid.components(separatedBy: "/").first == roomJID }) {
+                // Filter out current user from composing list
+                let filteredComposingList = composingList.filter { userId in
+                    let normalizedUserId = userId.lowercased().trimmingCharacters(in: .whitespaces)
+                    let normalizedCurrentId = self.currentUserId.lowercased().trimmingCharacters(in: .whitespaces)
+                    return normalizedUserId != normalizedCurrentId
+                }
+                
+                let roomJIDKey = self.rooms[roomIndex].jid
+                
+                // Cancel existing timeout for this room
+                self.composingTimeouts[roomJIDKey]?.invalidate()
+                self.composingTimeouts.removeValue(forKey: roomJIDKey)
+                
+                if isComposing && !filteredComposingList.isEmpty {
+                    // Update room's composing state
+                    self.rooms[roomIndex].composing = true
+                    self.rooms[roomIndex].composingList = filteredComposingList
+                    
+                    // Set timeout to clear composing state after 3 seconds
+                    let timer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: false) { [weak self] _ in
+                        Task { @MainActor in
+                            guard let self = self,
+                                  let roomIndex = self.rooms.firstIndex(where: { $0.jid == roomJIDKey }) else {
+                                return
+                            }
+                            
+                            // Clear composing state
+                            self.rooms[roomIndex].composing = false
+                            self.rooms[roomIndex].composingList = []
+                            
+                            // Update RoomStore
+                            var updates = PartialRoomUpdate()
+                            updates.composing = false
+                            updates.composingList = []
+                            RoomStore.shared.updateRoom(jid: roomJIDKey, updates: updates)
+                            
+                            // Trigger UI update
+                            self.objectWillChange.send()
+                        }
+                    }
+                    self.composingTimeouts[roomJIDKey] = timer
+                } else {
+                    // Clear composing state immediately
+                    self.rooms[roomIndex].composing = false
+                    self.rooms[roomIndex].composingList = []
+                }
+                
+                // Update RoomStore
+                var updates = PartialRoomUpdate()
+                updates.composing = self.rooms[roomIndex].composing
+                updates.composingList = self.rooms[roomIndex].composingList
+                RoomStore.shared.updateRoom(jid: roomJIDKey, updates: updates)
+                
+                // Trigger UI update
+                self.objectWillChange.send()
+                
+                //print("⌨️ RoomListViewModel: Updated composing state for room \(roomJID) - isComposing: \(isComposing), users: \(filteredComposingList)")
+            }
+        }
     }
     
     deinit {
         Task { @MainActor in
             messageLoaderQueue?.stop()
+            // Invalidate all composing timeouts
+            composingTimeouts.values.forEach { $0.invalidate() }
+            composingTimeouts.removeAll()
         }
         NotificationCenter.default.removeObserver(self)
     }
