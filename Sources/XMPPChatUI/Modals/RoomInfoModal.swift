@@ -10,7 +10,7 @@ import XMPPChatCore
 
 public struct RoomInfoModal: View {
     let room: Room
-    let members: [User]
+    let members: [RoomMember]
     let onClose: () -> Void
     let onEdit: (() -> Void)?
     let onLeave: (() -> Void)?
@@ -20,7 +20,7 @@ public struct RoomInfoModal: View {
     
     public init(
         room: Room,
-        members: [User],
+        members: [RoomMember] = [],
         onClose: @escaping () -> Void,
         onEdit: (() -> Void)? = nil,
         onLeave: (() -> Void)? = nil,
@@ -32,6 +32,45 @@ public struct RoomInfoModal: View {
         self.onEdit = onEdit
         self.onLeave = onLeave
         self.onDelete = onDelete
+    }
+    
+    // Helper function to get full name from RoomMember
+    private func getFullName(for member: RoomMember) -> String {
+        if let firstName = member.firstName, let lastName = member.lastName {
+            return "\(firstName) \(lastName)"
+        } else if let firstName = member.firstName {
+            return firstName
+        } else if let lastName = member.lastName {
+            return lastName
+        } else if let name = member.name, !name.isEmpty {
+            return name
+        } else if let xmppUsername = member.xmppUsername {
+            return xmppUsername
+        }
+        return "Unknown User"
+    }
+    
+    // Helper function to get initials from RoomMember
+    private func getInitials(for member: RoomMember) -> String {
+        if let firstName = member.firstName, let lastName = member.lastName {
+            let firstInitial = firstName.prefix(1).uppercased()
+            let lastInitial = lastName.prefix(1).uppercased()
+            return "\(firstInitial)\(lastInitial)"
+        } else if let name = member.name, !name.isEmpty {
+            let parts = name.components(separatedBy: " ")
+            if parts.count > 1, let first = parts.first?.first, let last = parts.last?.first {
+                return "\(first)\(last)".uppercased()
+            } else if let first = name.first {
+                return String(first).uppercased()
+            }
+        } else if let firstName = member.firstName, let first = firstName.first {
+            return String(first).uppercased()
+        } else if let lastName = member.lastName, let first = lastName.first {
+            return String(first).uppercased()
+        } else if let xmppUsername = member.xmppUsername, let first = xmppUsername.first {
+            return String(first).uppercased()
+        }
+        return "?"
     }
     
     public var body: some View {
@@ -99,40 +138,41 @@ public struct RoomInfoModal: View {
                             }
                         }
                     }
+                    .padding(.leading, 16)
                     
                     // Members List
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Members")
                             .font(.headline)
                         
-                        ForEach(members.prefix(10), id: \.id) { member in
-                            HStack {
-                                if let imageURL = member.profileImage, let url = URL(string: imageURL) {
-                                    AsyncImage(url: url) { image in
-                                        image
-                                            .resizable()
-                                            .aspectRatio(contentMode: .fill)
-                                    } placeholder: {
-                                        InitialsAvatarView(user: member)
-                                    }
-                                    .frame(width: 40, height: 40)
-                                    .clipShape(Circle())
-                                } else {
-                                    InitialsAvatarView(user: member)
-                                        .frame(width: 40, height: 40)
+                        if members.isEmpty {
+                            Text("No members")
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+                        } else {
+                            ForEach(members, id: \.id) { member in
+                                HStack(spacing: 12) {
+                                    // Avatar
+                                    Circle()
+                                        .fill(Color.blue.opacity(0.3))
+                                        .frame(width: 44, height: 44)
+                                        .overlay(
+                                            Text(getInitials(for: member))
+                                                .font(.system(size: 16, weight: .medium))
+                                                .foregroundColor(.blue)
+                                        )
+                                    
+                                    // Full Name
+                                    Text(getFullName(for: member))
+                                        .font(.body)
+                                    
+                                    Spacer()
                                 }
-                                
-                                Text(member.fullName)
-                                    .font(.subheadline)
+                                .padding(.vertical, 4)
                             }
                         }
-                        
-                        if members.count > 10 {
-                            Text("+ \(members.count - 10) more")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
                     }
+                    .padding(.leading, 16)
                     
                     // Actions
                     VStack(spacing: 12) {
