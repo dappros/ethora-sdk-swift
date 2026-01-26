@@ -211,36 +211,49 @@ struct DefaultMessageBubble: View {
 struct AvatarView: View {
     let user: User
     
+    @ViewBuilder
     var body: some View {
-        Group {
-            if let profileImage = user.profileImage, let url = URL(string: profileImage) {
-                AsyncImage(url: url) { phase in
-                    switch phase {
-                    case .success(let image):
-                        image
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
+        
+        // Check if profileImage exists and is a valid URL
+        if let profileImage = user.profileImage,
+           !profileImage.isEmpty,
+           profileImage.trimmingCharacters(in: .whitespacesAndNewlines) != "",
+           let url = URL(string: profileImage),
+           (url.scheme == "http" || url.scheme == "https") {
+            AsyncImage(url: url) { phase in
+                switch phase {
+                case .success(let image):
+                    image
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .frame(width: 32, height: 32)
+                        .clipShape(Circle())
+                case .failure(let error):
+                    // Only log non-cancellation errors
+                    let _ = {
+                        if let urlError = error as? URLError, urlError.code != .cancelled {
+                            // Log actual errors (not cancellations)
+                            print("⚠️ AvatarView: Error loading avatar for user \(user.id): \(error.localizedDescription), URL: \(profileImage)")
+                        }
+                    }()
+                    // Always return initials view on failure
+                    InitialsAvatarView(user: user)
+                case .empty:
+                    // Show loading placeholder while loading
+                    ZStack {
+                        Circle()
+                            .fill(Color.gray.opacity(0.2))
                             .frame(width: 32, height: 32)
-                            .clipShape(Circle())
-                    case .failure(let error):
-                        // Only log non-cancellation errors
-                        let _ = {
-                            if let urlError = error as? URLError, urlError.code != .cancelled {
-                                // Log actual errors (not cancellations)
-                                //print("⚠️ Error loading avatar (non-cancellation): \(error.localizedDescription)")
-                            }
-                        }()
-                        // Always return initials view on failure
-                        InitialsAvatarView(user: user)
-                    case .empty:
-                        InitialsAvatarView(user: user)
-                    @unknown default:
-                        InitialsAvatarView(user: user)
+                        ProgressView()
+                            .scaleEffect(0.4)
                     }
+                @unknown default:
+                    InitialsAvatarView(user: user)
                 }
-            } else {
-                InitialsAvatarView(user: user)
             }
+        } else {
+            // Show initials if no photo URL or invalid URL
+            InitialsAvatarView(user: user)
         }
     }
 }
