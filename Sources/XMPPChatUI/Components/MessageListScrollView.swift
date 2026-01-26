@@ -190,7 +190,8 @@ struct MessageListScrollView: UIViewRepresentable {
                                 onReply: {},
                                 onEdit: nil,
                                 onDelete: nil,
-                                onReport: nil
+                                onReport: nil,
+                                onMediaTap: nil
                             )
                         }
                     }
