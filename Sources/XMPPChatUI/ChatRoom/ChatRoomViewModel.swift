@@ -377,50 +377,25 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
             return
         }
         
-        //print("🗑️ ChatRoomViewModel: Message deleted from XMPP for message \(messageId)")
+        print("🗑️ ChatRoomViewModel: Message deleted from XMPP for message \(messageId)")
+        print("   Current messages count: \(messages.count)")
         
-        // Update local messages array - mark as deleted
+        // Match TypeScript EXACTLY: deleteRoomMessage filters out the message completely
+        // From roomsSlice.ts lines 109-111:
+        // state.rooms[roomJID].messages = state.rooms[roomJID].messages.filter(
+        //   (message) => message.id !== messageId
+        // );
         Task { @MainActor in
-            if let index = messages.firstIndex(where: { $0.id == messageId }) {
-                var updatedMessage = messages[index]
-                let deletedMessage = Message(
-                    id: updatedMessage.id,
-                    user: updatedMessage.user,
-                    date: updatedMessage.date,
-                    body: updatedMessage.body,
-                    roomJid: updatedMessage.roomJid,
-                    key: updatedMessage.key,
-                    coinsInMessage: updatedMessage.coinsInMessage,
-                    numberOfReplies: updatedMessage.numberOfReplies,
-                    isSystemMessage: updatedMessage.isSystemMessage,
-                    isMediafile: updatedMessage.isMediafile,
-                    locationPreview: updatedMessage.locationPreview,
-                    mimetype: updatedMessage.mimetype,
-                    location: updatedMessage.location,
-                    pending: updatedMessage.pending,
-                    timestamp: updatedMessage.timestamp,
-                    showInChannel: updatedMessage.showInChannel,
-                    activeMessage: updatedMessage.activeMessage,
-                    isReply: updatedMessage.isReply,
-                    isDeleted: true,
-                    mainMessage: updatedMessage.mainMessage,
-                    reply: updatedMessage.reply,
-                    reaction: updatedMessage.reaction,
-                    fileName: updatedMessage.fileName,
-                    translations: updatedMessage.translations,
-                    langSource: updatedMessage.langSource,
-                    originalName: updatedMessage.originalName,
-                    size: updatedMessage.size,
-                    xmppId: updatedMessage.xmppId,
-                    xmppFrom: updatedMessage.xmppFrom,
-                    waveForm: updatedMessage.waveForm
-                )
-                messages[index] = deletedMessage
-                room.messages = messages
-                
-                // CRITICAL: Save updated message to cache immediately
-                MessageCache.shared.saveMessages(messages, forRoomJID: room.jid)
-            }
+            let messagesBeforeDelete = messages.count
+            messages = messages.filter { $0.id != messageId }
+            room.messages = messages
+            
+            print("✅ ChatRoomViewModel.handleDeleteNotification: Message removed from array")
+            print("   Messages before: \(messagesBeforeDelete), after: \(messages.count)")
+            
+            // CRITICAL: Save updated messages array to cache immediately
+            MessageCache.shared.saveMessages(messages, forRoomJID: room.jid)
+            print("💾 ChatRoomViewModel.handleDeleteNotification: Saved updated messages to cache")
         }
     }
     
@@ -1770,62 +1745,31 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
     }
     
     public func deleteMessage(_ messageId: String) {
-        //print("🗑️ ChatRoomViewModel: Deleting message \(messageId)")
+        print("🗑️ ChatRoomViewModel: Deleting message \(messageId)")
+        print("   Current messages count: \(messages.count)")
         
         // Send delete request via XMPP
         client.operations.deleteMessage(room: room.jid, msgId: messageId)
         
-        // Update local message optimistically - mark as deleted
-        if let index = messages.firstIndex(where: { $0.id == messageId }) {
-            var updatedMessage = messages[index]
-            // Create updated message with isDeleted = true
-            let deletedMessage = Message(
-                id: updatedMessage.id,
-                user: updatedMessage.user,
-                date: updatedMessage.date,
-                body: updatedMessage.body,
-                roomJid: updatedMessage.roomJid,
-                key: updatedMessage.key,
-                coinsInMessage: updatedMessage.coinsInMessage,
-                numberOfReplies: updatedMessage.numberOfReplies,
-                isSystemMessage: updatedMessage.isSystemMessage,
-                isMediafile: updatedMessage.isMediafile,
-                locationPreview: updatedMessage.locationPreview,
-                mimetype: updatedMessage.mimetype,
-                location: updatedMessage.location,
-                pending: updatedMessage.pending,
-                timestamp: updatedMessage.timestamp,
-                showInChannel: updatedMessage.showInChannel,
-                activeMessage: updatedMessage.activeMessage,
-                isReply: updatedMessage.isReply,
-                isDeleted: true,
-                mainMessage: updatedMessage.mainMessage,
-                reply: updatedMessage.reply,
-                reaction: updatedMessage.reaction,
-                fileName: updatedMessage.fileName,
-                translations: updatedMessage.translations,
-                langSource: updatedMessage.langSource,
-                originalName: updatedMessage.originalName,
-                size: updatedMessage.size,
-                xmppId: updatedMessage.xmppId,
-                xmppFrom: updatedMessage.xmppFrom,
-                waveForm: updatedMessage.waveForm
-            )
-            messages[index] = deletedMessage
-            room.messages = messages
-            
-            // CRITICAL: Save updated message to cache immediately
-            MessageCache.shared.saveMessages(messages, forRoomJID: room.jid)
-            
-            // Update RoomStore
-            var updates = PartialMessageUpdate()
-            updates.isDeleted = true
-            RoomStore.shared.updateMessage(
-                roomJID: room.jid,
-                messageId: messageId,
-                updates: updates
-            )
-        }
+        // Match TypeScript EXACTLY: deleteRoomMessage filters out the message completely
+        // From roomsSlice.ts lines 109-111:
+        // state.rooms[roomJID].messages = state.rooms[roomJID].messages.filter(
+        //   (message) => message.id !== messageId
+        // );
+        // Optimistically remove message from array immediately
+        let messagesBeforeDelete = messages.count
+        messages = messages.filter { $0.id != messageId }
+        room.messages = messages
+        
+        print("✅ ChatRoomViewModel.deleteMessage: Message removed optimistically")
+        print("   Messages before: \(messagesBeforeDelete), after: \(messages.count)")
+        
+        // CRITICAL: Save updated messages array to cache immediately
+        MessageCache.shared.saveMessages(messages, forRoomJID: room.jid)
+        print("💾 ChatRoomViewModel.deleteMessage: Saved updated messages to cache")
+        
+        // Update RoomStore (if needed for other parts of the app)
+        RoomStore.shared.deleteMessage(roomJID: room.jid, messageId: messageId)
     }
     
     /// Add reaction to a message

@@ -146,15 +146,19 @@ public class StanzaHandlers {
     }
     
     /// Handle delete message (onDeleteMessage from TypeScript)
+    /// Matches TypeScript: deleted.attrs.id (NOT stanzaId.attrs.id!)
     public func onDeleteMessage(_ stanza: XMPPStanza) {
         guard let id = stanza.attributes["id"],
               id == "deleteMessageStanza",
+              let deleted = stanza.getChild("delete"),
               let stanzaId = stanza.getChild("stanza-id") else {
             return
         }
         
+        // CRITICAL: Get messageId from deleted.attributes["id"], NOT from stanzaId
+        // This matches TypeScript: deleted.attrs.id
         let roomJID = stanzaId.attributes["by"] ?? ""
-        let messageId = stanzaId.attributes["id"] ?? ""
+        let messageId = deleted.attributes["id"] ?? ""
         onMessageDeleted?(roomJID, messageId)
     }
     

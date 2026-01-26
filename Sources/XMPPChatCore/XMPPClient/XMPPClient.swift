@@ -1051,18 +1051,13 @@ extension XMPPClient: XMPPStreamDelegate {
         
         // Set up delete message handler
         handlers.onMessageDeleted = { [weak self] (roomJID: String, messageId: String) in
-            //print("🗑️ XMPPClient: Message deleted in room \(roomJID) for message \(messageId)")
+            print("🗑️ XMPPClient: Message deleted in room \(roomJID) for message \(messageId)")
             guard let self = self else { return }
             
-            // Update RoomStore (must be on MainActor)
+            // Match TypeScript: deleteRoomMessage completely removes message from array
+            // Update RoomStore (must be on MainActor) - completely remove message
             Task { @MainActor in
-                var updates = PartialMessageUpdate()
-                updates.isDeleted = true
-                RoomStore.shared.updateMessage(
-                    roomJID: roomJID,
-                    messageId: messageId,
-                    updates: updates
-                )
+                RoomStore.shared.deleteMessage(roomJID: roomJID, messageId: messageId)
             }
             
             // Post notification so ChatRoomViewModel can update its local messages array
