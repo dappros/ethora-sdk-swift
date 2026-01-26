@@ -1471,36 +1471,48 @@ struct SizedAvatarView: View {
         return (firstInitial + lastInitial).uppercased()
     }
     
-    var body: some View {
-        if let photoURL = user.profileImage, !photoURL.isEmpty, let url = URL(string: photoURL) {
+    @ViewBuilder
+    var body: some View {        
+        // Check if profileImage exists and is a valid URL
+        if let photoURL = user.profileImage, 
+           !photoURL.isEmpty, 
+           photoURL.trimmingCharacters(in: .whitespacesAndNewlines) != "",
+           let url = URL(string: photoURL),
+           (url.scheme == "http" || url.scheme == "https") {
             // Show photo if available
             AsyncImage(url: url) { phase in
                 switch phase {
                 case .success(let image):
-                        image
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
+                    image
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
                         .frame(width: size, height: size)
-                    .clipShape(Circle())
+                        .clipShape(Circle())
                 case .failure(let error):
                     // Only log non-cancellation errors (cancellation is normal when views update)
                     let _ = {
                         if let urlError = error as? URLError, urlError.code != .cancelled {
                             // Log actual errors (network failures, invalid URLs, etc.)
-                            //print("⚠️ Error loading avatar (non-cancellation): \(error.localizedDescription)")
+                            print("⚠️ SizedAvatarView: Error loading avatar for user \(user.id): \(error.localizedDescription), URL: \(photoURL)")
                         }
                     }()
                     // Fallback to initials if image fails to load
                     InitialsAvatar(initials: initials, size: size)
                 case .empty:
-                    // Show placeholder while loading, or initials
-                    InitialsAvatar(initials: initials, size: size)
+                    // Show loading placeholder (small circle with spinner) while loading
+                    ZStack {
+                        Circle()
+                            .fill(Color.gray.opacity(0.2))
+                            .frame(width: size, height: size)
+                        ProgressView()
+                            .scaleEffect(0.5)
+                    }
                 @unknown default:
                     InitialsAvatar(initials: initials, size: size)
                 }
             }
         } else {
-            // Show initials if no photo
+            // Show initials if no photo URL or invalid URL
             InitialsAvatar(initials: initials, size: size)
         }
     }
