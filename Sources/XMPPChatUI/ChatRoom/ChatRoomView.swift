@@ -2344,17 +2344,87 @@ struct FullScreenImageView: View {
     @State private var loadedImage: UIImage? = nil
     @State private var isLoading = true
     @State private var errorMessage: String? = nil
+    @State private var useAsyncImageFallback = false
     
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
             
-            if isLoading && loadedImage == nil {
+            if useAsyncImageFallback {
+                // Fallback to AsyncImage if direct loading fails
+                AsyncImage(url: imageURL) { phase in
+                    switch phase {
+                    case .empty:
+                        ProgressView()
+                            .tint(.white)
+                    case .success(let img):
+                        img
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .scaleEffect(scale)
+                            .offset(offset)
+                            .gesture(
+                                MagnificationGesture()
+                                    .onChanged { value in
+                                        scale = lastScale * value
+                                    }
+                                    .onEnded { _ in
+                                        lastScale = scale
+                                        if scale < 1.0 {
+                                            withAnimation {
+                                                scale = 1.0
+                                                lastScale = 1.0
+                                                offset = .zero
+                                                lastOffset = .zero
+                                            }
+                                        } else if scale > 3.0 {
+                                            withAnimation {
+                                                scale = 3.0
+                                                lastScale = 3.0
+                                            }
+                                        }
+                                    }
+                            )
+                            .gesture(
+                                DragGesture()
+                                    .onChanged { value in
+                                        offset = CGSize(
+                                            width: lastOffset.width + value.translation.width,
+                                            height: lastOffset.height + value.translation.height
+                                        )
+                                    }
+                                    .onEnded { _ in
+                                        lastOffset = offset
+                                    }
+                            )
+                    case .failure:
+                        VStack(spacing: 16) {
+                            Image(systemName: "photo")
+                                .font(.largeTitle)
+                                .foregroundColor(.white)
+                            Text("Failed to load image")
+                                .foregroundColor(.white)
+                                .font(.headline)
+                            Button("Retry") {
+                                useAsyncImageFallback = false
+                                isLoading = true
+                                loadedImage = nil
+                                errorMessage = nil
+                                loadImage()
+                            }
+                            .padding()
+                            .background(Color.white.opacity(0.2))
+                            .foregroundColor(.white)
+                            .cornerRadius(8)
+                        }
+                    @unknown default:
+                        ProgressView()
+                            .tint(.white)
+                    }
+                }
+            } else if isLoading && loadedImage == nil && errorMessage == nil {
                 ProgressView()
                     .tint(.white)
-                    .onAppear {
-                        loadImage()
-                    }
             } else if let image = loadedImage {
                 Image(uiImage: image)
                     .resizable()
@@ -2419,67 +2489,158 @@ struct FullScreenImageView: View {
                     .foregroundColor(.white)
                     .cornerRadius(8)
                 }
+            } else {
+                // Fallback: show loading even if no error
+                ProgressView()
+                    .tint(.white)
             }
             
-            // Close button
+            // Close button - always visible on top
             VStack {
                 HStack {
                     Spacer()
                     Button(action: onClose) {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.title)
-                            .foregroundColor(.white)
-                            .padding()
+                        ZStack {
+                            Circle()
+                                .fill(Color.black.opacity(0.6))
+                                .frame(width: 44, height: 44)
+                            
+                            Image(systemName: "xmark")
+                                .font(.system(size: 18, weight: .semibold))
+                                .foregroundColor(.white)
+                        }
                     }
+                    .padding(.top, 8)
+                    .padding(.trailing, 16)
                 }
                 Spacer()
+            }
+        }
+        .onAppear {
+            // Always try to load image when view appears
+            print("👁️ FullScreenImageView: View appeared, loadedImage: \(loadedImage != nil), isLoading: \(isLoading)")
+            if loadedImage == nil {
+                loadImage()
             }
         }
     }
     
     private func loadImage() {
-        print("🖼️ FullScreenImageView: Loading image from URL: \(imageURL.absoluteString)")
+        print("🖼️ FullScreenImageView: Starting to load image from URL: \(imageURL.absoluteString)")
+        
+        // Validate URL
+        guard imageURL.scheme != nil, imageURL.host != nil else {
+            print("❌ FullScreenImageView: Invalid URL - missing scheme or host")
+            errorMessage = "Invalid image URL"
+            isLoading = false
+            return
+        }
+        
+        isLoading = true
+        errorMessage = nil
         
         Task {
-            do {
-                let (data, response) = try await URLSession.shared.data(from: imageURL)
-                
-                guard let httpResponse = response as? HTTPURLResponse else {
-                    await MainActor.run {
-                        errorMessage = "Invalid response"
-                        isLoading = false
+            // Try multiple times with retry logic
+            var attempts = 0
+            let maxAttempts = 3
+            
+            while attempts < maxAttempts {
+                do {
+                    print("🔄 FullScreenImageView: Attempt \(attempts + 1)/\(maxAttempts) to load image")
+                    
+                    // Create URLSession configuration with timeout
+                    let config = URLSessionConfiguration.default
+                    config.timeoutIntervalForRequest = 15
+                    config.timeoutIntervalForResource = 30
+                    config.requestCachePolicy = .returnCacheDataElseLoad
+                    let session = URLSession(configuration: config)
+                    
+                    // Create URLRequest with timeout and cache policy
+                    var request = URLRequest(url: imageURL)
+                    request.timeoutInterval = 15
+                    request.cachePolicy = .returnCacheDataElseLoad
+                    request.setValue("image/*", forHTTPHeaderField: "Accept")
+                    request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+                    
+                    print("📡 FullScreenImageView: Sending request to: \(imageURL.absoluteString)")
+                    
+                    // Use Task with timeout to prevent infinite hanging
+                    let (data, response) = try await withTaskTimeout(seconds: 15) {
+                        try await session.data(for: request)
                     }
-                    return
-                }
-                
-                guard (200..<300).contains(httpResponse.statusCode) else {
-                    await MainActor.run {
-                        errorMessage = "HTTP Error: \(httpResponse.statusCode)"
-                        isLoading = false
+                    
+                    print("📥 FullScreenImageView: Received response, data size: \(data.count) bytes")
+                    
+                    guard let httpResponse = response as? HTTPURLResponse else {
+                        print("❌ FullScreenImageView: Invalid response type")
+                        throw NSError(domain: "ImageLoadingError", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid response"])
                     }
-                    return
-                }
-                
-                guard let image = UIImage(data: data) else {
-                    await MainActor.run {
-                        errorMessage = "Failed to create image from data"
-                        isLoading = false
+                    
+                    print("📊 FullScreenImageView: HTTP Status: \(httpResponse.statusCode)")
+                    
+                    guard (200..<300).contains(httpResponse.statusCode) else {
+                        print("❌ FullScreenImageView: HTTP Error: \(httpResponse.statusCode)")
+                        throw NSError(domain: "ImageLoadingError", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: "HTTP Error: \(httpResponse.statusCode)"])
                     }
-                    return
-                }
-                
-                await MainActor.run {
-                    loadedImage = image
-                    isLoading = false
-                    print("✅ FullScreenImageView: Image loaded successfully")
-                }
-            } catch {
-                await MainActor.run {
-                    errorMessage = error.localizedDescription
-                    isLoading = false
-                    print("❌ FullScreenImageView: Error loading image: \(error.localizedDescription)")
+                    
+                    guard let image = UIImage(data: data) else {
+                        print("❌ FullScreenImageView: Failed to create UIImage from data")
+                        throw NSError(domain: "ImageLoadingError", code: -2, userInfo: [NSLocalizedDescriptionKey: "Failed to create image from data"])
+                    }
+                    
+                    print("✅ FullScreenImageView: Image loaded successfully, size: \(image.size)")
+                    
+                    await MainActor.run {
+                        loadedImage = image
+                        isLoading = false
+                        errorMessage = nil
+                    }
+                    return // Success, exit retry loop
+                    
+                } catch {
+                    attempts += 1
+                    print("⚠️ FullScreenImageView: Error on attempt \(attempts): \(error.localizedDescription)")
+                    
+                    if attempts >= maxAttempts {
+                        await MainActor.run {
+                            print("❌ FullScreenImageView: All attempts failed, trying AsyncImage fallback")
+                            // Try AsyncImage as fallback
+                            useAsyncImageFallback = true
+                            isLoading = false
+                            errorMessage = nil
+                        }
+                    } else {
+                        // Wait before retry
+                        print("⏳ FullScreenImageView: Waiting 1 second before retry...")
+                        try? await Task.sleep(nanoseconds: 1_000_000_000) // 1 second
+                    }
                 }
             }
+        }
+    }
+    
+    // Helper function to add timeout to async operations
+    private func withTaskTimeout<T>(seconds: TimeInterval, operation: @escaping () async throws -> T) async throws -> T {
+        return try await withThrowingTaskGroup(of: T.self) { group in
+            // Add the actual operation
+            group.addTask {
+                try await operation()
+            }
+            
+            // Add timeout task
+            group.addTask {
+                try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+                throw NSError(domain: "TimeoutError", code: -3, userInfo: [NSLocalizedDescriptionKey: "Request timed out after \(seconds) seconds"])
+            }
+            
+            // Get the first completed task
+            guard let result = try await group.next() else {
+                throw NSError(domain: "TimeoutError", code: -3, userInfo: [NSLocalizedDescriptionKey: "No result received"])
+            }
+            
+            // Cancel remaining tasks
+            group.cancelAll()
+            return result
         }
     }
 }
