@@ -99,5 +99,46 @@ public class UserStore: ObservableObject {
     public var hasCachedUser: Bool {
         return isAuthenticated && currentUser != nil && token != nil
     }
+    
+    /// Perform JWT autologin if configured in ConfigStore
+    /// Returns true if login was successful, false otherwise
+    @MainActor
+    public static func performJWTLoginIfConfigured() async -> Bool {
+        // Check if JWT login is enabled in config
+        let config = ConfigStore.shared.config
+        
+        guard let jwtLogin = config.jwtLogin,
+              jwtLogin.enabled,
+              !jwtLogin.token.isEmpty else {
+            print("ℹ️ JWT login not configured or disabled")
+            return false
+        }
+        
+        print("🔐 Starting JWT autologin...")
+        
+        do {
+            // Get base URL from config or use default
+            let baseURL = URL(string: config.baseUrl ?? "https://api.ethoradev.com/v1")!
+            
+            // Perform JWT login
+            let loginResponse = try await AuthAPI.loginViaJwt(
+                clientToken: jwtLogin.token,
+                baseURL: baseURL
+            )
+            
+            print("✅ JWT login successful!")
+            
+            // Save to UserStore
+            await UserStore.shared.setUser(from: loginResponse)
+            
+            print("✅ JWT autologin complete! User authenticated.")
+            return true
+            
+        } catch {
+            let errorMsg = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            print("❌ JWT autologin failed: \(errorMsg)")
+            return false
+        }
+    }
 }
 

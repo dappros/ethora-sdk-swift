@@ -34,13 +34,22 @@ struct ContentView: View {
             }
         }
         .onAppear {
-            // Just check cache status, but DON'T auto-login
             Task { @MainActor in
+                // First, try JWT autologin if configured
+                let jwtLoginSuccess = await appState.performJWTLoginIfConfigured()
+                
+                if jwtLoginSuccess {
+                    // JWT autologin succeeded, user is now authenticated
+                    return
+                }
+                
+                // If JWT login not configured or failed, check cache
                 if UserStore.shared.isAuthenticated,
                    let user = UserStore.shared.currentUser {
                     //print("ℹ️ Found cached user: \(user.email ?? "unknown")")
                     //print("   Token exists: \(UserStore.shared.token != nil)")
-                    //print("   But NOT auto-connecting. User must click Login button.")
+                    // Try to initialize XMPP with cached user
+                    await appState.initializeXMPPWithCachedUser()
                 } else {
                     //print("ℹ️ No cached user found. User needs to login manually.")
                 }

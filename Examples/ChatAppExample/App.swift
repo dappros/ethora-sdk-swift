@@ -125,6 +125,20 @@ class AppState: ObservableObject {
         
         //print("✅ Logout complete. User data cleared from cache.")
     }
+    
+    /// Perform JWT autologin if configured and initialize XMPP
+    func performJWTLoginIfConfigured() async -> Bool {
+        // Use the static function from UserStore
+        let loginSuccess = await UserStore.performJWTLoginIfConfigured()
+        
+        if loginSuccess {
+            // Initialize XMPP with logged in user
+            await initializeXMPPWithLoggedInUser()
+            return true
+        }
+        
+        return false
+    }
 }
 
 extension AppState: XMPPClientDelegate {
