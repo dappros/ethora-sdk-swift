@@ -1181,15 +1181,18 @@ struct MessageBubbleView: View {
                         .font(.caption)
                                 .fontWeight(.semibold)
                                 .foregroundColor(isUser ? .white.opacity(0.8) : .black)
+                                .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 
                 // Check if this is a media message and determine MIME type
                 buildMediaOrTextContent()
+                    .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
                 
                 // Reactions
                 if let reactions = message.reaction, !reactions.isEmpty {
                     ReactionBadgesView(reactions: reactions)
                         .padding(.top, 4)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 
                 // Time and status
@@ -1214,6 +1217,7 @@ struct MessageBubbleView: View {
                     }
                 }
             }
+            .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
             .background(isUser ? Color.blue : Color.white)
@@ -1267,12 +1271,13 @@ struct MessageBubbleView: View {
                         )
                     } else {
                         if message.body.lowercased() != "media" {
-                    UniversalMarkdownTextView(
-                        text: message.body,
-                        foregroundColor: isUser ? .white : .black
-                    )
-                                .fixedSize(horizontal: false, vertical: true)
-                                .multilineTextAlignment(.leading)
+                            UniversalMarkdownTextView(
+                                text: message.body,
+                                foregroundColor: isUser ? .white : .black
+                            )
+                            .fixedSize(horizontal: false, vertical: true)
+                            .multilineTextAlignment(isUser ? .trailing : .leading)
+                            .lineLimit(nil)
                         }
                     }
                 }
@@ -1317,7 +1322,7 @@ struct MessageBubbleView: View {
                         }
                         .frame(maxWidth: {
                             #if os(iOS)
-                            return UIScreen.main.bounds.width * 0.75
+                            return UIScreen.main.bounds.width * 0.70
                             #else
                             return 300
                             #endif
@@ -1351,7 +1356,13 @@ struct MessageBubbleView: View {
                                     HapticFeedback.buttonPress()
                                 }
                         }
-                        .fixedSize(horizontal: true, vertical: false)
+                        .frame(maxWidth: {
+                            #if os(iOS)
+                            return UIScreen.main.bounds.width * 0.70
+                            #else
+                            return 300
+                            #endif
+                        }(), alignment: .leading)
                     }
                 }
                 

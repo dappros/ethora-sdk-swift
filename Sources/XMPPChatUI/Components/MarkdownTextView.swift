@@ -30,10 +30,14 @@ public struct MarkdownTextView: View {
             // This preserves markdown formatting (bold, italic, links) while applying base color
             Text(attributedString)
                 .foregroundColor(foregroundColor)
+                .lineLimit(nil)
+                .fixedSize(horizontal: false, vertical: true)
         } else {
             // Fallback to plain text if markdown parsing fails
             Text(text)
                 .foregroundColor(foregroundColor)
+                .lineLimit(nil)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 }
@@ -52,6 +56,8 @@ public struct PlainTextView: View {
     public var body: some View {
         Text(text)
             .foregroundColor(foregroundColor)
+            .lineLimit(nil)
+            .fixedSize(horizontal: false, vertical: true)
     }
 }
 

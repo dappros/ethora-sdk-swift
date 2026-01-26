@@ -141,12 +141,12 @@ Task {
         // Save user data to UserStore (this also caches the session)
         await UserStore.shared.setUser(from: loginResponse)
 
-        print("✅ Login successful!")
-        print("User ID: \(loginResponse.user.id)")
-        print("Token saved: \(UserStore.shared.token != nil)")
+        //print("✅ Login successful!")
+        //print("User ID: \(loginResponse.user.id)")
+        //print("Token saved: \(UserStore.shared.token != nil)")
 
     } catch {
-        print("❌ Login failed: \(error)")
+        //print("❌ Login failed: \(error)")
     }
 }
 ```
@@ -160,7 +160,7 @@ import XMPPChatCore
 
 // Get user from UserStore
 guard let user = UserStore.shared.currentUser else {
-    print("❌ No user found. Please login first.")
+    //print("❌ No user found. Please login first.")
     return
 }
 
@@ -169,7 +169,7 @@ let xmppUsername = user.xmppUsername ?? user.email ?? ""
 let xmppPassword = user.xmppPassword ?? ""
 
 guard !xmppUsername.isEmpty, !xmppPassword.isEmpty else {
-    print("❌ Missing XMPP credentials")
+    //print("❌ Missing XMPP credentials")
     return
 }
 
@@ -196,22 +196,22 @@ import XMPPChatCore
 
 extension YourViewController: XMPPClientDelegate {
     func xmppClientDidConnect(_ client: XMPPClient) {
-        print("✅ XMPP Client connected")
+        //print("✅ XMPP Client connected")
         // Update UI, load rooms, etc.
     }
 
     func xmppClientDidDisconnect(_ client: XMPPClient) {
-        print("❌ XMPP Client disconnected")
+        //print("❌ XMPP Client disconnected")
         // Handle disconnection
     }
 
     func xmppClient(_ client: XMPPClient, didReceiveMessage message: Message) {
-        print("📨 Received message: \(message.body)")
+        //print("📨 Received message: \(message.body)")
         // Update UI with new message
     }
 
     func xmppClient(_ client: XMPPClient, didChangeStatus status: ConnectionStatus) {
-        print("🔄 Connection status: \(status.rawValue)")
+        //print("🔄 Connection status: \(status.rawValue)")
         // Update connection status in UI
     }
 
@@ -309,18 +309,18 @@ class AppState: ObservableObject {
             self.isAuthenticated = true
 
         } catch {
-            print("Login failed: \(error)")
+            //print("Login failed: \(error)")
         }
     }
 }
 
 extension AppState: XMPPClientDelegate {
     func xmppClientDidConnect(_ client: XMPPClient) {
-        print("✅ Connected")
+        //print("✅ Connected")
     }
 
     func xmppClient(_ client: XMPPClient, didReceiveMessage message: Message) {
-        print("📨 \(message.body)")
+        //print("📨 \(message.body)")
     }
 
     // ... other delegate methods
