@@ -301,33 +301,6 @@ struct MediaPickerView: View {
     
     var body: some View {
         VStack(spacing: 0) {
-            // Header
-            HStack {
-                Button("Cancel") {
-                    dismiss()
-                }
-                .foregroundColor(.primary)
-                
-                Spacer()
-                
-                Text("Select Media")
-                    .font(.headline)
-                    .fontWeight(.semibold)
-                
-                Spacer()
-                
-                // Invisible button for balance
-                Button("Cancel") {
-                    dismiss()
-                }
-                .opacity(0)
-            }
-            .padding(.horizontal)
-            .padding(.vertical, 12)
-            .background(Color(uiColor: .systemBackground))
-            
-            Divider()
-            
             // Horizontal circular buttons
             HStack(spacing: 40) {
                 Spacer()
@@ -396,7 +369,8 @@ struct MediaPickerView: View {
                 
                 Spacer()
             }
-            .padding(.vertical, 25)
+            .padding(.vertical, 30)
+            .padding(.top, 20)
         }
         .background(Color(uiColor: .systemBackground))
         .sheet(isPresented: $showImagePicker) {
