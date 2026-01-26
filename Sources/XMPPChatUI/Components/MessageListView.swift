@@ -198,7 +198,8 @@ public struct MessageListView: View {
                     onReply: {},
                     onEdit: nil,
                     onDelete: nil,
-                    onReport: nil
+                    onReport: nil,
+                    onMediaTap: nil
                 )
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
