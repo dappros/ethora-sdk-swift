@@ -277,6 +277,7 @@ struct DefaultChatInputView: View {
                 }
                 #endif
             })
+            .modifier(MediaPickerPresentationModifier())
         }
     }
     
@@ -294,120 +295,127 @@ struct MediaPickerView: View {
     let onMediaSelected: (Data, String, String?) -> Void
     @Environment(\.dismiss) var dismiss
     @State private var showImagePicker = false
-    @State private var showVideoPicker = false
     @State private var showDocumentPicker = false
+    @State private var showCamera = false
     @State private var sourceType: UIImagePickerController.SourceType = .photoLibrary
     
     var body: some View {
-        NavigationView {
-            VStack(spacing: 20) {
-                // Photo option
-                Button(action: {
-                    sourceType = .photoLibrary
-                    showImagePicker = true
-                }) {
-                    HStack {
-                        Image(systemName: "photo")
-                            .font(.title2)
-                            .foregroundColor(.blue)
-                        Text("Photo")
-                            .font(.headline)
-                        Spacer()
+        VStack(spacing: 0) {
+            // Header
+            HStack {
+                Button("Cancel") {
+                    dismiss()
+                }
+                .foregroundColor(.primary)
+                
+                Spacer()
+                
+                Text("Select Media")
+                    .font(.headline)
+                    .fontWeight(.semibold)
+                
+                Spacer()
+                
+                // Invisible button for balance
+                Button("Cancel") {
+                    dismiss()
+                }
+                .opacity(0)
+            }
+            .padding(.horizontal)
+            .padding(.vertical, 12)
+            .background(Color(uiColor: .systemBackground))
+            
+            Divider()
+            
+            // Horizontal circular buttons
+            HStack(spacing: 40) {
+                Spacer()
+                
+                // Media (Photo Library)
+                VStack(spacing: 8) {
+                    Button(action: {
+                        sourceType = .photoLibrary
+                        showImagePicker = true
+                    }) {
+                        ZStack {
+                            Circle()
+                                .fill(Color.blue.opacity(0.1))
+                                .frame(width: 70, height: 70)
+                            
+                            Image(systemName: "photo.on.rectangle")
+                                .font(.system(size: 28))
+                                .foregroundColor(.blue)
+                        }
                     }
-                    .padding()
-                    .background(Color.gray.opacity(0.1))
-                    .cornerRadius(12)
+                    Text("Media")
+                        .font(.caption)
+                        .foregroundColor(.primary)
                 }
                 
-                // Video option
-                Button(action: {
-                    sourceType = .photoLibrary
-                    showVideoPicker = true
-                }) {
-                    HStack {
-                        Image(systemName: "video")
-                            .font(.title2)
-                            .foregroundColor(.blue)
-                        Text("Video")
-                            .font(.headline)
-                        Spacer()
+                // Camera
+                VStack(spacing: 8) {
+                    Button(action: {
+                        sourceType = .camera
+                        showCamera = true
+                    }) {
+                        ZStack {
+                            Circle()
+                                .fill(Color.blue.opacity(0.1))
+                                .frame(width: 70, height: 70)
+                            
+                            Image(systemName: "camera.fill")
+                                .font(.system(size: 28))
+                                .foregroundColor(.blue)
+                        }
                     }
-                    .padding()
-                    .background(Color.gray.opacity(0.1))
-                    .cornerRadius(12)
+                    Text("Camera")
+                        .font(.caption)
+                        .foregroundColor(.primary)
                 }
                 
-                // File option
-                Button(action: {
-                    showDocumentPicker = true
-                }) {
-                    HStack {
-                        Image(systemName: "doc")
-                            .font(.title2)
-                            .foregroundColor(.blue)
-                        Text("File")
-                            .font(.headline)
-                        Spacer()
+                // File
+                VStack(spacing: 8) {
+                    Button(action: {
+                        showDocumentPicker = true
+                    }) {
+                        ZStack {
+                            Circle()
+                                .fill(Color.blue.opacity(0.1))
+                                .frame(width: 70, height: 70)
+                            
+                            Image(systemName: "doc.fill")
+                                .font(.system(size: 28))
+                                .foregroundColor(.blue)
+                        }
                     }
-                    .padding()
-                    .background(Color.gray.opacity(0.1))
-                    .cornerRadius(12)
+                    Text("File")
+                        .font(.caption)
+                        .foregroundColor(.primary)
                 }
-                
-                // Test PDF option (for testing)
-                #if os(iOS)
-                Button(action: {
-                    if let pdfData = createTestPDF() {
-                        onMediaSelected(pdfData, "application/pdf", "test_document.pdf")
-                        dismiss()
-                    }
-                }) {
-                    HStack {
-                        Image(systemName: "doc.text.fill")
-                            .font(.title2)
-                            .foregroundColor(.green)
-                        Text("Create Test PDF")
-                            .font(.headline)
-                        Spacer()
-                    }
-                    .padding()
-                    .background(Color.gray.opacity(0.1))
-                    .cornerRadius(12)
-                }
-                #endif
                 
                 Spacer()
             }
-            .padding()
-            .navigationTitle("Select Media")
-            #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-            #endif
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") {
-                        dismiss()
-                    }
-                }
-            }
-            .sheet(isPresented: $showImagePicker) {
-                ImagePicker(sourceType: sourceType, mediaTypes: ["public.image"], onMediaSelected: { data, mimeType in
-                    onMediaSelected(data, mimeType, nil)
-                    dismiss()
-                })
-            }
-            .sheet(isPresented: $showVideoPicker) {
-                ImagePicker(sourceType: sourceType, mediaTypes: ["public.movie"], onMediaSelected: { data, mimeType in
-                    onMediaSelected(data, mimeType, nil)
-                    dismiss()
-                })
-            }
-            .sheet(isPresented: $showDocumentPicker) {
-                DocumentPicker(onDocumentSelected: { fileData, fileName, mimeType in
-                    onMediaSelected(fileData, mimeType, fileName)
-                    dismiss()
-                })
-            }
+            .padding(.vertical, 25)
+        }
+        .background(Color(uiColor: .systemBackground))
+        .sheet(isPresented: $showImagePicker) {
+            ImagePicker(sourceType: sourceType, mediaTypes: ["public.image"], onMediaSelected: { data, mimeType in
+                onMediaSelected(data, mimeType, nil)
+                dismiss()
+            })
+        }
+        .sheet(isPresented: $showCamera) {
+            ImagePicker(sourceType: .camera, mediaTypes: ["public.image"], onMediaSelected: { data, mimeType in
+                onMediaSelected(data, mimeType, nil)
+                dismiss()
+            })
+        }
+        .sheet(isPresented: $showDocumentPicker) {
+            DocumentPicker(onDocumentSelected: { fileData, fileName, mimeType in
+                onMediaSelected(fileData, mimeType, fileName)
+                dismiss()
+            })
         }
     }
 }
@@ -569,3 +577,16 @@ func createTestPDF() -> Data? {
     return data
 }
 #endif
+
+// MARK: - Media Picker Presentation Modifier
+struct MediaPickerPresentationModifier: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 16.0, *) {
+            content
+                .presentationDetents([.fraction(0.2)])
+                .presentationDragIndicator(.visible)
+        } else {
+            content
+        }
+    }
+}

@@ -2596,28 +2596,37 @@ struct ImagePicker: UIViewControllerRepresentable {
     let mediaTypes: [String]
     let onMediaSelected: (Data, String) -> Void
     
-    func makeUIViewController(context: Context) -> PHPickerViewController {
-        var configuration = PHPickerConfiguration()
-        
-        // Configure based on media types
-        if mediaTypes.contains("public.image") && mediaTypes.contains("public.movie") {
-            configuration.filter = .any(of: [.images, .videos])
-        } else if mediaTypes.contains("public.image") {
-            configuration.filter = .images
-        } else if mediaTypes.contains("public.movie") {
-            configuration.filter = .videos
+    func makeUIViewController(context: Context) -> UIViewController {
+        // Use UIImagePickerController for camera
+        if sourceType == .camera {
+            let picker = UIImagePickerController()
+            picker.sourceType = sourceType
+            picker.mediaTypes = mediaTypes
+            picker.delegate = context.coordinator
+            return picker
         } else {
-            configuration.filter = .any(of: [.images, .videos])
+            // Use PHPickerViewController for photo library
+            var configuration = PHPickerConfiguration()
+            
+            if mediaTypes.contains("public.image") && mediaTypes.contains("public.movie") {
+                configuration.filter = .any(of: [.images, .videos])
+            } else if mediaTypes.contains("public.image") {
+                configuration.filter = .images
+            } else if mediaTypes.contains("public.movie") {
+                configuration.filter = .videos
+            } else {
+                configuration.filter = .any(of: [.images, .videos])
+            }
+            
+            configuration.selectionLimit = 1
+            
+            let picker = PHPickerViewController(configuration: configuration)
+            picker.delegate = context.coordinator
+            return picker
         }
-        
-        configuration.selectionLimit = 1
-        
-        let picker = PHPickerViewController(configuration: configuration)
-        picker.delegate = context.coordinator
-        return picker
     }
     
-    func updateUIViewController(_ uiViewController: PHPickerViewController, context: Context) {
+    func updateUIViewController(_ uiViewController: UIViewController, context: Context) {
         // No updates needed
     }
     
@@ -2625,13 +2634,14 @@ struct ImagePicker: UIViewControllerRepresentable {
         Coordinator(onMediaSelected: onMediaSelected)
     }
     
-    class Coordinator: NSObject, PHPickerViewControllerDelegate {
+    class Coordinator: NSObject, PHPickerViewControllerDelegate, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
         let onMediaSelected: (Data, String) -> Void
         
         init(onMediaSelected: @escaping (Data, String) -> Void) {
             self.onMediaSelected = onMediaSelected
         }
         
+        // PHPickerViewController delegate (for photo library)
         func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
             picker.dismiss(animated: true)
             
@@ -2641,7 +2651,6 @@ struct ImagePicker: UIViewControllerRepresentable {
                 result.itemProvider.loadDataRepresentation(forTypeIdentifier: UTType.image.identifier) { data, error in
                     guard let data = data, error == nil else { return }
                     DispatchQueue.main.async {
-                        // Determine MIME type from UTType
                         var mimeType = "image/jpeg"
                         if result.itemProvider.hasItemConformingToTypeIdentifier(UTType.png.identifier) {
                             mimeType = "image/png"
@@ -2657,7 +2666,6 @@ struct ImagePicker: UIViewControllerRepresentable {
                 result.itemProvider.loadDataRepresentation(forTypeIdentifier: UTType.movie.identifier) { data, error in
                     guard let data = data, error == nil else { return }
                     DispatchQueue.main.async {
-                        // Determine video MIME type
                         var mimeType = "video/mp4"
                         if result.itemProvider.hasItemConformingToTypeIdentifier(UTType.quickTimeMovie.identifier) {
                             mimeType = "video/quicktime"
@@ -2666,6 +2674,27 @@ struct ImagePicker: UIViewControllerRepresentable {
                     }
                 }
             }
+        }
+        
+        // UIImagePickerController delegate (for camera)
+        func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey : Any]) {
+            picker.dismiss(animated: true)
+            
+            if let image = info[.originalImage] as? UIImage,
+               let imageData = image.jpegData(compressionQuality: 0.8) {
+                onMediaSelected(imageData, "image/jpeg")
+            } else if let videoURL = info[.mediaURL] as? URL,
+                      let videoData = try? Data(contentsOf: videoURL) {
+                var mimeType = "video/mp4"
+                if videoURL.pathExtension.lowercased() == "mov" {
+                    mimeType = "video/quicktime"
+                }
+                onMediaSelected(videoData, mimeType)
+            }
+        }
+        
+        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+            picker.dismiss(animated: true)
         }
     }
 }
