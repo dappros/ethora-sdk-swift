@@ -395,7 +395,7 @@ public struct ChatRoomView: View {
                     .sheet(isPresented: $showRoomInfo) {
                         RoomInfoModal(
                             room: viewModel.room,
-                            members: [], // TODO: Load room members
+                            members: viewModel.room.members ?? [],
                             onClose: { showRoomInfo = false },
                             onEdit: nil,
                             onLeave: nil,
