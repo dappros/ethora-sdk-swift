@@ -355,6 +355,9 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
                 }
                 messages[index] = updatedMessage
                 room.messages = messages
+                
+                // CRITICAL: Save updated message to cache immediately
+                MessageCache.shared.saveMessages(messages, forRoomJID: room.jid)
             }
         }
     }
@@ -414,6 +417,9 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
                 )
                 messages[index] = deletedMessage
                 room.messages = messages
+                
+                // CRITICAL: Save updated message to cache immediately
+                MessageCache.shared.saveMessages(messages, forRoomJID: room.jid)
             }
         }
     }
@@ -423,6 +429,7 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
               let notificationRoomJID = userInfo["roomJID"] as? String,
               let messageId = userInfo["messageId"] as? String,
               let newText = userInfo["newText"] as? String else {
+            print("❌ ChatRoomViewModel.handleEditNotification: Missing required userInfo")
             return
         }
         
@@ -431,14 +438,17 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
         let normalizedCurrentRoom = room.jid.components(separatedBy: "/").first ?? room.jid
         
         guard normalizedNotificationRoom == normalizedCurrentRoom else {
+            print("⚠️ ChatRoomViewModel.handleEditNotification: Room mismatch. Notification room: \(normalizedNotificationRoom), current room: \(normalizedCurrentRoom)")
             return
         }
         
-        //print("✏️ ChatRoomViewModel: Message edited from XMPP for message \(messageId)")
+        print("✏️ ChatRoomViewModel: Message edited from XMPP for message \(messageId) with new text: '\(newText)'")
+        print("   Current messages count: \(messages.count)")
         
         // Update local messages array - update body
         Task { @MainActor in
             if let index = messages.firstIndex(where: { $0.id == messageId }) {
+                print("✅ ChatRoomViewModel.handleEditNotification: Found message at index \(index), updating")
                 var updatedMessage = messages[index]
                 let editedMessage = Message(
                     id: updatedMessage.id,
@@ -474,6 +484,16 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
                 )
                 messages[index] = editedMessage
                 room.messages = messages
+                
+                print("✅ ChatRoomViewModel.handleEditNotification: Message updated. Total messages: \(messages.count)")
+                print("   Message ID: \(editedMessage.id), Body: '\(editedMessage.body)'")
+                
+                // CRITICAL: Save updated message to cache immediately so it persists
+                MessageCache.shared.saveMessages(messages, forRoomJID: room.jid)
+                print("💾 ChatRoomViewModel.handleEditNotification: Saved edited message to cache")
+            } else {
+                print("❌ ChatRoomViewModel.handleEditNotification: Message with id \(messageId) not found in messages array!")
+                print("   Available message IDs: \(messages.map { $0.id }.prefix(5))")
             }
         }
     }
@@ -938,6 +958,13 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
         )
         
         messages.append(optimisticMessage)
+        
+        // Update room's messages array
+        room.messages = messages
+        
+        // CRITICAL: Save pending message to cache immediately so it persists even if connection is lost
+        // This ensures the message will still be visible after app restart
+        MessageCache.shared.saveMessages(messages, forRoomJID: room.jid)
     }
     
     /// Send reply to a message
@@ -1000,6 +1027,12 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
         )
         
         messages.append(optimisticReply)
+        
+        // Update room's messages array
+        room.messages = messages
+        
+        // CRITICAL: Save pending message to cache immediately so it persists even if connection is lost
+        MessageCache.shared.saveMessages(messages, forRoomJID: room.jid)
     }
     
     /// Handle incoming real-time message
@@ -1034,10 +1067,13 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
         }
         
         //print("✅ handleIncomingMessage: Room matches, processing message")
+        print("📥 ChatRoomViewModel.handleIncomingMessage: Received message with id: '\(message.id)', body: '\(message.body.prefix(50))', xmppId: '\(message.xmppId ?? "nil")'")
+        print("   Current messages count: \(messages.count)")
         
         // Match: pending message id === incoming message xmppId
+        // CRITICAL: Also check for edited messages - same ID but different body
         if let existingIndex = messages.firstIndex(where: { msg in
-            // Exact ID match
+            // Exact ID match (this handles both regular messages and edited messages)
             msg.id == message.id ||
             // CRITICAL: If incoming message has xmppId, check if it matches existing message ID
             // This handles the case: pending message id = "send-text-message-123", 
@@ -1091,12 +1127,80 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
             )
             
             // REPLACE existing message, don't add new one
+            let oldBody = existingMessage.body
             messages[existingIndex] = updatedMessage
             room.messages = messages
+            
+            print("🔄 ChatRoomViewModel.handleIncomingMessage: Updated existing message at index \(existingIndex)")
+            print("   Old body: '\(oldBody.prefix(50))'")
+            print("   New body: '\(updatedMessage.body.prefix(50))'")
+            print("   Total messages after update: \(messages.count)")
+            
+            // CRITICAL: Save updated message to cache immediately
+            MessageCache.shared.saveMessages(messages, forRoomJID: room.jid)
+            print("💾 ChatRoomViewModel.handleIncomingMessage: Saved updated message to cache")
+            
             return
         }
         
         //print("✅ handleIncomingMessage: Message is new, will be added")
+        
+        // CRITICAL: Check if this might be an edited message - look for existing message with same ID but different body
+        // This handles the case where server sends edited message as a new message with same ID
+        if let editedIndex = messages.firstIndex(where: { msg in
+            msg.id == message.id && msg.body != message.body
+        }) {
+            print("🔄 ChatRoomViewModel.handleIncomingMessage: Found existing message with same ID but different body - likely edit confirmation")
+            print("   Existing body: '\(messages[editedIndex].body.prefix(50))'")
+            print("   New body: '\(message.body.prefix(50))'")
+            
+            // Update the existing message with new body (edit confirmation)
+            let existingMessage = messages[editedIndex]
+            let updatedMessage = Message(
+                id: message.id,
+                user: message.user,
+                date: message.date,
+                body: message.body, // Use new body from server
+                roomJid: message.roomJid,
+                key: message.key ?? existingMessage.key,
+                coinsInMessage: message.coinsInMessage ?? existingMessage.coinsInMessage,
+                numberOfReplies: message.numberOfReplies ?? existingMessage.numberOfReplies,
+                isSystemMessage: message.isSystemMessage ?? existingMessage.isSystemMessage,
+                isMediafile: message.isMediafile ?? existingMessage.isMediafile,
+                locationPreview: message.locationPreview ?? existingMessage.locationPreview,
+                mimetype: message.mimetype ?? existingMessage.mimetype,
+                location: message.location ?? existingMessage.location,
+                pending: false, // Always set pending to false when confirmed
+                timestamp: message.timestamp ?? existingMessage.timestamp,
+                showInChannel: message.showInChannel ?? existingMessage.showInChannel,
+                activeMessage: message.activeMessage ?? existingMessage.activeMessage,
+                isReply: message.isReply ?? existingMessage.isReply,
+                isDeleted: message.isDeleted ?? existingMessage.isDeleted,
+                mainMessage: message.mainMessage ?? existingMessage.mainMessage,
+                reply: message.reply ?? existingMessage.reply,
+                reaction: message.reaction ?? existingMessage.reaction,
+                fileName: message.fileName ?? existingMessage.fileName,
+                translations: message.translations ?? existingMessage.translations,
+                langSource: message.langSource ?? existingMessage.langSource,
+                originalName: message.originalName ?? existingMessage.originalName,
+                size: message.size ?? existingMessage.size,
+                xmppId: message.xmppId ?? existingMessage.xmppId,
+                xmppFrom: message.xmppFrom ?? existingMessage.xmppFrom,
+                waveForm: message.waveForm ?? existingMessage.waveForm
+            )
+            
+            messages[editedIndex] = updatedMessage
+            room.messages = messages
+            
+            print("✅ ChatRoomViewModel.handleIncomingMessage: Updated message as edit confirmation")
+            print("   Total messages after edit update: \(messages.count)")
+            
+            // CRITICAL: Save updated message to cache immediately
+            MessageCache.shared.saveMessages(messages, forRoomJID: room.jid)
+            print("💾 ChatRoomViewModel.handleIncomingMessage: Saved edited message to cache")
+            
+            return
+        }
         
         // CRITICAL FALLBACK: If message is from current user, aggressively find and replace ANY pending message
         // with same content, regardless of ID matching. This handles cases where server doesn't return our ID correctly.
@@ -1160,12 +1264,21 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
                 
                 // Remove any other pending messages with same content (duplicates)
                 if pendingIndices.count > 1 {
+                    print("⚠️ ChatRoomViewModel.handleIncomingMessage: Found \(pendingIndices.count) duplicate pending messages, removing extras")
                     for index in pendingIndices.dropFirst().reversed() {
                         messages.remove(at: index)
                     }
                 }
                 
                 room.messages = messages
+                
+                print("✅ ChatRoomViewModel.handleIncomingMessage: Replaced pending message at index \(pendingIndex)")
+                print("   Total messages after replacement: \(messages.count)")
+                
+                // CRITICAL: Save updated message to cache immediately
+                MessageCache.shared.saveMessages(messages, forRoomJID: room.jid)
+                print("💾 ChatRoomViewModel.handleIncomingMessage: Saved replaced message to cache")
+                
                 return
             }
         }
@@ -1202,6 +1315,7 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
         
         // FINAL CHECK: Before adding, make sure we don't already have this message
         // (in case it was added/updated in one of the checks above)
+        // CRITICAL: Also check for messages with same ID but different body (edited messages)
         let alreadyExists = messages.contains { msg in
             msg.id == message.id ||
             (message.xmppId != nil && msg.id == message.xmppId) ||
@@ -1211,12 +1325,58 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
         
         if alreadyExists {
             // Message already exists, don't add duplicate
+            // But if body is different, it might be an edit - this should have been handled above
+            print("⚠️ ChatRoomViewModel.handleIncomingMessage: Message already exists, skipping duplicate")
+            print("   Message ID: '\(message.id)', checking if it's an edit...")
+            
+            // Double-check: if body is different, update it (edit confirmation)
+            if let existingIndex = messages.firstIndex(where: { $0.id == message.id && $0.body != message.body }) {
+                print("🔄 ChatRoomViewModel.handleIncomingMessage: Found existing message with same ID but different body - updating as edit")
+                let existingMessage = messages[existingIndex]
+                let updatedMessage = Message(
+                    id: message.id,
+                    user: message.user,
+                    date: message.date,
+                    body: message.body,
+                    roomJid: message.roomJid,
+                    key: message.key ?? existingMessage.key,
+                    coinsInMessage: message.coinsInMessage ?? existingMessage.coinsInMessage,
+                    numberOfReplies: message.numberOfReplies ?? existingMessage.numberOfReplies,
+                    isSystemMessage: message.isSystemMessage ?? existingMessage.isSystemMessage,
+                    isMediafile: message.isMediafile ?? existingMessage.isMediafile,
+                    locationPreview: message.locationPreview ?? existingMessage.locationPreview,
+                    mimetype: message.mimetype ?? existingMessage.mimetype,
+                    location: message.location ?? existingMessage.location,
+                    pending: false,
+                    timestamp: message.timestamp ?? existingMessage.timestamp,
+                    showInChannel: message.showInChannel ?? existingMessage.showInChannel,
+                    activeMessage: message.activeMessage ?? existingMessage.activeMessage,
+                    isReply: message.isReply ?? existingMessage.isReply,
+                    isDeleted: message.isDeleted ?? existingMessage.isDeleted,
+                    mainMessage: message.mainMessage ?? existingMessage.mainMessage,
+                    reply: message.reply ?? existingMessage.reply,
+                    reaction: message.reaction ?? existingMessage.reaction,
+                    fileName: message.fileName ?? existingMessage.fileName,
+                    translations: message.translations ?? existingMessage.translations,
+                    langSource: message.langSource ?? existingMessage.langSource,
+                    originalName: message.originalName ?? existingMessage.originalName,
+                    size: message.size ?? existingMessage.size,
+                    xmppId: message.xmppId ?? existingMessage.xmppId,
+                    xmppFrom: message.xmppFrom ?? existingMessage.xmppFrom,
+                    waveForm: message.waveForm ?? existingMessage.waveForm
+                )
+                messages[existingIndex] = updatedMessage
+                room.messages = messages
+                MessageCache.shared.saveMessages(messages, forRoomJID: room.jid)
+                print("✅ ChatRoomViewModel.handleIncomingMessage: Updated existing message as edit confirmation")
+            }
             return
         }
         
         // Add the actual message
         let messageCountBeforeAdd = messages.count
         messages.append(message)
+        print("➕ ChatRoomViewModel.handleIncomingMessage: Added new message. Count: \(messageCountBeforeAdd) -> \(messages.count)")
         
         // Clear error when messages are successfully received
         if loadError != nil {
@@ -1256,6 +1416,9 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
         room.messages = messages
         // Update the published room property to trigger UI updates
         self.room = room
+        
+        print("💾 ChatRoomViewModel.handleIncomingMessage: Saving all messages to cache. Total: \(messages.count)")
+        print("   Message IDs in array: \(messages.map { $0.id }.suffix(5))")
         
         // Save messages to cache
         MessageCache.shared.saveMessages(messages, forRoomJID: room.jid)
@@ -1513,7 +1676,8 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
     }
     
     public func editMessage(_ messageId: String, newText: String) {
-        //print("✏️ ChatRoomViewModel: Editing message \(messageId)")
+        print("✏️ ChatRoomViewModel: Editing message \(messageId) with new text: '\(newText)'")
+        print("   Current messages count: \(messages.count)")
         
         // Send edit request via XMPP
         client.operations.editMessage(
@@ -1524,6 +1688,7 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
         
         // Update local message optimistically
         if let index = messages.firstIndex(where: { $0.id == messageId }) {
+            print("✅ ChatRoomViewModel: Found message at index \(index), updating optimistically")
             var updatedMessage = messages[index]
             // Create updated message with new body
             let newMessage = Message(
@@ -1561,6 +1726,13 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
             messages[index] = newMessage
             room.messages = messages
             
+            print("✅ ChatRoomViewModel: Message updated optimistically. Total messages: \(messages.count)")
+            print("   Message ID: \(newMessage.id), Body: '\(newMessage.body)'")
+            
+            // CRITICAL: Save updated message to cache immediately so it persists even if connection is lost
+            MessageCache.shared.saveMessages(messages, forRoomJID: room.jid)
+            print("💾 ChatRoomViewModel: Saved edited message to cache")
+            
             // Update RoomStore
             var updates = PartialMessageUpdate()
             updates.body = newText
@@ -1569,6 +1741,9 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
                 messageId: messageId,
                 updates: updates
             )
+        } else {
+            print("❌ ChatRoomViewModel: Message with id \(messageId) not found in messages array!")
+            print("   Available message IDs: \(messages.map { $0.id }.prefix(5))")
         }
     }
     
@@ -1638,6 +1813,9 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
             )
             messages[index] = deletedMessage
             room.messages = messages
+            
+            // CRITICAL: Save updated message to cache immediately
+            MessageCache.shared.saveMessages(messages, forRoomJID: room.jid)
             
             // Update RoomStore
             var updates = PartialMessageUpdate()
@@ -1718,6 +1896,9 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
             }
             messages[index] = updatedMessage
             room.messages = messages
+            
+            // CRITICAL: Save updated message to cache immediately
+            MessageCache.shared.saveMessages(messages, forRoomJID: room.jid)
         }
     }
     

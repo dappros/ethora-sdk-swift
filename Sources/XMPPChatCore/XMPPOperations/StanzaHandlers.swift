@@ -159,6 +159,7 @@ public class StanzaHandlers {
     }
     
     /// Handle edit message (onEditMessage from TypeScript)
+    /// Matches TypeScript: replace.attrs.text (NOT body.text!)
     public func onEditMessage(_ stanza: XMPPStanza) {
         guard let id = stanza.attributes["id"],
               id.contains("edit-message"),
@@ -169,7 +170,9 @@ public class StanzaHandlers {
         
         let roomJID = stanzaId.attributes["by"] ?? ""
         let messageId = replace.attributes["id"] ?? ""
-        let newText = stanza.getChild("body")?.text ?? ""
+        // CRITICAL: Get text from replace.attributes["text"], NOT from body.text
+        // This matches TypeScript: replace.attrs.text
+        let newText = replace.attributes["text"] ?? ""
         onMessageEdited?(roomJID, messageId, newText)
     }
     
