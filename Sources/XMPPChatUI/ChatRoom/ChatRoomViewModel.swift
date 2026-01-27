@@ -848,6 +848,43 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
             }
         }
     }
+
+    /// Mark room as active and clear unread state
+    public func markRoomActive() {
+        let roomJIDKey = room.jid.components(separatedBy: "/").first ?? room.jid
+        RoomStore.shared.setActiveRoom(roomJIDKey)
+
+        if messages.contains(where: { $0.id == "delimiter-new" }) {
+            messages.removeAll { $0.id == "delimiter-new" }
+            room.messages = messages
+            RoomStore.shared.setRoomMessages(roomJID: roomJIDKey, messages: messages)
+        }
+
+        room.lastViewedTimestamp = 0
+        room.unreadMessages = 0
+        var updates = PartialRoomUpdate()
+        updates.lastViewedTimestamp = 0
+        updates.unreadMessages = 0
+        RoomStore.shared.updateRoom(jid: roomJIDKey, updates: updates)
+
+        onMessagesUpdated?(room)
+    }
+
+    /// Mark room as inactive and store last viewed timestamp
+    public func markRoomInactive() {
+        let roomJIDKey = room.jid.components(separatedBy: "/").first ?? room.jid
+        RoomStore.shared.setActiveRoom(nil)
+
+        let timestamp = Int64(Date().timeIntervalSince1970 * 1000)
+        room.lastViewedTimestamp = timestamp
+        room.unreadMessages = 0
+        var updates = PartialRoomUpdate()
+        updates.lastViewedTimestamp = timestamp
+        updates.unreadMessages = 0
+        RoomStore.shared.updateRoom(jid: roomJIDKey, updates: updates)
+
+        onMessagesUpdated?(room)
+    }
     
     /// Save the current scroll position (called when leaving the chat)
     public func saveScrollPosition(messageId: String?) {
