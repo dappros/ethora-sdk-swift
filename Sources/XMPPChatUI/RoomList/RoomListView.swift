@@ -36,6 +36,10 @@ private struct ChatRoomViewWrapper: View {
             .onAppear {
                 // Set up callback when view appears
                 viewModel.onMessagesUpdated = onMessagesUpdated
+                viewModel.markRoomActive()
+            }
+            .onDisappear {
+                viewModel.markRoomInactive()
             }
     }
 }
@@ -210,6 +214,7 @@ public struct RoomListView: View {
             onMessagesUpdated: { updatedRoom in
                 if let index = viewModel.rooms.firstIndex(where: { $0.jid == updatedRoom.jid }) {
                     viewModel.rooms[index] = updatedRoom
+                    viewModel.refreshUnreadCount(for: updatedRoom.jid)
                 }
             }
         )
@@ -482,6 +487,9 @@ public class RoomListViewModel: ObservableObject {
     
     // Composing timeouts per room
     private var composingTimeouts: [String: Timer] = [:]
+
+    // Track message counts to avoid unnecessary unread recalculation
+    private var previousMessagesCount: [String: Int] = [:]
     
     // New initializer - token is now managed by UserStore
     public init(
@@ -554,11 +562,20 @@ public class RoomListViewModel: ObservableObject {
             }
             
             // Find the room and update its messages from cache
-            if let roomIndex = self.rooms.firstIndex(where: { $0.jid == roomJID }) {
+            let normalizedRoomJID = self.normalizeRoomJID(roomJID)
+            if let roomIndex = self.rooms.firstIndex(where: { self.normalizeRoomJID($0.jid) == normalizedRoomJID }) {
                 // Load messages from cache (they were just saved by processIncomingMessage)
                 if let cachedMessages = MessageCache.shared.loadMessages(forRoomJID: roomJID) {
                     // Update room's messages array
                     self.rooms[roomIndex].messages = cachedMessages
+
+                    // Keep RoomStore in sync
+                    var updates = PartialRoomUpdate()
+                    updates.messages = cachedMessages
+                    RoomStore.shared.updateRoom(jid: normalizedRoomJID, updates: updates)
+
+                    // Update unread count for this room
+                    self.updateUnreadCountIfNeeded(for: roomIndex)
                     
                     // Notify MessageLoaderQueue about the update
                     self.messageLoaderQueue?.onRoomMessagesUpdated(
@@ -660,6 +677,61 @@ public class RoomListViewModel: ObservableObject {
         }
         NotificationCenter.default.removeObserver(self)
     }
+
+    private func normalizeRoomJID(_ jid: String) -> String {
+        return jid.components(separatedBy: "/").first ?? jid
+    }
+
+    private func updateUnreadCountIfNeeded(for roomIndex: Int) {
+        let room = rooms[roomIndex]
+        let roomJIDKey = normalizeRoomJID(room.jid)
+        let activeRoomJIDKey = normalizeRoomJID(RoomStore.shared.activeRoomJID ?? "")
+
+        let lastViewed = room.lastViewedTimestamp ?? 0
+        if !activeRoomJIDKey.isEmpty && roomJIDKey == activeRoomJIDKey {
+            if rooms[roomIndex].unreadMessages != 0 {
+                rooms[roomIndex].unreadMessages = 0
+                RoomStore.shared.updateUnreadCount(roomJID: roomJIDKey, count: 0)
+            }
+            return
+        }
+
+        if lastViewed == 0 {
+            if rooms[roomIndex].unreadMessages != 0 {
+                rooms[roomIndex].unreadMessages = 0
+                RoomStore.shared.updateUnreadCount(roomJID: roomJIDKey, count: 0)
+            }
+            return
+        }
+
+        let currentMessagesLength = room.messages.count
+        if previousMessagesCount[roomJIDKey] == currentMessagesLength {
+            return
+        }
+        previousMessagesCount[roomJIDKey] = currentMessagesLength
+
+        let unreadCount = room.messages.filter { message in
+            guard message.id != "delimiter-new" else { return false }
+            return (message.timestamp ?? 0) > lastViewed
+        }.count
+
+        if rooms[roomIndex].unreadMessages != unreadCount {
+            rooms[roomIndex].unreadMessages = unreadCount
+            RoomStore.shared.updateUnreadCount(roomJID: roomJIDKey, count: unreadCount)
+        }
+    }
+
+    public func refreshUnreadCount(for roomJID: String) {
+        if let index = rooms.firstIndex(where: { $0.jid == roomJID }) {
+            updateUnreadCountIfNeeded(for: index)
+        }
+    }
+
+    private func syncUnreadCountsForAllRooms() {
+        for index in rooms.indices {
+            updateUnreadCountIfNeeded(for: index)
+        }
+    }
     
     public func loadRooms() {
         // FORCE VISIBLE LOGGING
@@ -696,11 +768,27 @@ public class RoomListViewModel: ObservableObject {
                         room.messages = cachedMessages
                         //print("📂 RoomListViewModel: Loaded \(cachedMessages.count) cached messages for room: \(room.jid)")
                     }
+
+                    // Merge cached room state (lastViewed/unread) from RoomStore if available
+                    let roomJIDKey = self.normalizeRoomJID(room.jid)
+                    if let storedRoom = RoomStore.shared.rooms[room.jid] ?? RoomStore.shared.rooms[roomJIDKey] {
+                        if let lastViewed = storedRoom.lastViewedTimestamp {
+                            room.lastViewedTimestamp = lastViewed
+                        }
+                        room.unreadMessages = storedRoom.unreadMessages
+                    }
+
+                    // Ensure RoomStore has the latest room state
+                    RoomStore.shared.addRoom(room)
+
                     roomsWithCachedMessages.append(room)
                 }
                 
                 self.rooms = roomsWithCachedMessages
                 self.isLoading = false // Set to false BEFORE starting queue
+
+                // Sync unread counts after initial load
+                self.syncUnreadCountsForAllRooms()
                 
                 // After loading rooms, send presence to each room
                 // This is needed so the user can receive history for each room
