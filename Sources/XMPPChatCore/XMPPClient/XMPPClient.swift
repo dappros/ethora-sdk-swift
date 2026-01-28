@@ -914,13 +914,22 @@ extension XMPPClient: XMPPStreamDelegate {
     private func processIncomingMessage(_ message: Message) {
         let roomJID = message.roomJid.components(separatedBy: "/").first ?? message.roomJid
         
+        print("💾 XMPPClient.processIncomingMessage: Processing message for cache and room list")
+        print("   roomJID: '\(roomJID)'")
+        print("   Message ID: '\(message.id)'")
+        print("   Message body: '\(message.body.prefix(50))'")
+        
         // MessageCache is @MainActor, so we need to call it from main actor context
         Task { @MainActor in
             // Load existing messages from cache
             var cachedMessages = MessageCache.shared.loadMessages(forRoomJID: roomJID) ?? []
             
+            print("   Current cached messages count: \(cachedMessages.count)")
+            
             // Check if message already exists (avoid duplicates)
             if !cachedMessages.contains(where: { $0.id == message.id || ($0.xmppId != nil && $0.xmppId == message.id) || (message.xmppId != nil && $0.id == message.xmppId) }) {
+                print("   ✅ Message is new, adding to cache")
+                
                 // Add message to cache
                 cachedMessages.append(message)
                 
@@ -935,6 +944,8 @@ extension XMPPClient: XMPPStreamDelegate {
                 let messagesToSave = Array(cachedMessages.suffix(100))
                 MessageCache.shared.saveMessages(messagesToSave, forRoomJID: roomJID)
                 
+                print("   💾 Saved \(messagesToSave.count) messages to cache")
+                
                 // Post notification for RoomListViewModel to update room.messages
                 NotificationCenter.default.post(
                     name: NSNotification.Name("RoomMessagesUpdated"),
@@ -946,9 +957,10 @@ extension XMPPClient: XMPPStreamDelegate {
                     ]
                 )
                 
-                //print("✅ XMPPClient: Processed history message - saved to cache, posted notification")
+                print("   🔔 Posted RoomMessagesUpdated notification")
+                print("✅ XMPPClient.processIncomingMessage: Message processed successfully")
             } else {
-                //print("⚠️ XMPPClient: Message already exists in cache, skipping")
+                print("   ⚠️ Message already exists in cache, skipping")
             }
         }
     }
@@ -958,15 +970,42 @@ extension XMPPClient: XMPPStreamDelegate {
         
         // Set up real-time message handler
         handlers.onMessageReceived = { [weak self] (message: Message, roomJID: String) in
-            //NSlog("📨 XMPPClient: Real-time message in room %@", roomJID)
-            //print("📨 XMPPClient: Real-time message in room \(roomJID)")
-            guard let self = self else { return }
+            print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            print("🔵 XMPPClient.onMessageReceived: START")
+            print("   roomJID: '\(roomJID)'")
+            print("   Message ID: '\(message.id)'")
+            print("   Message body: '\(message.body)'")
+            print("   Message body.isEmpty: \(message.body.isEmpty)")
+            print("   Message roomJid: '\(message.roomJid)'")
+            print("   Message user.id: '\(message.user.id)'")
+            print("   Message timestamp: \(message.timestamp?.description ?? "nil")")
+            
+            guard let self = self else {
+                print("❌ XMPPClient.onMessageReceived: SKIPPED - self is nil")
+                print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+                return
+            }
+            
+            print("✅ XMPPClient.onMessageReceived: self is valid")
+            
+            // CRITICAL: Process message for cache and room list update (even if no active ChatRoomViewModel)
+            // This ensures messages are saved and room list is updated when user is on chat list
+            // Only process messages with body (skip typing indicators)
+            if !message.body.isEmpty || message.isMediafile == "true" || message.isSystemMessage == "true" || message.isSystemMessage == "1" {
+                print("💾 XMPPClient.onMessageReceived: Processing message for cache and room list update")
+                self.processIncomingMessage(message)
+            } else {
+                print("ℹ️ XMPPClient.onMessageReceived: Skipping cache processing (empty body, likely typing indicator)")
+            }
             
             // Notify delegate (for backward compatibility)
+            print("🔔 XMPPClient.onMessageReceived: Notifying delegate")
+            print("   delegate is nil: \(self.delegate == nil)")
             self.delegate?.xmppClient(self, didReceiveMessage: message)
             
             // Also post notification so multiple ChatRoomViewModels can receive it
             // This prevents conflicts when multiple chat rooms are open
+            print("🔔 XMPPClient.onMessageReceived: Posting XMPPMessageReceived notification")
             NotificationCenter.default.post(
                 name: NSNotification.Name("XMPPMessageReceived"),
                 object: self,
@@ -975,6 +1014,9 @@ extension XMPPClient: XMPPStreamDelegate {
                     "roomJID": roomJID
                 ]
             )
+            print("✅ XMPPClient.onMessageReceived: Notification posted")
+            print("🟢 XMPPClient.onMessageReceived: COMPLETE")
+            print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
         }
         
         // Set up history message handler

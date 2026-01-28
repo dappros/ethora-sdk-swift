@@ -75,6 +75,10 @@ public struct ChatRoomView: View {
     @State private var showFullScreenPDF: Bool = false
     @State private var selectedMediaMessage: Message? = nil
     @ObservedObject private var connectionManager: ConnectionManager
+    @State private var lastHistoryCheckAt: Date?
+    
+    /// Throttle interval for history load checks (milliseconds)
+    private let historyCheckThrottleInterval: TimeInterval = 0.15 // 150ms
     
     public init(viewModel: ChatRoomViewModel) {
         self.viewModel = viewModel
@@ -435,39 +439,6 @@ public struct ChatRoomView: View {
                                 )
                         }
                     )
-                    .refreshable {
-                        // Pull to refresh - load latest messages
-                        // This also retries after errors
-                        //print("🔄 Pull to refresh triggered from UI")
-                        
-                        // Clear any errors when user pulls to refresh
-                        viewModel.loadError = nil
-                        
-                        // Викликаємо refreshMessages для завантаження нових повідомлень
-                        viewModel.refreshMessages()
-                        
-                        // Wait for refresh to complete (isRefreshing becomes false)
-                        // This allows the refreshable spinner to show properly
-                        var attempts = 0
-                        let maxAttempts = 60 // 6 seconds (60 * 100ms) - longer timeout
-                        
-                        while attempts < maxAttempts && viewModel.isRefreshing {
-                            try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
-                            attempts += 1
-                        }
-                        
-                        // Force clear isRefreshing if still set after timeout
-                        if viewModel.isRefreshing {
-                            viewModel.isRefreshing = false
-                            //print("⏱️ Force clearing isRefreshing after timeout")
-                        }
-                        
-                        if !viewModel.isRefreshing {
-                            //print("✅ Pull-to-refresh завершено: нові повідомлення завантажено")
-                        } else {
-                            //print("⏱️ Timeout очікування нових повідомлень після pull-to-refresh")
-                        }
-                    }
                     .onPreferenceChange(ScrollMetricsKey.self) { metrics in
                         // Debounced scroll handler (combines checkAtBottom and checkIfLoadMoreMessages)
                         handleScroll(metrics: metrics, proxy: proxy)
@@ -812,6 +783,8 @@ public struct ChatRoomView: View {
     
     /// Single trigger point for loading more messages (matches web version)
     /// TypeScript: if (params.top >= 150 || isLoadingMore.current) return;
+    /// NOTE: ChatRoomView uses ChatRoomViewModel directly (not MessageListViewModel)
+    /// This is kept for backward compatibility, but ideally ChatRoomView should use MessageListView component
     private func checkIfLoadMoreMessages(metrics: ScrollMetrics) {
         // Guard: Don't load if already loading or history complete
         guard !viewModel.isLoadingMore else { return }
@@ -869,22 +842,30 @@ public struct ChatRoomView: View {
         }
         
         // Load more messages - matches web: loadMoreMessages(roomJid, 30, Number(firstMessageId))
+        // NOTE: This directly calls ChatRoomViewModel.loadMoreMessages for backward compatibility
+        // Ideally, ChatRoomView should use MessageListView component which uses MessageListViewModel.fetchHistory()
         viewModel.loadMoreMessages(max: 30, beforeTimestamp: before)
     }
     
-    /// Debounced scroll handler - combines checkAtBottom and checkIfLoadMoreMessages
+    /// Throttled scroll handler - combines checkAtBottom and checkIfLoadMoreMessages
     private func handleScroll(metrics: ScrollMetrics, proxy: ScrollViewProxy) {
-        // Update state immediately (no debounce for button visibility)
+        // Update state immediately (no throttle for button visibility)
         // Check if at bottom (for scroll button visibility)
         checkAtBottom(metrics: metrics)
         
-        // Debounce only for loading more messages
-        Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 100_000_000) // 100ms debounce
-            
-            // Check if should load more (single trigger point)
-            checkIfLoadMoreMessages(metrics: metrics)
+        // Throttle only for loading more messages using timestamp-based throttling
+        let now = Date()
+        if let lastCheck = lastHistoryCheckAt,
+           now.timeIntervalSince(lastCheck) < historyCheckThrottleInterval {
+            // Too soon since last check - skip
+            return
         }
+        
+        // Update last check timestamp
+        lastHistoryCheckAt = now
+        
+        // Check if should load more (single trigger point)
+        checkIfLoadMoreMessages(metrics: metrics)
     }
     
 }
