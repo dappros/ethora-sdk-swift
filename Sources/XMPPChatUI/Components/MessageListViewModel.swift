@@ -55,6 +55,41 @@ public class MessageListViewModel: ObservableObject {
     /// Cancellables for Combine subscriptions
     private var cancellables = Set<AnyCancellable>()
     
+    // MARK: - Auto-load tracking
+    
+    /// Whether auto-history loading is in progress (for recursive loading at top)
+    private var autoHistoryLoadInProgress: Bool = false
+    
+    /// Count of consecutive auto-loads (to prevent infinite loops)
+    private var consecutiveAutoLoads: Int = 0
+    
+    /// Maximum consecutive auto-loads before requiring user interaction
+    private let maxConsecutiveAutoLoads: Int = 3
+    
+    /// Configurable page size for history loading
+    public var pageSize: Int = 30
+    
+    /// Reset auto-load tracking (call when user scrolls away from top)
+    public func resetAutoLoadTracking() {
+        autoHistoryLoadInProgress = false
+        consecutiveAutoLoads = 0
+    }
+    
+    /// Check if auto-load is in progress
+    public var isAutoLoadInProgress: Bool {
+        return autoHistoryLoadInProgress
+    }
+    
+    /// Get current consecutive auto-load count
+    public var currentConsecutiveAutoLoads: Int {
+        return consecutiveAutoLoads
+    }
+    
+    /// Get max consecutive auto-loads
+    public var maxAutoLoads: Int {
+        return maxConsecutiveAutoLoads
+    }
+    
     // MARK: - Initialization
     
     public init(roomJID: String, chatRoomViewModel: ChatRoomViewModel? = nil) {
@@ -162,6 +197,11 @@ public class MessageListViewModel: ObservableObject {
         }
         
         isHistoryComplete = historyComplete
+        
+        // Reset auto-load tracking when history is complete
+        if historyComplete {
+            resetAutoLoadTracking()
+        }
     }
     
     @objc private func handleMessagesLoaded(_ notification: Notification) {
@@ -211,13 +251,45 @@ public class MessageListViewModel: ObservableObject {
     /// Fetch history (load more messages)
     /// Matches Web: loadMoreMessages(beforeId: String)
     /// Checks both !isLoadingMore AND !historyComplete before execution
-    public func fetchHistory() {
+    /// This is the ONLY public entry point for UI-triggered history loads
+    public func fetchHistory(isAutoLoad: Bool = false) {
+        print("📜 MessageListViewModel.fetchHistory: called")
+        print("   roomJID: \(roomJID)")
+        print("   isAutoLoad: \(isAutoLoad)")
+        print("   isLoadingMore: \(isLoadingMore)")
+        print("   isHistoryComplete: \(isHistoryComplete)")
+        print("   messages.count: \(messages.count)")
+        
         // CRITICAL: Check both conditions (matches Web: !isLoadingMore && !historyComplete)
         guard !isLoadingMore else {
+            print("⚠️ MessageListViewModel.fetchHistory: SKIPPED - isLoadingMore == true")
             return
         }
         guard !isHistoryComplete else {
+            print("⚠️ MessageListViewModel.fetchHistory: SKIPPED - isHistoryComplete == true")
+            // Reset auto-load tracking when history is complete
+            if isAutoLoad {
+                print("ℹ️ MessageListViewModel.fetchHistory: resetting auto-load tracking because history is complete")
+                resetAutoLoadTracking()
+            }
             return
+        }
+        
+        // For auto-loads, check consecutive load limit
+        if isAutoLoad {
+            guard consecutiveAutoLoads < maxConsecutiveAutoLoads else {
+                print("⚠️ MessageListViewModel.fetchHistory: auto-load limit reached (\(consecutiveAutoLoads)/\(maxConsecutiveAutoLoads)), resetting tracking")
+                // Max consecutive loads reached - reset and require user interaction
+                resetAutoLoadTracking()
+                return
+            }
+            autoHistoryLoadInProgress = true
+            consecutiveAutoLoads += 1
+            print("🔁 MessageListViewModel.fetchHistory: auto-load #\(consecutiveAutoLoads) started")
+        } else {
+            // Manual load (user scroll) - reset auto-load tracking
+            print("🧍 MessageListViewModel.fetchHistory: manual history load (user scroll), resetting auto-load tracking")
+            resetAutoLoadTracking()
         }
         
         // Get the ID of the oldest message currently displayed
@@ -228,28 +300,28 @@ public class MessageListViewModel: ObservableObject {
         
         guard let message = firstMessage else {
             // No messages to use as reference
+            print("❌ MessageListViewModel.fetchHistory: no first message found to derive 'before' parameter")
+            if isAutoLoad {
+                resetAutoLoadTracking()
+            }
             return
         }
         
         // Convert message ID to Int64 (matches Web: Number(firstMessageId))
-        let beforeId: Int64? = {
-            // Try to convert message.id directly to Int64
-            if let numericId = Int64(message.id) {
-                return numericId
-            }
-            
-            // If message.id is not numeric, try timestamp
-            if let timestamp = message.timestamp {
-                return timestamp
-            }
-            
-            // Last resort: convert date to timestamp (milliseconds)
-            return Int64(message.date.timeIntervalSince1970 * 1000)
-        }()
+        let beforeId = deriveBeforeId(from: message)
         
         guard let before = beforeId else {
+            print("❌ MessageListViewModel.fetchHistory: could not derive 'before' parameter from message id='\(message.id)', timestamp=\(message.timestamp?.description ?? "nil")")
+            if isAutoLoad {
+                resetAutoLoadTracking()
+            }
             return
         }
+        
+        print("🎯 MessageListViewModel.fetchHistory: using before=\(before) derived from message:")
+        print("   message.id: \(message.id)")
+        print("   message.timestamp: \(message.timestamp?.description ?? "nil")")
+        print("   message.date: \(message.date)")
         
         // Save scroll position before loading (for scroll anchoring)
         // This will be used to maintain scroll position after messages are prepended
@@ -257,26 +329,49 @@ public class MessageListViewModel: ObservableObject {
         // But we ensure it's saved here as a fallback
         if scrollParamsBeforeLoad == nil {
             // If not already saved, this is a fallback (shouldn't happen in normal flow)
+            print("ℹ️ MessageListViewModel.fetchHistory: scrollParamsBeforeLoad was nil, using fallback messageCountBeforeLoad")
             messageCountBeforeLoad = messages.count
+        } else {
+            print("ℹ️ MessageListViewModel.fetchHistory: existing scrollParamsBeforeLoad found, will use for scroll anchoring")
         }
         
         isLoadingMore = true
         messageCountBeforeLoad = messages.count
+        print("🚀 MessageListViewModel.fetchHistory: starting history load")
+        print("   messageCountBeforeLoad: \(messageCountBeforeLoad)")
+        print("   pageSize: \(pageSize)")
         
-        // Call loadMoreMessages on ChatRoomViewModel
+        // Call loadMoreMessages on ChatRoomViewModel (internal transport helper)
         // Web: loadMoreMessages(firstMessage.roomJid, 30, Number(firstMessageId))
-        chatRoomViewModel?.loadMoreMessages(max: 30, beforeTimestamp: before)
+        chatRoomViewModel?.loadMoreMessages(max: pageSize, beforeTimestamp: before)
         
         // CRITICAL: Set timeout to reset loading state (safety timeout)
         // This ensures isLoadingMore is reset even if notification doesn't fire
         // But we rely on ChatRoomViewModel's debounced reset (1 second after messages stop arriving)
         Task {
             try? await Task.sleep(nanoseconds: 30_000_000_000) // 30 seconds safety timeout
-            if isLoadingMore {
-                isLoadingMore = false
+            if self.isLoadingMore {
+                print("⏰ MessageListViewModel.fetchHistory: 30s safety timeout reached, resetting isLoadingMore")
+                self.isLoadingMore = false
                 // Don't clear scroll params here - they're needed for restoration
             }
         }
+    }
+    
+    /// Helper to derive beforeId from a message (extracted for reuse)
+    private func deriveBeforeId(from message: Message) -> Int64? {
+        // Try to convert message.id directly to Int64
+        if let numericId = Int64(message.id) {
+            return numericId
+        }
+        
+        // If message.id is not numeric, try timestamp
+        if let timestamp = message.timestamp {
+            return timestamp
+        }
+        
+        // Last resort: convert date to timestamp (milliseconds)
+        return Int64(message.date.timeIntervalSince1970 * 1000)
     }
     
     /// Save scroll position before loading more messages
