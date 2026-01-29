@@ -82,13 +82,18 @@ public struct RoomListView: View {
                 }
             }
             .background(
-                LinearGradient(
-                    gradient: Gradient(colors: [Color.blue.opacity(0.4), Color.black.opacity(0.85)]),
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
+                Group {
+                    #if os(iOS)
+                    Color(uiColor: .systemBackground)
+                    #else
+                    Color(NSColor.windowBackgroundColor)
+                    #endif
+                }
                 .ignoresSafeArea()
             )
+            #if os(iOS)
+            .scrollContentBackgroundIfAvailable(.hidden)
+            #endif
             .searchable(text: $searchText)
             .navigationTitle("Chats")
             .toolbar {
@@ -220,6 +225,19 @@ public struct RoomListView: View {
         )
     }
 }
+
+#if os(iOS)
+private extension View {
+    @ViewBuilder
+    func scrollContentBackgroundIfAvailable(_ visibility: Visibility) -> some View {
+        if #available(iOS 16.0, *) {
+            self.scrollContentBackground(visibility)
+        } else {
+            self
+        }
+    }
+}
+#endif
 
 // MARK: - Room List Item
 struct RoomListItemView: View {

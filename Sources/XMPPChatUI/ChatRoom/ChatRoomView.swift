@@ -14,6 +14,7 @@ import WebKit
 import AVKit
 import PhotosUI
 import UniformTypeIdentifiers
+import UIKit
 #endif
 import XMPPChatCore
 import AVFoundation
@@ -43,6 +44,38 @@ struct ContentHeightKey: PreferenceKey {
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
         value = max(value, nextValue())
     }
+}
+
+private func chatIncomingBubbleBackground() -> Color {
+    #if os(iOS)
+    return Color(uiColor: .secondarySystemBackground)
+    #else
+    return Color(NSColor.controlBackgroundColor)
+    #endif
+}
+
+private func chatInputBackground() -> Color {
+    #if os(iOS)
+    return Color(uiColor: .systemBackground)
+    #else
+    return Color(NSColor.windowBackgroundColor)
+    #endif
+}
+
+private func chatSeparatorColor() -> Color {
+    #if os(iOS)
+    return Color(uiColor: .separator)
+    #else
+    return Color(NSColor.separatorColor)
+    #endif
+}
+
+private func onePixel() -> CGFloat {
+    #if os(iOS)
+    return 1.0 / UIScreen.main.scale
+    #else
+    return 1.0
+    #endif
 }
 
 public struct ChatRoomView: View {
@@ -343,6 +376,19 @@ public struct ChatRoomView: View {
                     ScrollView {
                         buildMessagesList(proxy: proxy)
                     }
+                    #if os(iOS)
+                    .scrollDismissesKeyboardIfAvailable()
+                    .simultaneousGesture(
+                        DragGesture().onChanged { _ in
+                            dismissKeyboard()
+                        }
+                    )
+                    .simultaneousGesture(
+                        TapGesture().onEnded {
+                            dismissKeyboard()
+                        }
+                    )
+                    #endif
                     .coordinateSpace(name: "messageScroll")
                     .sheet(isPresented: $showThread) {
                         if let message = selectedMessageForThread,
@@ -632,6 +678,11 @@ public struct ChatRoomView: View {
                 customComponent: viewModel.config?.customComponents?.customInputComponent
             )
             .focused($isInputFocused)
+            .overlay(alignment: .top) {
+                Rectangle()
+                    .fill(chatSeparatorColor())
+                    .frame(height: onePixel())
+            }
             .onChange(of: messageText) { _ in
                 // Start typing when user types (debounced in startTyping)
                 if !messageText.isEmpty {
@@ -647,9 +698,15 @@ public struct ChatRoomView: View {
                 }
             }
         }
-        // Web-like background
+        // Adaptive background (light/dark)
         .background(
-            Color(red: 0.98, green: 0.98, blue: 0.99)
+            Group {
+                #if os(iOS)
+                Color(uiColor: .systemBackground)
+                #else
+                Color(NSColor.windowBackgroundColor)
+                #endif
+            }
             .ignoresSafeArea()
         )
         #if os(iOS)
@@ -867,8 +924,34 @@ public struct ChatRoomView: View {
         // Check if should load more (single trigger point)
         checkIfLoadMoreMessages(metrics: metrics)
     }
+
+    #if os(iOS)
+    private func dismissKeyboard() {
+        UIApplication.shared.sendAction(
+            #selector(UIResponder.resignFirstResponder),
+            to: nil,
+            from: nil,
+            for: nil
+        )
+    }
+    #else
+    private func dismissKeyboard() {}
+    #endif
     
 }
+
+#if os(iOS)
+private extension View {
+    @ViewBuilder
+    func scrollDismissesKeyboardIfAvailable() -> some View {
+        if #available(iOS 16.0, *) {
+            self.scrollDismissesKeyboard(.interactively)
+        } else {
+            self
+        }
+    }
+}
+#endif
 
 // MARK: - Chat Header
 struct ChatHeaderView: View {
@@ -1033,6 +1116,11 @@ struct ChatHeaderView: View {
         #else
         .background(Color(NSColor.controlBackgroundColor))
         #endif
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(chatSeparatorColor())
+                .frame(height: onePixel())
+        }
         .shadow(radius: 1)
     }
 }
@@ -1140,9 +1228,9 @@ struct MessageBubbleView: View {
                         // Show username only for others and if not consecutive
                         if !isUser && (!isConsecutive || !showAvatar) {
                     Text(message.user.fullName)
-                        .font(.caption)
+                            .font(.caption)
                                 .fontWeight(.semibold)
-                                .foregroundColor(isUser ? .white.opacity(0.8) : .black)
+                                .foregroundColor(isUser ? .white.opacity(0.8) : .blue)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 
@@ -1172,7 +1260,7 @@ struct MessageBubbleView: View {
                     
                     Text(message.date, style: .time)
                         .font(.caption2)
-                        .foregroundColor(isUser ? .white.opacity(0.7) : .gray)
+                        .foregroundColor(isUser ? .white.opacity(0.7) : .secondary)
                     
                     if isUser {
                         MessageStatusIndicatorView(message: message, onRetry: onRetry)
@@ -1182,7 +1270,7 @@ struct MessageBubbleView: View {
             .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
-            .background(isUser ? Color.blue : Color.white)
+            .background(isUser ? Color.blue : chatIncomingBubbleBackground())
             .cornerRadius(16)
             .shadow(color: .black.opacity(0.05), radius: 1, x: 0, y: 1)
             .overlay(
@@ -1235,7 +1323,7 @@ struct MessageBubbleView: View {
                         if message.body.lowercased() != "media" {
                             UniversalMarkdownTextView(
                                 text: message.body,
-                                foregroundColor: isUser ? .white : .black
+                                foregroundColor: isUser ? .white : .primary
                             )
                             .fixedSize(horizontal: false, vertical: true)
                             .multilineTextAlignment(isUser ? .trailing : .leading)
@@ -1544,14 +1632,14 @@ struct TypingIndicatorView: View {
         HStack(spacing: 4) {
             Text(typingText)
                 .font(.caption)
-                .foregroundColor(.black)
+                .foregroundColor(.secondary)
                 .padding(.leading)
             
             // Animated dots
             HStack(spacing: 2) {
                 ForEach(0..<3) { index in
                     Circle()
-                        .fill(Color.black)
+                        .fill(Color.secondary)
                         .frame(width: 4, height: 4)
                         .opacity(animatingDots == index ? 1.0 : 0.3)
                         .animation(
@@ -1566,7 +1654,7 @@ struct TypingIndicatorView: View {
             Spacer()
         }
         .padding(.vertical, 8)
-        .background(Color.white.opacity(0.8))
+        .background(chatIncomingBubbleBackground().opacity(0.8))
         .cornerRadius(8)
         .padding(.horizontal)
         .onAppear {
@@ -1848,7 +1936,7 @@ struct ChatInputView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
-        .background(Color.white)
+        .background(chatInputBackground())
         .cornerRadius(15, corners: [.topLeft, .topRight])
         .shadow(color: Color.black.opacity(0.05), radius: 8, x: 0, y: -2)
                 }
