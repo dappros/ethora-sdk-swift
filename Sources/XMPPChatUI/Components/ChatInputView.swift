@@ -102,6 +102,22 @@ struct DefaultChatInputView: View {
     #endif
     @FocusState private var isFocused: Bool
     
+    private var inputBackground: Color {
+        #if os(iOS)
+        return Color(uiColor: .secondarySystemBackground)
+        #else
+        return Color(NSColor.controlBackgroundColor)
+        #endif
+    }
+    
+    private var iconBackground: Color {
+        #if os(iOS)
+        return Color(uiColor: .systemBackground)
+        #else
+        return Color(NSColor.windowBackgroundColor)
+        #endif
+    }
+    
     var body: some View {
         VStack(spacing: 0) {
             // Media Preview
@@ -153,13 +169,13 @@ struct DefaultChatInputView: View {
                     }) {
                         Image(systemName: "paperclip")
                             .font(.system(size: 20, weight: .medium))
-                            .foregroundColor(.black)
+                            .foregroundColor(.primary)
                             .frame(width: 40, height: 40)
-                            .background(Color.white)
+                            .background(iconBackground)
                             .clipShape(Circle())
                             .overlay(
                                 Circle()
-                                    .stroke(Color.gray.opacity(0.3), lineWidth: 0.5)
+                                    .stroke(Color.secondary.opacity(0.3), lineWidth: 0.5)
                             )
                     }
                 }
@@ -167,7 +183,7 @@ struct DefaultChatInputView: View {
                 ZStack(alignment: .leading) {
                     if messageText.isEmpty && selectedMediaData == nil {
                         Text(placeholderText)
-                            .foregroundColor(.gray.opacity(0.6))
+                            .foregroundColor(.secondary.opacity(0.6))
                             .padding(.horizontal, 16)
                     }
                     
@@ -182,13 +198,13 @@ struct DefaultChatInputView: View {
                     }
                     .padding(.horizontal, 16)
                     .padding(.vertical, 12)
-                    .foregroundColor(.black)
+                    .foregroundColor(.primary)
                 }
-                .background(Color.white)
+                .background(inputBackground)
                 .cornerRadius(20)
                 .overlay(
                     RoundedRectangle(cornerRadius: 20)
-                        .stroke(Color.gray.opacity(0.3), lineWidth: 0.5)
+                        .stroke(Color.secondary.opacity(0.3), lineWidth: 0.5)
                 )
                 .accentColor(.blue)
                 .focused($isFocused)
@@ -405,6 +421,14 @@ struct MediaPreviewView: View {
     let image: Any? = nil
     #endif
     let onCancel: () -> Void
+
+    private var previewBackground: Color {
+        #if os(iOS)
+        return Color(uiColor: .secondarySystemBackground)
+        #else
+        return Color(NSColor.controlBackgroundColor)
+        #endif
+    }
     
     var body: some View {
         HStack(spacing: 12) {
@@ -465,11 +489,11 @@ struct MediaPreviewView: View {
             }
         }
         .padding(12)
-        .background(Color.white)
+        .background(previewBackground)
         .cornerRadius(12)
         .overlay(
             RoundedRectangle(cornerRadius: 12)
-                .stroke(Color.gray.opacity(0.3), lineWidth: 0.5)
+                .stroke(Color.secondary.opacity(0.3), lineWidth: 0.5)
         )
     }
     
