@@ -78,6 +78,14 @@ private func onePixel() -> CGFloat {
     #endif
 }
 
+private func chatBubbleMaxWidth() -> CGFloat {
+    #if os(iOS)
+    return UIScreen.main.bounds.width * 0.72
+    #else
+    return 480
+    #endif
+}
+
 public struct ChatRoomView: View {
     @Environment(\.presentationMode) var presentationMode
     @ObservedObject var viewModel: ChatRoomViewModel
@@ -107,6 +115,8 @@ public struct ChatRoomView: View {
     @State private var showFullScreenVideo: Bool = false
     @State private var showFullScreenPDF: Bool = false
     @State private var selectedMediaMessage: Message? = nil
+    @State private var needsInitialScroll: Bool = true
+    @State private var allowLoadMore: Bool = false
     @ObservedObject private var connectionManager: ConnectionManager
     @State private var lastHistoryCheckAt: Date?
     
@@ -224,7 +234,7 @@ public struct ChatRoomView: View {
                                 return true
                             }
                             
-                            ForEach(Array(filteredMessages.enumerated()), id: \.element.id) { index, message in
+            ForEach(Array(filteredMessages.enumerated()), id: \.element.id) { index, message in
                                 let previousMessage = index > 0 ? filteredMessages[index - 1] : nil
                                 let nextMessage = index < filteredMessages.count - 1 ? filteredMessages[index + 1] : nil
                                 
@@ -326,6 +336,10 @@ public struct ChatRoomView: View {
                             )
                             .id(message.id)
             }
+            
+            Color.clear
+                .frame(height: 1)
+                .id("bottom-anchor")
         }
         .padding()
         .background(
@@ -570,6 +584,13 @@ public struct ChatRoomView: View {
                         if viewModel.isLoadingMore {
                             return
                         }
+
+                        if needsInitialScroll {
+                            scrollToBottom(proxy: proxy)
+                            needsInitialScroll = false
+            allowLoadMore = true
+                            return
+                        }
                         
                         // Only scroll on initial load or when restoring position
                         // Don't scroll on every message count change to avoid lag
@@ -595,12 +616,14 @@ public struct ChatRoomView: View {
                     }
                     .onChange(of: viewModel.isLoading) { isLoading in
                         // When loading completes, scroll to bottom if it was the first load
-                        if !isLoading && viewModel.shouldScrollToBottom(), let lastMessage = viewModel.messages.last {
+                        if !isLoading && (needsInitialScroll || viewModel.shouldScrollToBottom()) {
                             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
                                 withAnimation(.easeOut(duration: 0.3)) {
-                                    proxy.scrollTo(lastMessage.id, anchor: .bottom)
+                                    proxy.scrollTo("bottom-anchor", anchor: .bottom)
                                 }
                             }
+                            needsInitialScroll = false
+                            allowLoadMore = true
                         }
                     }
                     .onChange(of: viewModel.composingUsers) { composingList in
@@ -714,11 +737,24 @@ public struct ChatRoomView: View {
         #endif
         .onAppear {
             viewModel.onViewAppeared()
+            needsInitialScroll = true
+            allowLoadMore = false
             // Reset scroll button state when room appears (matches React Native useEffect)
             showScrollButton = false
             isUserScrolledUp = false
             atBottom = true
             newMessagesCount = 0
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                if needsInitialScroll, let proxy = scrollProxy {
+                    withAnimation(.easeOut(duration: 0.3)) {
+                        proxy.scrollTo("bottom-anchor", anchor: .bottom)
+                    }
+                    needsInitialScroll = false
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        allowLoadMore = true
+                    }
+                }
+            }
         }
         .onDisappear {
             // Save scroll position when leaving the chat
@@ -791,14 +827,12 @@ public struct ChatRoomView: View {
     
     /// Scroll to bottom function (matches TypeScript scrollToBottom)
     private func scrollToBottom(proxy: ScrollViewProxy) {
-        guard let lastMessage = viewModel.messages.last else { return }
-        let targetId = lastMessage.id
         withAnimation(.easeOut(duration: 0.25)) {
-            proxy.scrollTo(targetId, anchor: .bottom)
+            proxy.scrollTo("bottom-anchor", anchor: .bottom)
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
             withAnimation(.easeOut(duration: 0.2)) {
-                proxy.scrollTo(targetId, anchor: .bottom)
+                proxy.scrollTo("bottom-anchor", anchor: .bottom)
             }
         }
         showScrollButton = false
@@ -843,6 +877,7 @@ public struct ChatRoomView: View {
     /// NOTE: ChatRoomView uses ChatRoomViewModel directly (not MessageListViewModel)
     /// This is kept for backward compatibility, but ideally ChatRoomView should use MessageListView component
     private func checkIfLoadMoreMessages(metrics: ScrollMetrics) {
+        guard allowLoadMore else { return }
         // Guard: Don't load if already loading or history complete
         guard !viewModel.isLoadingMore else { return }
         guard viewModel.room.historyComplete != true else { return }
@@ -1231,18 +1266,15 @@ struct MessageBubbleView: View {
                             .font(.caption)
                                 .fontWeight(.semibold)
                                 .foregroundColor(isUser ? .white.opacity(0.8) : .blue)
-                                .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 
                 // Check if this is a media message and determine MIME type
                 buildMediaOrTextContent()
-                    .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
                 
                 // Reactions
                 if let reactions = message.reaction, !reactions.isEmpty {
                     ReactionBadgesView(reactions: reactions)
                         .padding(.top, 4)
-                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 
                 // Time and status
@@ -1267,7 +1299,6 @@ struct MessageBubbleView: View {
                     }
                 }
             }
-            .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
             .background(isUser ? Color.blue : chatIncomingBubbleBackground())
@@ -1370,13 +1401,6 @@ struct MessageBubbleView: View {
                                     HapticFeedback.buttonPress()
                                 }
                         }
-                        .frame(maxWidth: {
-                            #if os(iOS)
-                            return UIScreen.main.bounds.width * 0.70
-                            #else
-                            return 300
-                            #endif
-                        }(), alignment: .trailing)
                     } else {
                         VStack(alignment: .leading, spacing: 2) {
                             buildMessageContent()
@@ -1406,15 +1430,10 @@ struct MessageBubbleView: View {
                                     HapticFeedback.buttonPress()
                                 }
                         }
-                        .frame(maxWidth: {
-                            #if os(iOS)
-                            return UIScreen.main.bounds.width * 0.70
-                            #else
-                            return 300
-                            #endif
-                        }(), alignment: .leading)
                     }
                 }
+                .fixedSize(horizontal: true, vertical: false)
+                .frame(maxWidth: chatBubbleMaxWidth(), alignment: isUser ? .trailing : .leading)
                 
                 if !isUser {
                     Spacer()

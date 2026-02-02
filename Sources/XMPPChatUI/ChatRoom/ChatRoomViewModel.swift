@@ -783,8 +783,9 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
             
             // Show cached messages while waiting
             if let cachedMessages = MessageCache.shared.loadMessages(forRoomJID: room.jid) {
-                messages = cachedMessages
-                room.messages = cachedMessages
+                let sortedMessages = cachedMessages.sorted { ($0.timestamp ?? 0) < ($1.timestamp ?? 0) }
+                messages = sortedMessages
+                room.messages = sortedMessages
                 messagesLoaded = true
                 //print("📂 ChatRoomViewModel: Showing \(cachedMessages.count) cached messages while waiting for connection")
             }
@@ -819,8 +820,9 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
         
         // Check if we have cached messages - if so, show them immediately and load in background
         if let cachedMessages = MessageCache.shared.loadMessages(forRoomJID: room.jid), !forceReload {
-            messages = cachedMessages
-            room.messages = cachedMessages
+            let sortedMessages = cachedMessages.sorted { ($0.timestamp ?? 0) < ($1.timestamp ?? 0) }
+            messages = sortedMessages
+            room.messages = sortedMessages
             messagesLoaded = true
             //print("📂 ChatRoomViewModel: Using \(cachedMessages.count) cached messages, loading fresh in background")
             // Don't show loader if we have cached messages
@@ -863,8 +865,9 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
     /// Load cached messages from disk
     private func loadCachedMessages() {
         if let cachedMessages = MessageCache.shared.loadMessages(forRoomJID: room.jid) {
-            messages = cachedMessages
-            room.messages = cachedMessages
+            let sortedMessages = cachedMessages.sorted { ($0.timestamp ?? 0) < ($1.timestamp ?? 0) }
+            messages = sortedMessages
+            room.messages = sortedMessages
             messagesLoaded = true
             //print("📂 ChatRoomViewModel: Loaded \(cachedMessages.count) cached messages for room: \(room.jid)")
         }
@@ -872,6 +875,11 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
     
     /// Called when view appears - ensures messages are displayed
     public func onViewAppeared() {
+        // Always show newest messages when entering chat
+        isFirstLoad = true
+        savedScrollPosition = nil
+        scrollPositionRestored = false
+
         // Guard: Don't load if already loading to prevent multiple simultaneous requests
         guard !isLoading && !isLoadingMore else {
             //print("📋 ChatRoomViewModel: Already loading, skipping onViewAppeared load")
@@ -946,11 +954,9 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
     
     /// Save the current scroll position (called when leaving the chat)
     public func saveScrollPosition(messageId: String?) {
-        // Use the provided message ID or last message as fallback
-        // We don't track visible messages during scroll to avoid performance issues
-        savedScrollPosition = messageId ?? messages.last?.id
-        isFirstLoad = false
-        scrollPositionRestored = false // Reset for next time
+        // Intentionally no-op: we always show newest messages on next open
+        savedScrollPosition = nil
+        scrollPositionRestored = false
     }
     
     /// Mark that scroll position has been restored (to avoid multiple restorations)
@@ -965,17 +971,16 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
     
     /// Get the saved scroll position (returns nil on first load to scroll to bottom)
     public func getScrollPosition() -> String? {
-        if isFirstLoad {
-            // On first load, return nil to scroll to bottom
-            return nil
-        }
-        // On subsequent loads, return saved position
-        return savedScrollPosition
+        return nil
     }
     
     /// Check if we should scroll to bottom (first load)
     public func shouldScrollToBottom() -> Bool {
-        return isFirstLoad
+        if isFirstLoad {
+            isFirstLoad = false
+            return true
+        }
+        return false
     }
     
     public func sendMessage(_ text: String) {
