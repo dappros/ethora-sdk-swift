@@ -422,6 +422,52 @@ The SDK uses `AppConfig.defaultBaseURL` by default (`https://api.ethoradev.com/v
 
 ---
 
+## 🔔 Push Notifications (FCM + MUCSub)
+
+To receive push notifications for rooms, you need two steps:
+
+1) Register the device token with the Push API.
+2) Subscribe each room to MUCSub events over XMPP.
+
+### 1) Register device token (Push API)
+
+```swift
+import XMPPChatCore
+
+// Call after you obtain a valid FCM/APNs token and user is logged in.
+Task {
+    try await PushAPI.registerPushToken(
+        registrationToken: fcmToken,
+        deviceType: .ios,
+        appId: AppConfig.defaultAppId
+    )
+}
+```
+
+### 2) Subscribe rooms to MUCSub (XMPP)
+
+```swift
+import XMPPChatCore
+
+// Call after XMPP is online and you have room JIDs.
+let client = xmppClient
+let rooms = Array(RoomStore.shared.rooms.values)
+for room in rooms {
+    client?.operations.subscribeToRoomPush(
+        roomJID: room.jid,
+        nick: UserStore.shared.currentUser?.username
+    )
+}
+```
+
+### iOS setup reminders
+
+- Add `GoogleService-Info.plist` and call `FirebaseApp.configure()` in `AppDelegate`.
+- Enable Push Notifications and Background Modes in Xcode.
+- Request notification permissions via `UNUserNotificationCenter`.
+
+---
+
 ## 📚 Additional Resources
 
 - See `Examples/ChatAppExample` for a complete working example

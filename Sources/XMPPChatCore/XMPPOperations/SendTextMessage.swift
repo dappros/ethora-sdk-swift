@@ -2,7 +2,6 @@
 //  SendTextMessage.swift
 //  XMPPChatCore
 //
-//  Translated from sendTextMessage.xmpp.ts
 //
 
 import Foundation

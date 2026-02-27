@@ -179,7 +179,7 @@ public final class MessageParser {
             //print("   size: \(size ?? "nil")")
         }
 
-        // Match TypeScript: createMessageFromXml doesn't filter body, but addRoomMessage does
+        // createMessageFromXml doesn't filter body, but addRoomMessage does
         // So we create message with body (even if empty), and it will be filtered in handleIncomingMessage
         return Message(
             id: d.id,

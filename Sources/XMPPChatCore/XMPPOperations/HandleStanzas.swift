@@ -3,7 +3,6 @@
 //  XMPPChatCore
 //
 //  Routes incoming XMPP stanzas to appropriate handlers
-//  Translated from handleStanzas.xmpp.ts
 //
 
 import Foundation
@@ -20,15 +19,12 @@ public class HandleStanzas {
     /// Main entry point for handling stanzas
     /// Matches TypeScript: handleStanza(stanza: Element, xmppWs: XmppClient)
     public func handleStanza(_ stanza: XMPPStanza) {
-        // Match TypeScript: if (stanza?.attrs?.type === 'headline') return;
         if stanza.attributes["type"] == "headline" {
             return
         }
         
-        // Match TypeScript: switch (stanza.name) { ... }
         switch stanza.name {
         case "message":
-            // Match TypeScript order exactly:
             // onMessageError(stanza, xmppWs);
             stanzaHandlers.onMessageError(stanza, client: client)
             // onReactionMessage(stanza);

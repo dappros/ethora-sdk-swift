@@ -2,7 +2,6 @@
 //  PresenceOperations.swift
 //  XMPPChatCore
 //
-//  Translated from presenceInRoom.xmpp.ts and allRoomPresences.xmpp.ts
 //
 
 import Foundation
@@ -27,15 +26,11 @@ extension XMPPOperations {
             return
         }
         
-        // Match TypeScript: to: `${roomJID}/${client.jid?.getLocal()}`
         // TypeScript uses client.jid?.getLocal() which is the username (local part of JID)
         // This is the XMPP username, NOT firstName + lastName
         let username = jid.components(separatedBy: "@").first ?? ""
         let toJID = "\(roomJID)/\(username)"
         
-        // Match TypeScript: from: client.jid?.toString()
-        // Match TypeScript: id: 'presenceInRoom'
-        // Match TypeScript: xml('x', { xmlns: 'http://jabber.org/protocol/muc' })
         let presenceStanza = XMPPStanza(
             name: "presence",
             attributes: [
@@ -65,7 +60,6 @@ extension XMPPOperations {
     /// Send presence to all rooms (allRoomPresences from TypeScript)
     /// Note: This requires access to the rooms list, which should come from RoomListViewModel or similar
     public func allRoomPresences(roomJIDs: [String]) async {
-        // Match TypeScript: await Promise.all(Object.keys(rooms).map((roomJid) => presenceInRoom(client, roomJid)))
         await withTaskGroup(of: Void.self) { group in
             for roomJID in roomJIDs {
                 group.addTask {

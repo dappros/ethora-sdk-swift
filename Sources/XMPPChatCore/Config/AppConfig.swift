@@ -40,6 +40,11 @@ JWT eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJkYXRhIjp7ImlzVXNlckRhdGFFbmNyeXB0ZWQ
     public static var defaultBaseURL: URL {
         return URL(string: "https://api.ethoradev.com/v1")!
     }
+
+    /// Default base URL for Push API calls
+    public static var defaultPushBaseURL: URL {
+        return URL(string: "https://push.ethoradev.com/api")!
+    }
     
     /// Default XMPP settings (production, not dev)
     public static var defaultXMPPSettings: XMPPSettings {
@@ -83,5 +88,4 @@ JWT eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJkYXRhIjp7ImlzVXNlckRhdGFFbmNyeXB0ZWQ
         )
     }
 }
-
 
