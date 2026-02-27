@@ -51,7 +51,6 @@ public class StanzaHandlers {
         print("   Stanza type: '\(stanza.attributes["type"] ?? "nil")'")
         print("   Stanza name: '\(stanza.name)'")
         
-        // Match TypeScript: Skip MUC invites first
         let mucX = stanza.getChildren("x").first { x in
             x.attributes["xmlns"] == "http://jabber.org/protocol/muc#user" &&
             x.getChild("invite") != nil
@@ -62,10 +61,8 @@ public class StanzaHandlers {
             return
         }
         
-        // Match TypeScript: try { const { data } = await getDataFromXml(stanza); } catch (error) { handleErrorMessageStanza(stanza); return; }
         guard let messageData = MessageParser.getDataFromStanza(stanza) else {
             print("❌ StanzaHandlers.onRealtimeMessage: SKIPPED - Failed to parse message data from stanza")
-            // Match TypeScript: handleErrorMessageStanza(stanza)
             if stanza.attributes["type"] == "error" {
                 print("   Stanza is error type - calling onMessageError")
                 onMessageError?(stanza.attributes["from"]?.components(separatedBy: "/").first ?? "")
@@ -82,7 +79,6 @@ public class StanzaHandlers {
         print("   messageData.xmppFrom: '\(messageData.xmppFrom ?? "nil")'")
         print("   messageData.dataAttrs.count: \(messageData.dataAttrs.count)")
         
-        // Match TypeScript: const message = await createMessageFromXml({ data, id, body, ...rest });
         let message = MessageParser.createMessageFromData(messageData)
         
         print("✅ StanzaHandlers.onRealtimeMessage: Message created from data")
@@ -93,7 +89,6 @@ public class StanzaHandlers {
         print("   Message user.id: '\(message.user.id)'")
         print("   Message timestamp: \(message.timestamp?.description ?? "nil")")
         
-        // Match TypeScript: roomJID: stanza.attrs.from.split('/')[0]
         let roomJID = stanza.attributes["from"]?.components(separatedBy: "/").first ?? message.roomJid
         
         print("✅ StanzaHandlers.onRealtimeMessage: Calling onMessageReceived callback")
@@ -110,7 +105,6 @@ public class StanzaHandlers {
     /// Matches TypeScript EXACTLY:
     /// if (stanza.is('message') && stanza.children[0].attrs.xmlns === 'urn:xmpp:mam:2')
     public func onMessageHistory(_ stanza: XMPPStanza) {
-        // Match TypeScript EXACTLY: stanza.is('message') && stanza.children[0].attrs.xmlns === 'urn:xmpp:mam:2'
         guard stanza.name == "message",
               let firstChild = stanza.children.first,
               firstChild.attributes["xmlns"] == "urn:xmpp:mam:2" else {
@@ -129,22 +123,18 @@ public class StanzaHandlers {
             collector(stanza, roomJID)
         }
         
-        // Match TypeScript: const { data, id, body, ...rest } = await getDataFromXml(stanza);
         guard let messageData = MessageParser.getDataFromStanza(stanza) else {
             print("❌ StanzaHandlers.onMessageHistory: MessageParser.getDataFromStanza returned nil")
             return
         }
         
-        // Match TypeScript: if (!data) { console.log('No data in stanza'); return; }
         guard !messageData.dataAttrs.isEmpty else {
             print("❌ StanzaHandlers.onMessageHistory: dataAttrs is empty, skipping stanza")
             return
         }
         
-        // Match TypeScript: const message = await createMessageFromXml({ data, id, body, ...rest });
         let message = MessageParser.createMessageFromData(messageData)
         
-        // Match TypeScript: store.dispatch(addRoomMessage({ roomJID: stanza.attrs.from, message }))
         let roomJIDForMessage = rawFrom
         print("✅ StanzaHandlers.onMessageHistory: parsed history message for roomJID=\(roomJIDForMessage)")
         print("   message.id: \(message.id)")
@@ -249,7 +239,6 @@ public class StanzaHandlers {
     
     /// Handle presence in room (onPresenceInRoom from TypeScript)
     public func onPresenceInRoom(_ stanza: XMPPStanza) {
-        // Match TypeScript: stanza.attrs.id === 'presenceInRoom' && !stanza.getChild('error')
         guard stanza.attributes["id"] == "presenceInRoom",
               stanza.getChild("error") == nil else {
             return

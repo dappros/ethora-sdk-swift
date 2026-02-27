@@ -4,7 +4,6 @@
 //
 //  Sends get-history MAM query without collecting responses
 //  Messages will be handled by StanzaHandlers.onMessageHistory
-//  Translated from getHistory.xmpp.ts (simplified - only sends query)
 //
 
 import Foundation
@@ -60,16 +59,14 @@ extension XMPPOperations {
             return nil
         }()
         
-        // Match TypeScript: const fixedChatJid = chatJID.includes('@') ? chatJID : `${chatJID}@conference.dev.xmpp.ethoradev.com`;
         let conferenceDomain = client.conference
         let fixedChatJid = chatJID.contains("@") 
             ? chatJID 
             : "\(chatJID)@\(conferenceDomain)"
         
-        // Match TypeScript: const id = otherId ?? `get-history:${Date.now().toString()}`;
         let id = otherId ?? "get-history:\(Int64(Date().timeIntervalSince1970 * 1000))"
         
-        // Build MAM query stanza - Match TypeScript exactly
+        // Build MAM query stanza
         // xml('max', {}, max.toString())
         let maxStanza = XMPPStanza(name: "max", text: "\(max)")
         
@@ -121,7 +118,6 @@ extension XMPPOperations {
         print(queryXML)
         print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
         
-        // Match TypeScript: client?.send(message).catch((err) => console.log('err on load', err));
         stream.send(iqStanza)
         
         print("✅ Get-history query sent. Messages will be handled by StanzaHandlers.onMessageHistory")
