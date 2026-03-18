@@ -6,6 +6,8 @@ Swift SDK for building **chat-enabled**, **AI-ready**, **super-app** style iOS a
 
 The SDK provides a ready-made communication layer based on **XMPP messaging**, WebSockets, and Ethora APIs — along with UI components for chat screens, message bubbles, avatars, and typical in-app messaging behaviors.
 
+**Part of the [Ethora SDK ecosystem](https://github.com/dappros/ethora#ecosystem)** — see all SDKs, tools, and sample apps. Follow cross-SDK updates in the [Release Notes](https://github.com/dappros/ethora/blob/main/RELEASE-NOTES.md).
+
 ---
 
 ## 🚀 Features (Beta)
