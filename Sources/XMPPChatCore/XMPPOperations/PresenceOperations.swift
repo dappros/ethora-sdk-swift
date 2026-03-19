@@ -26,10 +26,8 @@ extension XMPPOperations {
             return
         }
         
-        // TypeScript uses client.jid?.getLocal() which is the username (local part of JID)
-        // This is the XMPP username, NOT firstName + lastName
-        let username = jid.components(separatedBy: "@").first ?? ""
-        let toJID = "\(roomJID)/\(username)"
+        // Backend expects explicit "/my" resource for room presence joins.
+        let toJID = "\(bareRoomJID)/my"
         
         let presenceStanza = XMPPStanza(
             name: "presence",
@@ -53,8 +51,8 @@ extension XMPPOperations {
         }
         
         stream.send(presenceStanza)
-        //NSlog("📤 Sent presence to room: %@ (nickname: %@)", roomJID, username)
-        //print("📤 Sent presence to room: \(roomJID) (nickname: \(username))")
+        //NSlog("📤 Sent presence to room: %@", toJID)
+        //print("📤 Sent presence to room: \(toJID)")
     }
     
     /// Send presence to all rooms (allRoomPresences from TypeScript)
@@ -71,4 +69,3 @@ extension XMPPOperations {
         //print("✅ Sent presence to \(roomJIDs.count) rooms")
     }
 }
-

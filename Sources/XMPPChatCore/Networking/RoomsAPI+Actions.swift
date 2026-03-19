@@ -33,10 +33,7 @@ extension RoomsAPI {
             body: body,
             baseURL: baseURL,
             appId: appId,
-            didRefresh: didRefresh,
-            retryHandler: { refreshed in
-                try await postReportRoom(chatName: chatName, category: category, text: text, baseURL: baseURL, appId: appId, didRefresh: refreshed)
-            }
+            didRefresh: didRefresh
         )
     }
     
@@ -68,10 +65,7 @@ extension RoomsAPI {
             body: body,
             baseURL: baseURL,
             appId: appId,
-            didRefresh: didRefresh,
-            retryHandler: { refreshed in
-                try await postReportMessage(chatName: chatName, messageId: messageId, category: category, text: text, baseURL: baseURL, appId: appId, didRefresh: refreshed)
-            }
+            didRefresh: didRefresh
         )
     }
     
@@ -105,10 +99,7 @@ extension RoomsAPI {
             body: body,
             baseURL: baseURL,
             appId: appId,
-            didRefresh: didRefresh,
-            retryHandler: { refreshed in
-                try await postAddRoomMember(chatName: chatName, members: members, baseURL: baseURL, appId: appId, didRefresh: refreshed)
-            }
+            didRefresh: didRefresh
         )
         return response.results
     }
@@ -139,10 +130,7 @@ extension RoomsAPI {
             body: body,
             baseURL: baseURL,
             appId: appId,
-            didRefresh: didRefresh,
-            retryHandler: { refreshed in
-                try await deleteRoomMember(chatName: chatName, members: members, baseURL: baseURL, appId: appId, didRefresh: refreshed)
-            }
+            didRefresh: didRefresh
         )
     }
     
@@ -170,10 +158,7 @@ extension RoomsAPI {
             body: body,
             baseURL: baseURL,
             appId: appId,
-            didRefresh: didRefresh,
-            retryHandler: { refreshed in
-                try await deleteRoom(name: name, baseURL: baseURL, appId: appId, didRefresh: refreshed)
-            }
+            didRefresh: didRefresh
         )
     }
 }

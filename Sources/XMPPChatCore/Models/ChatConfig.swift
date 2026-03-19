@@ -11,6 +11,8 @@ import SwiftUI
 // MARK: - Main Chat Config
 
 public struct ChatConfig {
+    public var appId: String?
+
     // Basic UI Settings
     public var disableHeader: Bool?
     public var disableMedia: Bool?

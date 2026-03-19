@@ -106,7 +106,7 @@ extension XMPPClient {
     // In Swift, we pass roomJIDs after loading from API
     public func sendPresenceToAllRooms(roomJIDs: [String]) async {
         // This calls allRoomPresences which internally calls presenceInRoom for each room
-        await operations.allRoomPresences(roomJIDs: roomJIDs)
+        await self.operations.allRoomPresences(roomJIDs: roomJIDs)
     }
     
     // MARK: - Wrapper Methods

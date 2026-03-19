@@ -144,17 +144,26 @@ public struct ChatHeaderSettingsConfig: Codable, Equatable {
     public let disableCreate: Bool?
     public let disableMenu: Bool?
     public let hideSearch: Bool?
+    public let roomTitleOverrides: [String: String]?
+    public let chatInfoButtonDisabled: Bool?
+    public let backButtonDisabled: Bool?
     
     public init(
         hide: Bool? = nil,
         disableCreate: Bool? = nil,
         disableMenu: Bool? = nil,
-        hideSearch: Bool? = nil
+        hideSearch: Bool? = nil,
+        roomTitleOverrides: [String: String]? = nil,
+        chatInfoButtonDisabled: Bool? = nil,
+        backButtonDisabled: Bool? = nil
     ) {
         self.hide = hide
         self.disableCreate = disableCreate
         self.disableMenu = disableMenu
         self.hideSearch = hideSearch
+        self.roomTitleOverrides = roomTitleOverrides
+        self.chatInfoButtonDisabled = chatInfoButtonDisabled
+        self.backButtonDisabled = backButtonDisabled
     }
 }
 

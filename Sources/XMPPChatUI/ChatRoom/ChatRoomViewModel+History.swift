@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import XMPPChatCore
 
 extension ChatRoomViewModel {
     /// Load more messages (internal transport helper for history loading)

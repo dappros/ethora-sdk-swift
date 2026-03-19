@@ -28,7 +28,7 @@ extension ChatRoomView {
     }
     
     func checkIfLoadMoreMessages(metrics: ScrollMetrics) {
-        guard allowLoadMore, !viewModel.isLoadingMore, viewModel.hasMoreMessages else { return }
+        guard allowLoadMore, !viewModel.isLoadingMore, viewModel.room.historyComplete != true else { return }
         
         let now = Date()
         if let lastCheck = lastHistoryCheckAt, now.timeIntervalSince(lastCheck) < historyCheckThrottleInterval {
@@ -37,9 +37,7 @@ extension ChatRoomView {
         lastHistoryCheckAt = now
         
         if metrics.scrollTop < 200 {
-            if let firstMsg = viewModel.messages.first {
-                viewModel.saveScrollPosition(messageId: firstMsg.id, index: 0)
-            }
+            viewModel.saveScrollPositionBeforeLoad()
             viewModel.loadMoreMessages()
         }
     }
@@ -98,7 +96,6 @@ extension ChatRoomView {
                 withAnimation(.easeOut(duration: 0.3)) {
                     proxy.scrollTo("bottom-anchor", anchor: .bottom)
                 }
-                viewModel.setShouldScrollToBottom(false)
             }
         }
     }
