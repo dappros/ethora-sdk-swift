@@ -29,17 +29,15 @@ extension XMPPClient: XMPPStreamDelegate {
     }
     
     internal func handleOnlineEvent(jid: String) async {
-        do {
-            // Extract resource from JID: user@host/resource
-            if let resourcePart = jid.components(separatedBy: "/").last, !resourcePart.isEmpty {
-                resource = resourcePart
-            } else {
-                resource = "default"
-            }
-            
-            status = .online
- streams
-            isConnecting = false // Connection successful, reset flag
+        // Extract resource from JID: user@host/resource
+        if let resourcePart = jid.components(separatedBy: "/").last, !resourcePart.isEmpty {
+            resource = resourcePart
+        } else {
+            resource = "default"
+        }
+        
+        status = .online
+        isConnecting = false // Connection successful, reset flag
             
             // Notify ConnectionManager
             NotificationCenter.default.post(
@@ -79,12 +77,8 @@ extension XMPPClient: XMPPStreamDelegate {
             
             logStep("event:online")
             
-            Task {
-                await processQueue()
-            }
-            
-        } catch {
-            // Error handling
+        Task {
+            await processQueue()
         }
     }
     
@@ -190,11 +184,8 @@ extension XMPPClient: XMPPStreamDelegate {
     public func xmppStream(_ stream: XMPPStream, didReceiveStanza stanza: XMPPStanza) {
         lastActivityTs = Date().timeIntervalSince1970
         
-            if let pingId = lastPingId, isPong(stanza, pingId: pingId) {
-                handlePong()
-            }
-        } catch {
-            // Ignore errors
+        if let pingId = lastPingId, isPong(stanza, pingId: pingId) {
+            handlePong()
         }
         
         handleStanza(stanza)

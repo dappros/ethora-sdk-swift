@@ -142,7 +142,6 @@ struct DefaultChatInputView: View {
                     mediaData: mediaData,
                     mediaType: mediaType,
                     fileName: selectedMediaFileName,
-                    image: nil,
                     onCancel: {
                         selectedMediaData = nil
                         selectedMediaType = nil
@@ -307,6 +306,7 @@ struct DefaultChatInputView: View {
     }
 }
 
+#if os(iOS)
 struct MediaPickerView: View {
     let onMediaSelected: (Data, String, String?) -> Void
     @Environment(\.dismiss) var dismiss
@@ -409,6 +409,24 @@ struct MediaPickerView: View {
         }
     }
 }
+#else
+struct MediaPickerView: View {
+    let onMediaSelected: (Data, String, String?) -> Void
+    @Environment(\.dismiss) var dismiss
+
+    var body: some View {
+        VStack(spacing: 12) {
+            Text("Media picker is available on iOS only")
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+            Button("Close") {
+                dismiss()
+            }
+        }
+        .padding(24)
+    }
+}
+#endif
 
 // MARK: - Media Preview View
 struct MediaPreviewView: View {
@@ -579,6 +597,7 @@ func createTestPDF() -> Data? {
 // MARK: - Media Picker Presentation Modifier
 struct MediaPickerPresentationModifier: ViewModifier {
     func body(content: Content) -> some View {
+        #if os(iOS)
         if #available(iOS 16.0, *) {
             content
                 .presentationDetents([.fraction(0.2)])
@@ -586,5 +605,8 @@ struct MediaPickerPresentationModifier: ViewModifier {
         } else {
             content
         }
+        #else
+        content
+        #endif
     }
 }

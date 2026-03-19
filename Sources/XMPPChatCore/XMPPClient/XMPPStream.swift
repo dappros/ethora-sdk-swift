@@ -21,18 +21,18 @@ public protocol XMPPStreamDelegate: AnyObject {
 
 // MARK: - WebSocket-based Implementation (Fallback)
 public class XMPPStream_WebSocket {
-    private var socket: WebSocket?
-    private var url: URL
-    public private(set) var jid: String?
-    private var isConnected: Bool = false
+    internal var socket: WebSocket?
+    internal var url: URL
+    public internal(set) var jid: String?
+    internal var isConnected: Bool = false
     private var stanzaHandlers: [(XMPPStanza) -> Void] = []
     // Priority handlers run first and can stop propagation
     private var priorityStanzaHandlers: [(XMPPStanza) -> Bool] = [] // Returns true if handled (should stop propagation)
     
     // Store credentials for authentication
-    private var username: String?
-    private var password: String?
-    private var resource: String = "default"
+    internal var username: String?
+    internal var password: String?
+    internal var resource: String = "default"
     
     public weak var delegate: XMPPStreamDelegate?
     

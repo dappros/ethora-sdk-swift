@@ -99,6 +99,7 @@ public struct ChatRoomView: View {
                 messages: viewModel.messages,
                 currentUserId: viewModel.currentUserId,
                 currentUserXmppUsername: viewModel.currentUserXmppUsername,
+                config: viewModel.config,
                 onBack: { presentationMode.wrappedValue.dismiss() },
                 onInfo: { showRoomInfo = true }
             )
@@ -140,7 +141,18 @@ public struct ChatRoomView: View {
                     .simultaneousGesture(TapGesture().onEnded { dismissKeyboard() })
                     #endif
                     .coordinateSpace(name: "messageScroll")
-                    .chatRoomModals(view: self)
+                    .chatRoomModals(
+                        showThread: $showThread,
+                        selectedMessageForThread: $selectedMessageForThread,
+                        showReportModal: $showReportModal,
+                        messageToReport: $messageToReport,
+                        showRoomInfo: $showRoomInfo,
+                        showFullScreenImage: $showFullScreenImage,
+                        showFullScreenVideo: $showFullScreenVideo,
+                        showFullScreenPDF: $showFullScreenPDF,
+                        selectedMediaMessage: $selectedMediaMessage,
+                        viewModel: viewModel
+                    )
                     .background(
                         GeometryReader { outerGeometry in
                             Color.clear
@@ -164,7 +176,6 @@ public struct ChatRoomView: View {
                     .onAppear {
                         scrollProxy = proxy
                         viewModel.loadMessages()
-                        viewModel.startTypingObservation()
                     }
                 }
                 
@@ -213,9 +224,9 @@ extension ChatRoomView {
             text: $messageText,
             onSend: {
                 if viewModel.isEditing, let editId = viewModel.editMessageId {
-                    viewModel.updateMessage(messageId: editId, text: messageText)
+                    viewModel.editMessage(editId, newText: messageText)
                 } else {
-                    viewModel.sendMessage(text: messageText)
+                    viewModel.sendMessage(messageText)
                 }
                 messageText = ""
             },

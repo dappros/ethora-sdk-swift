@@ -162,6 +162,22 @@ public class ChatWrapperViewModel: ObservableObject {
     // MARK: - Initialization Flow
     
     private func initialize(existingClient: XMPPClient?) async {
+        // 0. Bring auth state in sync from config when possible.
+        if UserStore.shared.currentUser == nil,
+           config.jwtLogin?.enabled == true {
+            _ = await UserStore.performJWTLoginIfConfigured()
+        }
+
+        if UserStore.shared.currentUser == nil,
+           let userLogin = config.userLogin,
+           userLogin.enabled,
+           let configuredUser = userLogin.user {
+            UserStore.shared.currentUser = configuredUser
+            UserStore.shared.token = configuredUser.token
+            UserStore.shared.refreshToken = configuredUser.refreshToken
+            UserStore.shared.isAuthenticated = !((configuredUser.token ?? "").isEmpty)
+        }
+
         // 1. Validate user credentials (mirrors web check for xmppUsername/xmppPassword).
         guard let user = UserStore.shared.currentUser,
               let xmppPassword = user.xmppPassword,
@@ -289,7 +305,7 @@ public class ChatWrapperViewModel: ObservableObject {
             let conferenceDomain = config.xmppSettings?.conference ?? "conference.xmpp.ethoradev.com"
             let rooms = try await RoomsAPI.getRooms(
                 baseURL: baseURL,
-                appId: AppConfig.defaultAppId,
+                appId: config.appId ?? AppConfig.defaultAppId,
                 conferenceDomain: conferenceDomain
             )
             
@@ -367,4 +383,3 @@ public class ChatWrapperViewModel: ObservableObject {
             .store(in: &cancellables)
     }
 }
-

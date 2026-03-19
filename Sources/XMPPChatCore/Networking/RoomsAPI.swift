@@ -13,14 +13,13 @@ public struct RoomsAPI {
         public let items: [ApiRoom]
     }
 
-    private static func performRequest<T: Codable>(
+    static func performRequest<T: Codable>(
         url: URL,
         method: String,
         body: Codable? = nil,
         baseURL: URL,
         appId: String?,
-        didRefresh: Bool,
-        retryHandler: @escaping (Bool) async throws -> T
+        didRefresh: Bool
     ) async throws -> T {
         let token = await MainActor.run {
             UserStore.shared.token
@@ -66,7 +65,14 @@ public struct RoomsAPI {
                             UserStore.shared.updateTokens(token: newToken, refreshToken: newRefreshToken)
                         }
                         
-                        return try await retryHandler(true)
+                        return try await performRequest(
+                            url: url,
+                            method: method,
+                            body: body,
+                            baseURL: baseURL,
+                            appId: appId,
+                            didRefresh: true
+                        )
                     } catch {
                         throw RoomsAPIError.httpError(401, "Token expired and refresh failed: \(error.localizedDescription)")
                     }
@@ -94,10 +100,21 @@ public struct RoomsAPI {
         }
     }
 
+    private struct AnyEncodable: Encodable {
+        private let encodeClosure: (Encoder) throws -> Void
+        
+        init(_ wrapped: any Encodable) {
+            self.encodeClosure = wrapped.encode(to:)
+        }
+        
+        func encode(to encoder: Encoder) throws {
+            try encodeClosure(encoder)
+        }
+    }
+
     private struct AnyCodableEncoder {
         func encode(_ value: Codable) throws -> Data {
-            let encoder = JSONEncoder()
-            return try value.encode(to: encoder as! Encoder) // This is a bit hacky, but avoids protocol issues
+            try JSONEncoder().encode(AnyEncodable(value))
         }
     }
 
@@ -108,7 +125,6 @@ public struct RoomsAPI {
     // MARK: - Member & Content Actions
     // Methods postReportRoom, postReportMessage, postAddRoomMember, 
     // deleteRoomMember, deleteRoom have been moved to RoomsAPI+Actions.swift
-}
 }
 
 public enum RoomsAPIError: Error, LocalizedError {
@@ -127,5 +143,3 @@ public enum RoomsAPIError: Error, LocalizedError {
         }
     }
 }
-
-

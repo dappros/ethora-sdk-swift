@@ -1,0 +1,43 @@
+import { initializeApp, getApps, getApp, FirebaseApp } from 'firebase/app';
+import { getMessaging, Messaging } from 'firebase/messaging';
+
+export const defaultConfig = {
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID,
+};
+
+let firebaseApp: FirebaseApp | undefined;
+let messagingInstance: Messaging | undefined;
+
+export const getFirebaseMessaging = (customConfig?: any): Messaging | null => {
+  if (typeof window === 'undefined') return null;
+
+  try {
+    if (!firebaseApp) {
+      const activeApps = getApps();
+      if (activeApps.length > 0 && !customConfig) {
+        firebaseApp = activeApps[0];
+      } else {
+        firebaseApp = initializeApp(customConfig || defaultConfig);
+      }
+    }
+    
+    if (!messagingInstance && firebaseApp) {
+      messagingInstance = getMessaging(firebaseApp);
+    }
+    
+    return messagingInstance || null;
+  } catch (error) {
+    console.error('[FirebaseConfig] Failed to initialize messaging:', error);
+    return null;
+  }
+};
+
+// Legacy exports for backward compatibility if needed, 
+// though we should migrate internal callers to getFirebaseMessaging()
+export const app = getApps().length > 0 ? getApp() : initializeApp(defaultConfig);
+export const messaging = getMessaging(app);
