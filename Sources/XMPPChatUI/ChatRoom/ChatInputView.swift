@@ -83,8 +83,9 @@ struct ChatInputView: View {
                 }
             } label: {
                 Image(systemName: "plus.circle.fill")
-                    .font(.title2)
+                    .font(.system(size: 36))
                     .foregroundColor(.blue)
+                    .frame(width: 36, height: 36)
             }
             .sheet(isPresented: $showImagePicker) {
                 ImagePicker(sourceType: .photoLibrary, mediaTypes: ["public.image", "public.movie"], onMediaSelected: { imageData, mimeType in
@@ -138,8 +139,9 @@ struct ChatInputView: View {
                 }
             }) {
                 Image(systemName: "arrow.up.circle.fill")
-                    .font(.title2)
+                    .font(.system(size: 36))
                     .foregroundColor(text.isEmpty ? .gray : .blue)
+                    .frame(width: 36, height: 36)
             }
             .disabled(text.isEmpty)
         }
