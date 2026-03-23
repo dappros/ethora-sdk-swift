@@ -30,8 +30,12 @@ struct ScrollMetricsKey: PreferenceKey {
     static var defaultValue: ScrollMetrics = ScrollMetrics(scrollTop: 0, scrollHeight: 0, clientHeight: 0)
     static func reduce(value: inout ScrollMetrics, nextValue: () -> ScrollMetrics) {
         let next = nextValue()
+        // We receive two metric sources:
+        // - inner content: scrollTop + scrollHeight (clientHeight = 0)
+        // - outer viewport: clientHeight only
+        // Keep each field from the source that owns it.
         value = ScrollMetrics(
-            scrollTop: next.scrollTop > 0 ? next.scrollTop : value.scrollTop,
+            scrollTop: next.scrollHeight > 0 ? next.scrollTop : value.scrollTop,
             scrollHeight: next.scrollHeight > 0 ? next.scrollHeight : value.scrollHeight,
             clientHeight: next.clientHeight > 0 ? next.clientHeight : value.clientHeight
         )
@@ -174,8 +178,20 @@ public struct ChatRoomView: View {
                         handleMessageCountChange(newCount, proxy: proxy)
                     }
                     .onAppear {
+                        needsInitialScroll = true
+                        allowLoadMore = false
                         scrollProxy = proxy
-                        viewModel.loadMessages()
+                        viewModel.onViewAppeared()
+                        
+                        // If messages are already cached and count does not change,
+                        // force initial positioning to newest messages.
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                            guard needsInitialScroll, !viewModel.messages.isEmpty else { return }
+                            scrollToBottom(proxy: proxy)
+                            needsInitialScroll = false
+                            allowLoadMore = true
+                            lastMessageCount = viewModel.messages.count
+                        }
                     }
                 }
                 
