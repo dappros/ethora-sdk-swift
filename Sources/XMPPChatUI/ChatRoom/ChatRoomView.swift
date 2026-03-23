@@ -80,6 +80,7 @@ public struct ChatRoomView: View {
     @State internal var selectedMediaMessage: Message? = nil
     @State internal var needsInitialScroll: Bool = true
     @State internal var allowLoadMore: Bool = false
+    @State internal var isHistoryPaginationInProgress: Bool = false
     @ObservedObject internal var connectionManager: ConnectionManager
     @State internal var lastHistoryCheckAt: Date?
     
@@ -187,7 +188,9 @@ public struct ChatRoomView: View {
                         // force initial positioning to newest messages.
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
                             guard needsInitialScroll, !viewModel.messages.isEmpty else { return }
-                            scrollToBottom(proxy: proxy)
+                            scrollToBottom(proxy: proxy, animated: false)
+                            // Consume first-load flag in fallback path as well.
+                            _ = viewModel.shouldScrollToBottom()
                             needsInitialScroll = false
                             allowLoadMore = true
                             lastMessageCount = viewModel.messages.count

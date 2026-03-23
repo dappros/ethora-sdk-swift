@@ -37,6 +37,7 @@ extension ChatRoomView {
         lastHistoryCheckAt = now
         
         if metrics.scrollTop < 200 {
+            isHistoryPaginationInProgress = true
             viewModel.saveScrollPositionBeforeLoad()
             viewModel.loadMoreMessages()
         }
@@ -63,10 +64,35 @@ extension ChatRoomView {
                 viewModel.clearScrollPositionInfo()
             }
         }
+        
+        // Pagination cycle completed: re-enable normal auto-scroll behavior.
+        isHistoryPaginationInProgress = false
     }
     
     func handleMessageCountChange(_ newCount: Int, proxy: ScrollViewProxy) {
         guard newCount > 0 else { return }
+        
+        // Initial entry positioning has highest priority.
+        if needsInitialScroll {
+            scrollToBottom(proxy: proxy, animated: false)
+            // Consume one-time "first load" auto-scroll flag here,
+            // so it won't trigger later during history pagination.
+            _ = viewModel.shouldScrollToBottom()
+            needsInitialScroll = false
+            allowLoadMore = true
+            lastMessageCount = newCount
+            return
+        }
+        
+        // During history pagination we must never auto-scroll to bottom.
+        // Keep position strictly user-controlled while older messages are loading/restoring.
+        let isPaginatingHistory = isHistoryPaginationInProgress ||
+                                  viewModel.isLoadingMore ||
+                                  viewModel.getScrollPositionInfo() != nil
+        if isPaginatingHistory {
+            lastMessageCount = newCount
+            return
+        }
         
         if newCount > lastMessageCount {
             let lastMessage = viewModel.messages.last
@@ -81,15 +107,6 @@ extension ChatRoomView {
             }
         }
         lastMessageCount = newCount
-        
-        if viewModel.isLoadingMore { return }
-
-        if needsInitialScroll {
-            scrollToBottom(proxy: proxy)
-            needsInitialScroll = false
-            allowLoadMore = true
-            return
-        }
         
         if viewModel.shouldScrollToBottom(), let _ = viewModel.messages.last {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
@@ -110,9 +127,15 @@ extension ChatRoomView {
         return false
     }
     
-    func scrollToBottom(proxy: ScrollViewProxy) {
-        withAnimation(.easeOut(duration: 0.3)) {
-            proxy.scrollTo("bottom-anchor", anchor: .bottom)
+    func scrollToBottom(proxy: ScrollViewProxy, animated: Bool = true) {
+        if animated {
+            withAnimation(.easeOut(duration: 0.3)) {
+                proxy.scrollTo("bottom-anchor", anchor: .bottom)
+            }
+        } else {
+            withAnimation(.none) {
+                proxy.scrollTo("bottom-anchor", anchor: .bottom)
+            }
         }
         newMessagesCount = 0
         atBottom = true
