@@ -63,10 +63,6 @@ struct MessageBubbleView: View {
                 }
                 
                 HStack(spacing: 4) {
-                    if !isUser {
-                        Spacer()
-                    }
-                    
                     if isUser, let pending = message.pending, pending {
                         Text("sending...")
                             .font(.caption2)
@@ -204,14 +200,13 @@ struct MessageBubbleView: View {
                         }
                     }
                 }
-                .fixedSize(horizontal: true, vertical: false)
                 .frame(maxWidth: chatBubbleMaxWidth(), alignment: isUser ? .trailing : .leading)
                 
                 if !isUser {
                     Spacer()
                 }
             }
-            .padding(.horizontal, 8)
+            .padding(.horizontal, 10)
             .padding(.vertical, 2)
         )
     }

@@ -233,7 +233,6 @@ struct MessageListScrollView: UIViewRepresentable {
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
-            .frame(maxWidth: .infinity, alignment: .leading)
             
             hostingController.rootView = AnyView(messageList)
             
@@ -539,7 +538,6 @@ struct MessageListScrollView: View {
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
-            .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 GeometryReader { proxy in
                     Color.clear

@@ -140,12 +140,10 @@ public struct MessageListView: View {
                         ForEach(viewModel.messages) { message in
                             messageRow(message: message)
                                 .id(message.id)
-                                .frame(maxWidth: .infinity, alignment: .leading)
                         }
                     }
                     .padding(.horizontal, 16)
                     .padding(.vertical, 8)
-                    .frame(maxWidth: .infinity, alignment: .leading)
                     .background(
                         // Track scroll position and content height
                         GeometryReader { geometry in
@@ -189,7 +187,6 @@ public struct MessageListView: View {
             // Use custom message view builder if provided, otherwise use default
             if let customView = messageViewBuilder {
                 customView(message, isCurrentUser(message))
-                    .frame(maxWidth: .infinity, alignment: .leading)
             } else {
                 // Default message view
                 MessageBubbleView(
@@ -206,7 +203,6 @@ public struct MessageListView: View {
                     onReport: nil,
                     onMediaTap: nil
                 )
-                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
     }
