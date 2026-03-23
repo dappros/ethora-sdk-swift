@@ -214,19 +214,19 @@ struct FullScreenImageView: View {
         
         Task {
             var attempts = 0
-            let maxAttempts = 3
+            let maxAttempts = 1
             
             while attempts < maxAttempts {
                 do {
                     let config = URLSessionConfiguration.default
-                    config.timeoutIntervalForRequest = 15
+                    config.timeoutIntervalForRequest = 6
                     let session = URLSession(configuration: config)
                     
                     var request = URLRequest(url: imageURL)
-                    request.timeoutInterval = 15
+                    request.timeoutInterval = 6
                     request.cachePolicy = .returnCacheDataElseLoad
                     
-                    let (data, response) = try await withTaskTimeout(seconds: 15) {
+                    let (data, response) = try await withTaskTimeout(seconds: 6) {
                         try await session.data(for: request)
                     }
                     
@@ -257,8 +257,6 @@ struct FullScreenImageView: View {
                             isLoading = false
                             errorMessage = nil
                         }
-                    } else {
-                        try? await Task.sleep(nanoseconds: 1_000_000_000)
                     }
                 }
             }
