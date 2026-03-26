@@ -264,6 +264,12 @@ public class StanzaHandlers {
         let role = stanza.getChild("x")?.getChild("item")?.attributes["role"] ?? ""
         let looksLikeMucPresence = !role.isEmpty || roomJID.contains("@conference.")
         guard hasPresenceId || looksLikeMucPresence else { return }
+        
+        print("✅ [XMPP] Room presence ACK")
+        print("   from: \(from)")
+        print("   roomJID: \(roomJID)")
+        print("   role: \(role.isEmpty ? "n/a" : role)")
+        print("   stanza.id: \(stanza.attributes["id"] ?? "n/a")")
         onPresenceInRoom?(roomJID, role)
     }
     
