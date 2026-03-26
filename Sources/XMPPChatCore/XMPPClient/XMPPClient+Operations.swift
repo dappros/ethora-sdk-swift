@@ -86,7 +86,24 @@ extension XMPPClient {
         return try await fn()
     }
 
-    // MARK: - Presence Operations
+    // MARK: - Public Presence API
+    
+    /// Send global `<presence/>` stanza to XMPP server (announce online).
+    /// Called automatically after auth, but can be called manually
+    /// when integrating ChatCore without ChatUI.
+    public func sendGlobalPresence() {
+        guard let stream = xmppStream, status == .online else { return }
+        let stanza = XMPPStanza(name: "presence")
+        stream.send(stanza)
+    }
+    
+    /// Send MUC presence to a single room so the user becomes an occupant.
+    /// Must be called before `sendTextMessage` / `sendGetHistory` for that room.
+    public func sendPresenceToRoom(roomJID: String) async {
+        await self.operations.presenceInRoom(roomJID: roomJID)
+    }
+    
+    // MARK: - Internal Presence
     internal func sendAllPresencesAndMarkReady() async {
         presencesReady = false
         
