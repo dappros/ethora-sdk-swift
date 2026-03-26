@@ -26,9 +26,10 @@ extension XMPPOperations {
             return
         }
         
-        // Use a stable nickname derived from bare JID (no resource slash).
-        // Some MUC servers require occupant nick to match user identity.
-        let nick = jid.components(separatedBy: "/").first ?? jid
+        // Use nickname derived from the connected JID localpart (TypeScript: `jid.getLocal()`).
+        // Some MUC servers require occupant nick to match user identity *without* the domain part.
+        let bareJid = jid.components(separatedBy: "/").first ?? jid
+        let nick = bareJid.components(separatedBy: "@").first ?? bareJid
         let toJID = "\(bareRoomJID)/\(nick)"
         
         let presenceStanza = XMPPStanza(

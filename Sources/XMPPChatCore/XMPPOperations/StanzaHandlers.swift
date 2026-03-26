@@ -250,8 +250,19 @@ public class StanzaHandlers {
     
     /// Handle presence in room (onPresenceInRoom from TypeScript)
     public func onPresenceInRoom(_ stanza: XMPPStanza) {
-        guard stanza.name == "presence",
-              stanza.getChild("error") == nil else {
+        guard stanza.name == "presence" else { return }
+        
+        let fromRaw = stanza.attributes["from"] ?? ""
+        let stanzaId = stanza.attributes["id"] ?? "n/a"
+        let hasError = stanza.getChild("error") != nil
+        
+        print("ℹ️ [XMPP] Incoming presence stanza")
+        print("   from: \(fromRaw)")
+        print("   id:   \(stanzaId)")
+        print("   error: \(hasError ? "yes" : "no")")
+        
+        guard hasError == false else {
+            // We still don't join-ack this room.
             return
         }
         
