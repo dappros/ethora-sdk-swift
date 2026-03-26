@@ -59,8 +59,6 @@ public class HandleStanzas {
             stanzaHandlers.onIQError(stanza)
             // onGetChatRooms(stanza, xmppWs);
             stanzaHandlers.onGetChatRooms(stanza, client: client)
-            // onRealtimeMessage(stanza);
-            stanzaHandlers.onRealtimeMessage(stanza)
             // onPresenceInRoom(stanza);
             stanzaHandlers.onPresenceInRoom(stanza)
             // onGetRoomInfo(stanza);

@@ -51,6 +51,8 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
     internal var loadingMoreTask: Task<Void, Never>? // Task to handle loading more timeout/reset
     internal var historyLoadReceivedCount: Int = 0 // Track messages received during history load (including duplicates)
     internal var historyLoadStartTime: Date? // Track when history load started
+    internal var historyRetryAttempts: Int = 0
+    internal let maxHistoryRetryAttempts: Int = 3
     
     // Telegram-like scroll position maintenance
     internal var scrollPositionBeforeLoad: (messageId: String, messageIndex: Int)? = nil
@@ -70,111 +72,5 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
         loadCachedMessages()
         
         setupObservers()
-    }
-    
-    
-    // MARK: - Lifecycle and State Management
-
-    // Remaining methods have been moved to extension files:
-    // - ChatRoomViewModel+Observers.swift: setupObservers and notification handlers
-    // - ChatRoomViewModel+History.swift: History loading and scrolling management
-    // - ChatRoomViewModel+Messages.swift: handleIncomingMessage
-    // - ChatRoomViewModel+Actions.swift: Messaging actions (send, edit, delete, react, typing)
-    // - ChatRoomViewModel+XMPP.swift: XMPP delegate methods
-    
-    /// Mark room as active and clear unread state
-    public func markRoomActive() {
-        let roomJIDKey = room.jid.components(separatedBy: "/").first ?? room.jid
-        RoomStore.shared.setActiveRoom(roomJIDKey)
-
-        if messages.contains(where: { $0.id == "delimiter-new" }) {
-            messages.removeAll { $0.id == "delimiter-new" }
-            room.messages = messages
-            RoomStore.shared.setRoomMessages(roomJID: roomJIDKey, messages: messages)
-        }
-
-        room.lastViewedTimestamp = 0
-        room.unreadMessages = 0
-        var updates = PartialRoomUpdate()
-        updates.lastViewedTimestamp = 0
-        updates.unreadMessages = 0
-        RoomStore.shared.updateRoom(jid: roomJIDKey, updates: updates)
-
-        // Update cache LRU metadata so active rooms are kept hot
-        MessageCache.shared.markRoomAccessed(roomJID: room.jid)
-
-        onMessagesUpdated?(room)
-    }
-
-    /// Mark room as inactive and store last viewed timestamp
-    public func markRoomInactive() {
-        let roomJIDKey = room.jid.components(separatedBy: "/").first ?? room.jid
-        RoomStore.shared.setActiveRoom(nil)
-
-        let timestamp = Int64(Date().timeIntervalSince1970 * 1000)
-        room.lastViewedTimestamp = timestamp
-        room.unreadMessages = 0
-        var updates = PartialRoomUpdate()
-        updates.lastViewedTimestamp = timestamp
-        updates.unreadMessages = 0
-        RoomStore.shared.updateRoom(jid: roomJIDKey, updates: updates)
-
-        // Run lightweight cache maintenance when leaving a room
-        MessageCache.shared.cleanupIfNeeded()
-
-        onMessagesUpdated?(room)
-    }
-    
-    /// Called when view appears - ensures messages are displayed
-    public func onViewAppeared() {
-        // Always show newest messages when entering chat
-        isFirstLoad = true
-        savedScrollPosition = nil
-        scrollPositionRestored = false
-
-        // Guard: Don't load if already loading to prevent multiple simultaneous requests
-        guard !isLoading && !isLoadingMore else {
-            return
-        }
-        
-        // If messages are already loaded, just ensure they're displayed
-        if messagesLoaded && !messages.isEmpty {
-            objectWillChange.send()
-        } else {
-            // Wait a bit to ensure XMPP connection is stable before loading
-            Task { @MainActor in
-                try? await Task.sleep(nanoseconds: 200_000_000) // 200ms
-                
-                guard client.checkOnline() else {
-                    return
-                }
-                
-                loadMessages()
-            }
-        }
-    }
-
-    /// Mark that scroll position has been restored
-    public func markScrollPositionRestored() {
-        scrollPositionRestored = true
-    }
-    
-    /// Check if scroll position has been restored
-    public var hasRestoredScrollPosition: Bool {
-        return scrollPositionRestored
-    }
-    
-    /// Get the saved scroll position
-    public func getScrollPosition() -> String? {
-        return nil
-    }
-    
-    /// Check if we should scroll to bottom
-    public func shouldScrollToBottom() -> Bool {
-        if isFirstLoad {
-            isFirstLoad = false
-            return true
-        }
-        return false
     }
 }

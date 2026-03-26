@@ -59,7 +59,8 @@ public struct PushAPI {
         }
         let authURL = finalAuthBaseURL ?? AppConfig.defaultBaseURL
 
-        let userToken = token ?? await MainActor.run { UserStore.shared.token }
+        let storedToken = await MainActor.run { UserStore.shared.token }
+        let userToken = token ?? storedToken
 
         guard let userToken = userToken, !userToken.isEmpty else {
             throw PushAPIError.networkError("No user token available. Please login first.")

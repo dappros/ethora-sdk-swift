@@ -22,7 +22,7 @@ public struct ChatStyles {
         backgroundChat: BackgroundChatConfig? = nil,
         messageBubble: MessageBubbleStyle? = nil
     ) {
-        self.colors = colors ?? ChatColors(primary: "#5E3FDE", secondary: "#E1E4FE")
+        self.colors = colors ?? ChatColors(primary: "#0052CD", secondary: "#F3F6FC")
         self.roomListStyles = roomListStyles
         self.chatRoomStyles = chatRoomStyles
         self.backgroundChat = backgroundChat
@@ -54,6 +54,23 @@ public struct RoomListStyles {
     }
 }
 
+public extension RoomListStyles {
+    init?(dictionary: [String: Any]?) {
+        guard let dictionary else { return nil }
+        let backgroundColor = (dictionary["backgroundColor"] as? String).map { Color(hex: $0) }
+        let cornerRadius = (dictionary["cornerRadius"] as? Double).map { CGFloat($0) }
+        let borderWidth = (dictionary["borderWidth"] as? Double).map { CGFloat($0) }
+        let borderColor = (dictionary["borderColor"] as? String).map { Color(hex: $0) }
+        self.init(
+            backgroundColor: backgroundColor,
+            cornerRadius: cornerRadius,
+            borderWidth: borderWidth,
+            borderColor: borderColor,
+            padding: nil
+        )
+    }
+}
+
 public struct ChatRoomStyles {
     public let backgroundColor: Color?
     public let cornerRadius: CGFloat?
@@ -73,6 +90,23 @@ public struct ChatRoomStyles {
         self.borderWidth = borderWidth
         self.borderColor = borderColor
         self.padding = padding
+    }
+}
+
+public extension ChatRoomStyles {
+    init?(dictionary: [String: Any]?) {
+        guard let dictionary else { return nil }
+        let backgroundColor = (dictionary["backgroundColor"] as? String).map { Color(hex: $0) }
+        let cornerRadius = (dictionary["cornerRadius"] as? Double).map { CGFloat($0) }
+        let borderWidth = (dictionary["borderWidth"] as? Double).map { CGFloat($0) }
+        let borderColor = (dictionary["borderColor"] as? String).map { Color(hex: $0) }
+        self.init(
+            backgroundColor: backgroundColor,
+            cornerRadius: cornerRadius,
+            borderWidth: borderWidth,
+            borderColor: borderColor,
+            padding: nil
+        )
     }
 }
 

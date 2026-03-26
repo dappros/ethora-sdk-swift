@@ -7,11 +7,14 @@
 //
 
 import SwiftUI
+#if canImport(UIKit)
 import UIKit
+#endif
 import XMPPChatCore
 
 /// UIKit ScrollView wrapper for precise scroll control
 /// Matches Web: content.scrollTop = newScrollTop
+#if canImport(UIKit)
 struct MessageListScrollView: UIViewRepresentable {
     @ObservedObject var viewModel: MessageListViewModel
     let currentUserId: String
@@ -230,7 +233,6 @@ struct MessageListScrollView: UIViewRepresentable {
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
-            .frame(maxWidth: .infinity, alignment: .leading)
             
             hostingController.rootView = AnyView(messageList)
             
@@ -491,3 +493,78 @@ struct MessageListScrollView: UIViewRepresentable {
         }
     }
 }
+#else
+struct MessageListScrollView: View {
+    @ObservedObject var viewModel: MessageListViewModel
+    let currentUserId: String
+    let currentUserXmppUsername: String?
+    let config: ChatConfig?
+    let messageViewBuilder: ((Message, Bool) -> AnyView)?
+
+    @Binding var scrollTop: CGFloat
+    @Binding var scrollHeight: CGFloat
+
+    var body: some View {
+        ScrollView {
+            LazyVStack(spacing: 8) {
+                if viewModel.isLoadingMore {
+                    ProgressView().padding()
+                }
+                ForEach(viewModel.messages) { message in
+                    if message.id == "delimiter-new" {
+                        NewMessageLabel().padding(.vertical, 8)
+                    } else {
+                        let isUser = isCurrentUser(message)
+                        if let customView = messageViewBuilder {
+                            customView(message, isUser)
+                        } else {
+                            MessageBubbleView(
+                                message: message,
+                                isUser: isUser,
+                                showAvatar: true,
+                                previousMessage: nil,
+                                onLongPress: {},
+                                onRetry: nil,
+                                onReactionTap: { _ in },
+                                onReply: {},
+                                onEdit: nil,
+                                onDelete: nil,
+                                onReport: nil,
+                                onMediaTap: nil
+                            )
+                        }
+                    }
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            .background(
+                GeometryReader { proxy in
+                    Color.clear
+                        .onAppear {
+                            scrollHeight = proxy.size.height
+                            scrollTop = 0
+                        }
+                        .onChange(of: proxy.size.height) { newHeight in
+                            scrollHeight = newHeight
+                        }
+                }
+            )
+        }
+    }
+
+    private func isCurrentUser(_ message: Message) -> Bool {
+        let isCurrentUserById = message.user.id == currentUserId
+        let isCurrentUserByXmpp: Bool = {
+            guard let currentUserXmpp = currentUserXmppUsername,
+                  let messageUserXmpp = message.user.xmppUsername else {
+                return false
+            }
+            let normalizedCurrent = currentUserXmpp.lowercased().trimmingCharacters(in: .whitespaces)
+            let normalizedMessage = messageUserXmpp.lowercased().trimmingCharacters(in: .whitespaces)
+            return normalizedCurrent == normalizedMessage
+        }()
+        return isCurrentUserById || isCurrentUserByXmpp
+    }
+}
+#endif

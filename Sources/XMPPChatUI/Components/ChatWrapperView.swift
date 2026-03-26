@@ -10,6 +10,7 @@
 //
 
 import SwiftUI
+import Combine
 import XMPPChatCore
 
 @MainActor
@@ -17,11 +18,13 @@ public struct ChatWrapperView: View {
     @StateObject private var viewModel: ChatWrapperViewModel
     
     private let config: ChatConfig
+    private let onUnreadCountChanged: ((Int) -> Void)?
     
     public init(
         config: ChatConfig? = nil,
         initialRoomJID: String? = nil,
-        wasAutoSelected: Bool = false
+        wasAutoSelected: Bool = false,
+        onUnreadCountChanged: ((Int) -> Void)? = nil
     ) {
         // Access ConfigStore on main actor if config not provided
         let resolvedConfig: ChatConfig
@@ -39,6 +42,7 @@ public struct ChatWrapperView: View {
             )
         )
         self.config = resolvedConfig
+        self.onUnreadCountChanged = onUnreadCountChanged
     }
     
     public var body: some View {
@@ -110,7 +114,8 @@ public struct ChatWrapperView: View {
                     RoomListView(
                         viewModel: RoomListViewModel(
                             client: client,
-                            currentUserId: viewModel.currentUserId
+                            currentUserId: viewModel.currentUserId,
+                            config: config
                         )
                     )
                 }
@@ -126,6 +131,8 @@ public struct ChatWrapperView: View {
                 .padding()
             }
         }
+        .onReceive(RoomStore.shared.$totalUnreadCount.removeDuplicates()) { count in
+            onUnreadCountChanged?(count)
+        }
     }
 }
-

@@ -45,6 +45,17 @@ public class StanzaHandlers {
     
     /// Handle real-time messages (onRealtimeMessage from TypeScript)
     public func onRealtimeMessage(_ stanza: XMPPStanza) {
+        guard stanza.name == "message" else {
+            return
+        }
+        
+        // Error stanzas must not be treated as regular incoming messages.
+        if stanza.attributes["type"] == "error" {
+            let roomJID = stanza.attributes["from"]?.components(separatedBy: "/").first ?? ""
+            onMessageError?(roomJID)
+            return
+        }
+        
         print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
         print("🔵 StanzaHandlers.onRealtimeMessage: START")
         print("   Stanza from: '\(stanza.attributes["from"] ?? "nil")'")
@@ -239,14 +250,37 @@ public class StanzaHandlers {
     
     /// Handle presence in room (onPresenceInRoom from TypeScript)
     public func onPresenceInRoom(_ stanza: XMPPStanza) {
-        guard stanza.attributes["id"] == "presenceInRoom",
-              stanza.getChild("error") == nil else {
+        guard stanza.name == "presence" else { return }
+        
+        let fromRaw = stanza.attributes["from"] ?? ""
+        let stanzaId = stanza.attributes["id"] ?? "n/a"
+        let hasError = stanza.getChild("error") != nil
+        
+        print("ℹ️ [XMPP] Incoming presence stanza")
+        print("   from: \(fromRaw)")
+        print("   id:   \(stanzaId)")
+        print("   error: \(hasError ? "yes" : "no")")
+        
+        guard hasError == false else {
+            // We still don't join-ack this room.
             return
         }
         
         let from = stanza.attributes["from"] ?? ""
         let roomJID = from.components(separatedBy: "/").first ?? ""
+        guard !roomJID.isEmpty else { return }
+        
+        // Accept both explicit id-based responses and standard MUC presence echoes.
+        let hasPresenceId = stanza.attributes["id"] == "presenceInRoom"
         let role = stanza.getChild("x")?.getChild("item")?.attributes["role"] ?? ""
+        let looksLikeMucPresence = !role.isEmpty || roomJID.contains("@conference.")
+        guard hasPresenceId || looksLikeMucPresence else { return }
+        
+        print("✅ [XMPP] Room presence ACK")
+        print("   from: \(from)")
+        print("   roomJID: \(roomJID)")
+        print("   role: \(role.isEmpty ? "n/a" : role)")
+        print("   stanza.id: \(stanza.attributes["id"] ?? "n/a")")
         onPresenceInRoom?(roomJID, role)
     }
     

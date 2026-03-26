@@ -30,8 +30,12 @@ struct ScrollMetricsKey: PreferenceKey {
     static var defaultValue: ScrollMetrics = ScrollMetrics(scrollTop: 0, scrollHeight: 0, clientHeight: 0)
     static func reduce(value: inout ScrollMetrics, nextValue: () -> ScrollMetrics) {
         let next = nextValue()
+        // We receive two metric sources:
+        // - inner content: scrollTop + scrollHeight (clientHeight = 0)
+        // - outer viewport: clientHeight only
+        // Keep each field from the source that owns it.
         value = ScrollMetrics(
-            scrollTop: next.scrollTop > 0 ? next.scrollTop : value.scrollTop,
+            scrollTop: next.scrollHeight > 0 ? next.scrollTop : value.scrollTop,
             scrollHeight: next.scrollHeight > 0 ? next.scrollHeight : value.scrollHeight,
             clientHeight: next.clientHeight > 0 ? next.clientHeight : value.clientHeight
         )
@@ -76,6 +80,7 @@ public struct ChatRoomView: View {
     @State internal var selectedMediaMessage: Message? = nil
     @State internal var needsInitialScroll: Bool = true
     @State internal var allowLoadMore: Bool = false
+    @State internal var isHistoryPaginationInProgress: Bool = false
     @ObservedObject internal var connectionManager: ConnectionManager
     @State internal var lastHistoryCheckAt: Date?
     
@@ -99,6 +104,7 @@ public struct ChatRoomView: View {
                 messages: viewModel.messages,
                 currentUserId: viewModel.currentUserId,
                 currentUserXmppUsername: viewModel.currentUserXmppUsername,
+                config: viewModel.config,
                 onBack: { presentationMode.wrappedValue.dismiss() },
                 onInfo: { showRoomInfo = true }
             )
@@ -140,7 +146,18 @@ public struct ChatRoomView: View {
                     .simultaneousGesture(TapGesture().onEnded { dismissKeyboard() })
                     #endif
                     .coordinateSpace(name: "messageScroll")
-                    .chatRoomModals(view: self)
+                    .chatRoomModals(
+                        showThread: $showThread,
+                        selectedMessageForThread: $selectedMessageForThread,
+                        showReportModal: $showReportModal,
+                        messageToReport: $messageToReport,
+                        showRoomInfo: $showRoomInfo,
+                        showFullScreenImage: $showFullScreenImage,
+                        showFullScreenVideo: $showFullScreenVideo,
+                        showFullScreenPDF: $showFullScreenPDF,
+                        selectedMediaMessage: $selectedMediaMessage,
+                        viewModel: viewModel
+                    )
                     .background(
                         GeometryReader { outerGeometry in
                             Color.clear
@@ -162,9 +179,22 @@ public struct ChatRoomView: View {
                         handleMessageCountChange(newCount, proxy: proxy)
                     }
                     .onAppear {
+                        needsInitialScroll = true
+                        allowLoadMore = false
                         scrollProxy = proxy
-                        viewModel.loadMessages()
-                        viewModel.startTypingObservation()
+                        viewModel.onViewAppeared()
+                        
+                        // If messages are already cached and count does not change,
+                        // force initial positioning to newest messages.
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                            guard needsInitialScroll, !viewModel.messages.isEmpty else { return }
+                            scrollToBottom(proxy: proxy, animated: false)
+                            // Consume first-load flag in fallback path as well.
+                            _ = viewModel.shouldScrollToBottom()
+                            needsInitialScroll = false
+                            allowLoadMore = true
+                            lastMessageCount = viewModel.messages.count
+                        }
                     }
                 }
                 
@@ -213,9 +243,9 @@ extension ChatRoomView {
             text: $messageText,
             onSend: {
                 if viewModel.isEditing, let editId = viewModel.editMessageId {
-                    viewModel.updateMessage(messageId: editId, text: messageText)
+                    viewModel.editMessage(editId, newText: messageText)
                 } else {
-                    viewModel.sendMessage(text: messageText)
+                    viewModel.sendMessage(messageText)
                 }
                 messageText = ""
             },

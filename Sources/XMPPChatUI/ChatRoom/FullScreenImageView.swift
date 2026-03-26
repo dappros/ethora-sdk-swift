@@ -4,6 +4,17 @@
 //
 
 import SwiftUI
+#if os(iOS)
+import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
+
+#if os(iOS)
+private typealias PlatformImage = UIImage
+#elseif os(macOS)
+private typealias PlatformImage = NSImage
+#endif
 
 struct FullScreenImageView: View {
     let imageURL: URL
@@ -12,7 +23,7 @@ struct FullScreenImageView: View {
     @State private var lastScale: CGFloat = 1.0
     @State private var offset: CGSize = .zero
     @State private var lastOffset: CGSize = .zero
-    @State private var loadedImage: UIImage? = nil
+    @State private var loadedImage: PlatformImage? = nil
     @State private var isLoading = true
     @State private var errorMessage: String? = nil
     @State private var useAsyncImageFallback = false
@@ -96,7 +107,7 @@ struct FullScreenImageView: View {
                 ProgressView()
                     .tint(.white)
             } else if let image = loadedImage {
-                Image(uiImage: image)
+                platformImageView(image)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
                     .scaleEffect(scale)
@@ -203,19 +214,19 @@ struct FullScreenImageView: View {
         
         Task {
             var attempts = 0
-            let maxAttempts = 3
+            let maxAttempts = 1
             
             while attempts < maxAttempts {
                 do {
                     let config = URLSessionConfiguration.default
-                    config.timeoutIntervalForRequest = 15
+                    config.timeoutIntervalForRequest = 6
                     let session = URLSession(configuration: config)
                     
                     var request = URLRequest(url: imageURL)
-                    request.timeoutInterval = 15
+                    request.timeoutInterval = 6
                     request.cachePolicy = .returnCacheDataElseLoad
                     
-                    let (data, response) = try await withTaskTimeout(seconds: 15) {
+                    let (data, response) = try await withTaskTimeout(seconds: 6) {
                         try await session.data(for: request)
                     }
                     
@@ -227,7 +238,7 @@ struct FullScreenImageView: View {
                         throw NSError(domain: "ImageLoadingError", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: "HTTP Error: \(httpResponse.statusCode)"])
                     }
                     
-                    guard let image = UIImage(data: data) else {
+                    guard let image = PlatformImage(data: data) else {
                         throw NSError(domain: "ImageLoadingError", code: -2, userInfo: [NSLocalizedDescriptionKey: "Failed to create image from data"])
                     }
                     
@@ -246,12 +257,19 @@ struct FullScreenImageView: View {
                             isLoading = false
                             errorMessage = nil
                         }
-                    } else {
-                        try? await Task.sleep(nanoseconds: 1_000_000_000)
                     }
                 }
             }
         }
+    }
+
+    @ViewBuilder
+    private func platformImageView(_ image: PlatformImage) -> Image {
+        #if os(iOS)
+        Image(uiImage: image)
+        #else
+        Image(nsImage: image)
+        #endif
     }
     
     private func withTaskTimeout<T>(seconds: TimeInterval, operation: @escaping () async throws -> T) async throws -> T {
