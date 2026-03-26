@@ -22,14 +22,15 @@ extension XMPPOperations {
         // Extract bare JID (without resource) for comparison
         let bareRoomJID = roomJID.components(separatedBy: "/").first ?? roomJID
         if client?.hasPresenceResponseForRoom(bareRoomJID) == true {
-            //print("⏭️ Skipping presence send to room '\(bareRoomJID)' - already received response")
+            print("⏭️ [XMPP] Skipping room presence (already acknowledged): \(bareRoomJID)")
             return
         }
         
-        // TypeScript uses client.jid?.getLocal() which is the username (local part of JID)
-        // This is the XMPP username, NOT firstName + lastName
-        let username = jid.components(separatedBy: "@").first ?? ""
-        let toJID = "\(roomJID)/\(username)"
+        // Use nickname derived from the connected JID localpart (TypeScript: `jid.getLocal()`).
+        // Some MUC servers require occupant nick to match user identity *without* the domain part.
+        let bareJid = jid.components(separatedBy: "/").first ?? jid
+        let nick = bareJid.components(separatedBy: "@").first ?? bareJid
+        let toJID = "\(bareRoomJID)/\(nick)"
         
         let presenceStanza = XMPPStanza(
             name: "presence",
@@ -52,9 +53,12 @@ extension XMPPOperations {
             try? await Task.sleep(nanoseconds: UInt64(settleDelay * 1_000_000_000))
         }
         
+        print("📤 [XMPP] Sending room presence")
+        print("   from: \(jid)")
+        print("   to:   \(toJID)")
+        print("   id:   presenceInRoom")
         stream.send(presenceStanza)
-        //NSlog("📤 Sent presence to room: %@ (nickname: %@)", roomJID, username)
-        //print("📤 Sent presence to room: \(roomJID) (nickname: \(username))")
+        print("✅ [XMPP] Room presence stanza sent")
     }
     
     /// Send presence to all rooms (allRoomPresences from TypeScript)
@@ -71,4 +75,3 @@ extension XMPPOperations {
         //print("✅ Sent presence to \(roomJIDs.count) rooms")
     }
 }
-

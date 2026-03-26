@@ -13,26 +13,36 @@ private struct ChatRoomViewWrapper: View {
     @Binding var room: Room
     let client: XMPPClient
     let currentUserId: String
+    let config: ChatConfig?
     let onMessagesUpdated: (Room) -> Void
     
     @StateObject private var viewModel: ChatRoomViewModel
     
-    init(room: Binding<Room>, client: XMPPClient, currentUserId: String, onMessagesUpdated: @escaping (Room) -> Void) {
+    init(
+        room: Binding<Room>,
+        client: XMPPClient,
+        currentUserId: String,
+        config: ChatConfig? = nil,
+        onMessagesUpdated: @escaping (Room) -> Void
+    ) {
         self._room = room
         self.client = client
         self.currentUserId = currentUserId
+        self.config = config
         self.onMessagesUpdated = onMessagesUpdated
         
         // Create the view model with the initial room
         _viewModel = StateObject(wrappedValue: ChatRoomViewModel(
             room: room.wrappedValue,
             client: client,
-            currentUserId: currentUserId
+            currentUserId: currentUserId,
+            config: config
         ))
     }
     
     var body: some View {
         ChatRoomView(viewModel: viewModel)
+            .applyChatRoomStyles(ChatRoomStyles(dictionary: config?.chatRoomStyles))
             .onAppear {
                 // Set up callback when view appears
                 viewModel.onMessagesUpdated = onMessagesUpdated
@@ -53,6 +63,37 @@ public struct RoomListView: View {
     }
     
     public var body: some View {
+        Group {
+            if viewModel.config?.disableRooms == true {
+                singleRoomContent
+            } else {
+                navigationListContent
+            }
+        }
+        .applyRoomListStyles(RoomListStyles(dictionary: viewModel.config?.roomListStyles))
+    }
+
+    @ViewBuilder
+    private var singleRoomContent: some View {
+        if let room = filteredRooms.first {
+            destinationView(for: room)
+        } else if viewModel.isLoading {
+            VStack(spacing: 10) {
+                ProgressView()
+                Text("Loading rooms…")
+            }
+        } else if let error = viewModel.errorMessage {
+            Text(error)
+                .foregroundColor(.red)
+                .multilineTextAlignment(.center)
+        } else {
+            Text("No rooms loaded")
+                .foregroundColor(.secondary)
+        }
+    }
+
+    @ViewBuilder
+    private var navigationListContent: some View {
         NavigationView {
             List {
                 if filteredRooms.isEmpty {
@@ -163,10 +204,11 @@ public struct RoomListView: View {
     }
     
     private var filteredRooms: [Room] {
-        let rooms = if searchText.isEmpty {
-            viewModel.rooms
+        let rooms: [Room]
+        if searchText.isEmpty {
+            rooms = viewModel.rooms
         } else {
-            viewModel.rooms.filter { room in
+            rooms = viewModel.rooms.filter { room in
                 room.title.localizedCaseInsensitiveContains(searchText) ||
                 room.lastMessage?.body.localizedCaseInsensitiveContains(searchText) ?? false
             }
@@ -216,6 +258,7 @@ public struct RoomListView: View {
             room: binding,
             client: viewModel.client,
             currentUserId: viewModel.currentUserId,
+            config: viewModel.config,
             onMessagesUpdated: { updatedRoom in
                 if let index = viewModel.rooms.firstIndex(where: { $0.jid == updatedRoom.jid }) {
                     viewModel.rooms[index] = updatedRoom
@@ -496,6 +539,7 @@ public class RoomListViewModel: ObservableObject {
     
     let client: XMPPClient
     let currentUserId: String
+    let config: ChatConfig?
     private let apiBaseURL: URL
     private let appId: String
     private let conferenceDomain: String
@@ -513,15 +557,17 @@ public class RoomListViewModel: ObservableObject {
     public init(
         client: XMPPClient,
         currentUserId: String,
+        config: ChatConfig? = nil,
         appId: String? = nil,
         apiBaseURL: URL = URL(string: "https://api.ethoradev.com/v1")!,
         conferenceDomain: String = "conference.xmpp.ethoradev.com"
     ) {
         self.client = client
         self.currentUserId = currentUserId
-        self.appId = appId ?? AppConfig.defaultAppId
-        self.apiBaseURL = apiBaseURL
-        self.conferenceDomain = conferenceDomain
+        self.config = config
+        self.appId = appId ?? config?.appId ?? AppConfig.defaultAppId
+        self.apiBaseURL = URL(string: config?.baseUrl ?? "") ?? apiBaseURL
+        self.conferenceDomain = config?.xmppSettings?.conference ?? conferenceDomain
         
         // Initialize message loader queue
         let queue = MessageLoaderQueue(client: client)
@@ -948,5 +994,3 @@ public class RoomListViewModel: ObservableObject {
         return Array(userMap.values).filter { $0.id != currentUserId }
     }
 }
-
-

@@ -13,6 +13,7 @@ struct ChatHeaderView: View {
     let messages: [Message]
     let currentUserId: String
     let currentUserXmppUsername: String?
+    let config: ChatConfig?
     let onBack: () -> Void
     let onInfo: (() -> Void)?
     
@@ -23,6 +24,7 @@ struct ChatHeaderView: View {
         messages: [Message] = [],
         currentUserId: String = "",
         currentUserXmppUsername: String? = nil,
+        config: ChatConfig? = nil,
         onBack: @escaping () -> Void,
         onInfo: (() -> Void)? = nil
     ) {
@@ -32,6 +34,7 @@ struct ChatHeaderView: View {
         self.messages = messages
         self.currentUserId = currentUserId
         self.currentUserXmppUsername = currentUserXmppUsername
+        self.config = config
         self.onBack = onBack
         self.onInfo = onInfo
     }
@@ -108,15 +111,29 @@ struct ChatHeaderView: View {
             return "\(names[0]) and \(names.count - 1) others are typing"
         }
     }
+
+    private var resolvedRoomTitle: String {
+        if let overrideTitle = config?.chatHeaderSettings?.roomTitleOverrides?[room.jid] {
+            return overrideTitle
+        }
+        if let bareJID = room.jid.components(separatedBy: "/").first,
+           let overrideTitle = config?.chatHeaderSettings?.roomTitleOverrides?[bareJID] {
+            return overrideTitle
+        }
+        return room.title
+    }
     
     var body: some View {
+        let primaryColor = config?.colors?.primaryColor ?? .blue
         HStack {
-            Button(action: onBack) {
-                Image(systemName: "chevron.left")
-                    .font(.system(size: 20, weight: .semibold))
-                    .foregroundColor(.blue)
+            if config?.chatHeaderSettings?.backButtonDisabled != true {
+                Button(action: onBack) {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundColor(primaryColor)
+                }
+                .padding(.trailing, 8)
             }
-            .padding(.trailing, 8)
             
             if let icon = room.icon, let url = URL(string: icon) {
                 AsyncImage(url: url) { image in
@@ -134,7 +151,7 @@ struct ChatHeaderView: View {
             Spacer()
             
             VStack(alignment: .center, spacing: 4) {
-                Text(room.title)
+                Text(resolvedRoomTitle)
                     .font(.headline)
                 
                 if isTyping && !typingUserNames.isEmpty {
@@ -154,11 +171,11 @@ struct ChatHeaderView: View {
             
             Spacer()
             
-            if let onInfo = onInfo {
+            if config?.chatHeaderSettings?.chatInfoButtonDisabled != true, let onInfo = onInfo {
                 Button(action: onInfo) {
                     Image(systemName: "info.circle")
                         .font(.title3)
-                        .foregroundColor(.blue)
+                        .foregroundColor(primaryColor)
                 }
             }
         }
@@ -228,21 +245,4 @@ struct HeaderTypingDotsView: View {
             }
         }
     }
-}
-
-// Helper functions (copies from original file)
-private func chatSeparatorColor() -> Color {
-    #if os(iOS)
-    return Color(uiColor: .separator)
-    #else
-    return Color(NSColor.separatorColor)
-    #endif
-}
-
-private func onePixel() -> CGFloat {
-    #if os(iOS)
-    return 1.0 / UIScreen.main.scale
-    #else
-    return 1.0
-    #endif
 }

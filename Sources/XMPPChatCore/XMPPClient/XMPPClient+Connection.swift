@@ -50,7 +50,7 @@ extension XMPPClient {
             // Initialize XMPP stream
             xmppStream = XMPPStream(service: url)
             xmppStream?.delegate = self
-            xmppStream?.login(username: username, password: password)
+            xmppStream?.connect(username: username, password: password, resource: resource)
             
             attachEventListeners()
             

@@ -61,6 +61,9 @@ public class ConfigStore: ObservableObject {
         if let baseUrl = partialConfig.baseUrl {
             config.baseUrl = baseUrl
         }
+        if let appId = partialConfig.appId {
+            config.appId = appId
+        }
         if let customAppToken = partialConfig.customAppToken {
             config.customAppToken = customAppToken
         }
@@ -193,9 +196,12 @@ public class ConfigStore: ObservableObject {
     
     /// Save configuration to UserDefaults
     private func saveConfig() {
-        // Note: Only save codable properties
-        // Closures and functions cannot be saved
-        // They should be set at runtime
+        do {
+            let data = try JSONEncoder().encode(config)
+            userDefaults.set(data, forKey: configKey)
+        } catch {
+            // Ignore persistence failures for non-critical runtime state.
+        }
     }
     
     /// Reset to default configuration
@@ -211,7 +217,7 @@ extension ChatConfig: Codable {
     enum CodingKeys: String, CodingKey {
         case disableHeader, disableMedia, colors
         case googleLogin, jwtLogin, userLogin
-        case baseUrl, customAppToken, xmppSettings
+        case baseUrl, appId, customAppToken, xmppSettings
         case disableRooms, defaultLogin, disableInteractions
         case chatHeaderBurgerMenu, forceSetRoom, setRoomJidInPath
         case disableRoomMenu, disableRoomConfig, disableNewChatButton
@@ -234,6 +240,7 @@ extension ChatConfig: Codable {
         self.jwtLogin = try container.decodeIfPresent(JWTLoginConfig.self, forKey: .jwtLogin)
         self.userLogin = try container.decodeIfPresent(UserLoginConfig.self, forKey: .userLogin)
         self.baseUrl = try container.decodeIfPresent(String.self, forKey: .baseUrl)
+        self.appId = try container.decodeIfPresent(String.self, forKey: .appId)
         self.customAppToken = try container.decodeIfPresent(String.self, forKey: .customAppToken)
         self.xmppSettings = try container.decodeIfPresent(XMPPSettings.self, forKey: .xmppSettings)
         self.disableRooms = try container.decodeIfPresent(Bool.self, forKey: .disableRooms)
@@ -292,6 +299,7 @@ extension ChatConfig: Codable {
         try container.encodeIfPresent(jwtLogin, forKey: .jwtLogin)
         try container.encodeIfPresent(userLogin, forKey: .userLogin)
         try container.encodeIfPresent(baseUrl, forKey: .baseUrl)
+        try container.encodeIfPresent(appId, forKey: .appId)
         try container.encodeIfPresent(customAppToken, forKey: .customAppToken)
         try container.encodeIfPresent(xmppSettings, forKey: .xmppSettings)
         try container.encodeIfPresent(disableRooms, forKey: .disableRooms)

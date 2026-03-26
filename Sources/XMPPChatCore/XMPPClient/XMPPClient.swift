@@ -27,8 +27,8 @@ public class XMPPClient {
     internal var password: String
     internal var resource: String = "default"
     
-    public private(set) var status: ConnectionStatus = .offline
-    public private(set) var presencesReady: Bool = false
+    public internal(set) var status: ConnectionStatus = .offline
+    public internal(set) var presencesReady: Bool = false
     
     // Reconnection
     internal var reconnectAttempts: Int = 0
@@ -37,7 +37,7 @@ public class XMPPClient {
     internal var reconnecting: Bool = false
     internal var reconnectTimer: Timer?
     internal var offlineReconnectAttempts: Int = 0
-    private let maxOfflineReconnectAttempts: Int = 10
+    internal let maxOfflineReconnectAttempts: Int = 10
     internal let reconnectBaseDelayMs: TimeInterval = 1.0
     internal var pausedDueToOfflineCap: Bool = false
     
@@ -142,13 +142,13 @@ public class XMPPClient {
     // Extracted to XMPPClient+Pings.swift
     
     // MARK: - Helper Methods
-    private func isBrowserOnline() -> Bool {
+    internal func isBrowserOnline() -> Bool {
         // On iOS, check network reachability
         // This is a simplified version
         return true
     }
     
-    private func logStep(_ step: String) {
+    internal func logStep(_ step: String) {
         let timestamp = Int64(Date().timeIntervalSince1970 * 1000)
         connectionSteps.append(ConnectionStep(timestamp: timestamp, step: step))
         if connectionSteps.count > 200 {
@@ -165,13 +165,8 @@ public class XMPPClient {
     // MARK: - Adaptive Ping
     // Extracted to XMPPClient+Pings.swift
     
-}
-
-// MARK: - XMPPStreamDelegate
-// Extracted to XMPPClient+Stream.swift
-    
-    // MARK: - Stanza Handling
-    // Extracted to XMPPClient+Handlers.swift
+    public var operations: XMPPOperations {
+        XMPPOperations(client: self)
     }
 }
 
@@ -184,4 +179,3 @@ public enum XMPPError: Error {
     case invalidStanza
     case sendFailed
 }
-

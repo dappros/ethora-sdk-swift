@@ -26,10 +26,7 @@ extension RoomsAPI {
             method: "GET",
             baseURL: baseURL,
             appId: appId,
-            didRefresh: didRefresh,
-            retryHandler: { refreshed in
-                try await getRooms(baseURL: baseURL, appId: appId, conferenceDomain: conferenceDomain, didRefresh: refreshed)
-            }
+            didRefresh: didRefresh
         )
         return response.items.map { Room(apiRoom: $0, conferenceDomain: conferenceDomain) }
     }
@@ -76,19 +73,7 @@ extension RoomsAPI {
             body: body,
             baseURL: baseURL,
             appId: appId,
-            didRefresh: didRefresh,
-            retryHandler: { refreshed in
-                try await postRoom(
-                    title: title,
-                    type: type,
-                    description: description,
-                    picture: picture,
-                    members: members,
-                    baseURL: baseURL,
-                    appId: appId,
-                    didRefresh: refreshed
-                )
-            }
+            didRefresh: didRefresh
         )
         return response.result
     }
@@ -122,16 +107,7 @@ extension RoomsAPI {
             body: body,
             baseURL: baseURL,
             appId: appId,
-            didRefresh: didRefresh,
-            retryHandler: { refreshed in
-                try await postPrivateRoom(
-                    username: username,
-                    title: title,
-                    baseURL: baseURL,
-                    appId: appId,
-                    didRefresh: refreshed
-                )
-            }
+            didRefresh: didRefresh
         )
         return response.result
     }
@@ -153,10 +129,7 @@ extension RoomsAPI {
             method: "GET",
             baseURL: baseURL,
             appId: appId,
-            didRefresh: didRefresh,
-            retryHandler: { refreshed in
-                try await getRoomByName(chatName: chatName, baseURL: baseURL, appId: appId, didRefresh: refreshed)
-            }
+            didRefresh: didRefresh
         )
     }
 }

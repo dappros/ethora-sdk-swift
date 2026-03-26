@@ -86,7 +86,57 @@ extension XMPPClient {
         return try await fn()
     }
 
-    // MARK: - Presence Operations
+    // MARK: - Public Presence API
+    
+    /// Send global `<presence/>` stanza to XMPP server (announce online).
+    /// Called automatically after auth, but can be called manually
+    /// when integrating ChatCore without ChatUI.
+    public func sendGlobalPresence() {
+        guard let stream = xmppStream, status == .online else {
+            print("[XMPPClient] sendGlobalPresence SKIPPED — stream: \(xmppStream != nil), status: \(status.rawValue)")
+            return
+        }
+        let stanza = XMPPStanza(name: "presence")
+        stream.send(stanza)
+        print("[XMPPClient] sendGlobalPresence OK — <presence/> sent")
+    }
+    
+    /// Send MUC presence to a single room so the user becomes an occupant.
+    /// Must be called before `sendTextMessage` / `sendGetHistory` for that room.
+    public func sendPresenceToRoom(roomJID: String) async {
+        await self.operations.presenceInRoom(roomJID: roomJID)
+    }
+    
+    /// One-shot helper for ChatCore-only integrations:
+    /// ensures connection is online, sends global presence, joins rooms,
+    /// and waits for room presence acknowledgements.
+    /// - Returns: List of rooms that still did not return presence ack.
+    @discardableResult
+    public func joinRoomsAndWait(roomJIDs: [String], timeout: TimeInterval = 3.5) async -> [String] {
+        guard !roomJIDs.isEmpty else { return [] }
+        print("[XMPPClient] joinRoomsAndWait START — rooms.count=\(roomJIDs.count), timeout=\(timeout)s")
+        
+        do {
+            try await ensureConnected(timeout: max(1.0, timeout))
+            print("[XMPPClient] joinRoomsAndWait connected, status=\(status.rawValue)")
+        } catch {
+            print("[XMPPClient] joinRoomsAndWait: not connected (\(error))")
+            return roomJIDs
+        }
+        
+        sendGlobalPresence()
+        await sendPresenceToAllRooms(roomJIDs: roomJIDs)
+        
+        let unresolved = await waitForRoomPresenceResponses(roomJIDs: roomJIDs, timeout: timeout)
+        if !unresolved.isEmpty {
+            print("[XMPPClient] joinRoomsAndWait unresolved rooms: \(unresolved.joined(separator: ", "))")
+        } else {
+            print("[XMPPClient] joinRoomsAndWait COMPLETE — all rooms acknowledged")
+        }
+        return unresolved
+    }
+    
+    // MARK: - Internal Presence
     internal func sendAllPresencesAndMarkReady() async {
         presencesReady = false
         
@@ -105,8 +155,48 @@ extension XMPPClient {
     // Public method to send presence to all rooms (called after rooms are loaded)
     // In Swift, we pass roomJIDs after loading from API
     public func sendPresenceToAllRooms(roomJIDs: [String]) async {
-        // This calls allRoomPresences which internally calls presenceInRoom for each room
-        await operations.allRoomPresences(roomJIDs: roomJIDs)
+        print("[XMPPClient] sendPresenceToAllRooms START — rooms.count=\(roomJIDs.count)")
+        if !roomJIDs.isEmpty {
+            print("[XMPPClient] roomJIDs=\(roomJIDs.joined(separator: ", "))")
+        }
+        
+        // First attempt: send presence to each room.
+        await self.operations.allRoomPresences(roomJIDs: roomJIDs)
+        
+        // Wait for server presence echoes/acks to reduce race with first history/send calls.
+        var pending = await waitForRoomPresenceResponses(roomJIDs: roomJIDs, timeout: 2.0)
+        print("[XMPPClient] sendPresenceToAllRooms first wait pending=\(pending.count)")
+        
+        // Retry missing rooms once, then wait again briefly.
+        if !pending.isEmpty {
+            print("[XMPPClient] Retrying presence for pending rooms: \(pending.joined(separator: ", "))")
+            await self.operations.allRoomPresences(roomJIDs: pending)
+            pending = await waitForRoomPresenceResponses(roomJIDs: pending, timeout: 1.5)
+            print("[XMPPClient] sendPresenceToAllRooms second wait pending=\(pending.count)")
+        }
+        
+        if !pending.isEmpty {
+            print("[XMPPClient] Presence ack timeout for rooms: \(pending.joined(separator: ", "))")
+        } else {
+            print("[XMPPClient] sendPresenceToAllRooms COMPLETE — all rooms acknowledged")
+        }
+    }
+    
+    internal func waitForRoomPresenceResponses(roomJIDs: [String], timeout: TimeInterval) async -> [String] {
+        let normalized = roomJIDs.map { $0.components(separatedBy: "/").first ?? $0 }
+        let start = Date()
+        print("[XMPPClient] waitForRoomPresenceResponses START — timeout=\(timeout)s")
+        while Date().timeIntervalSince(start) < timeout {
+            let missing = normalized.filter { !hasPresenceResponseForRoom($0) }
+            if missing.isEmpty {
+                print("[XMPPClient] waitForRoomPresenceResponses COMPLETE — no missing rooms")
+                return []
+            }
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+        let unresolved = normalized.filter { !hasPresenceResponseForRoom($0) }
+        print("[XMPPClient] waitForRoomPresenceResponses TIMEOUT — unresolved=\(unresolved.joined(separator: ", "))")
+        return unresolved
     }
     
     // MARK: - Wrapper Methods

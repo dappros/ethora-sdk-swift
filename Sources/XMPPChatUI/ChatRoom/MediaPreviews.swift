@@ -86,6 +86,8 @@ struct ImagePreview: View {
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .lineLimit(1)
+                    .truncationMode(.middle)
+                    .frame(maxWidth: chatBubbleMaxWidth() - 24, alignment: .leading)
             }
         }
     }
@@ -129,6 +131,8 @@ struct VideoPreview: View {
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .lineLimit(1)
+                    .truncationMode(.middle)
+                    .frame(maxWidth: chatBubbleMaxWidth() - 24, alignment: .leading)
             }
         }
     }
@@ -151,6 +155,8 @@ struct PDFPreview: View {
                         .font(.subheadline)
                         .foregroundColor(.primary)
                         .lineLimit(1)
+                        .truncationMode(.middle)
+                        .frame(maxWidth: chatBubbleMaxWidth() - 160, alignment: .leading)
                     if let size = size {
                         Text(formatFileSize(size))
                             .font(.caption)
@@ -214,6 +220,8 @@ struct FilePreview: View {
                         .font(.subheadline)
                         .foregroundColor(.primary)
                         .lineLimit(1)
+                        .truncationMode(.middle)
+                        .frame(maxWidth: chatBubbleMaxWidth() - 160, alignment: .leading)
                     if let size = size {
                         Text(formatFileSize(size))
                             .font(.caption)

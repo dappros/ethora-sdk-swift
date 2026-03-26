@@ -11,7 +11,7 @@ extension XMPPStream_WebSocket {
     // RFC 7395: XMPP over WebSocket uses <open> element, not <stream:stream>
     // However, @xmpp/client might use stream:stream format - let's try both approaches
     internal func sendInitialStreamHeader() {
-        guard let host = url.host, let username = username else {
+        guard let host = url.host else {
             //NSlog("❌ Cannot send stream header - missing host or username")
             return
         }
@@ -32,10 +32,7 @@ extension XMPPStream_WebSocket {
         //print("   To: \(host)")
         
         // Write to socket
-        socket?.write(string: openHeader) { [weak self] in
-            //NSlog("✅ Open header written to WebSocket")
-            //print("✅ Open header written to WebSocket")
-        }
+        socket?.write(string: openHeader)
     }
 
     // Send SASL authentication
@@ -68,8 +65,6 @@ extension XMPPStream_WebSocket {
     
     // Send resource bind request
     internal func sendResourceBind() {
-        guard let username = username else { return }
-        
         let bindId = "bind-\(UUID().uuidString)"
         let bindIQ = "<iq type='set' id='\(bindId)'><bind xmlns='urn:ietf:params:xml:ns:xmpp-bind'><resource>\(resource)</resource></bind></iq>"
         
