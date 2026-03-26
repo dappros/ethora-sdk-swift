@@ -195,5 +195,11 @@ extension XMPPClient {
                 ]
             )
         }
+        
+        // Mark room presence acknowledgements from server.
+        handlers.onPresenceInRoom = { [weak self] (roomJID: String, _) in
+            guard let self = self, !roomJID.isEmpty else { return }
+            self.markPresenceResponseReceived(for: roomJID)
+        }
     }
 }

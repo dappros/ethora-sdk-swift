@@ -22,12 +22,14 @@ extension XMPPOperations {
         // Extract bare JID (without resource) for comparison
         let bareRoomJID = roomJID.components(separatedBy: "/").first ?? roomJID
         if client?.hasPresenceResponseForRoom(bareRoomJID) == true {
-            //print("⏭️ Skipping presence send to room '\(bareRoomJID)' - already received response")
+            print("⏭️ [XMPP] Skipping room presence (already acknowledged): \(bareRoomJID)")
             return
         }
         
-        // Backend expects explicit "/my" resource for room presence joins.
-        let toJID = "\(bareRoomJID)/my"
+        // Use a stable nickname derived from bare JID (no resource slash).
+        // Some MUC servers require occupant nick to match user identity.
+        let nick = jid.components(separatedBy: "/").first ?? jid
+        let toJID = "\(bareRoomJID)/\(nick)"
         
         let presenceStanza = XMPPStanza(
             name: "presence",
@@ -50,9 +52,12 @@ extension XMPPOperations {
             try? await Task.sleep(nanoseconds: UInt64(settleDelay * 1_000_000_000))
         }
         
+        print("📤 [XMPP] Sending room presence")
+        print("   from: \(jid)")
+        print("   to:   \(toJID)")
+        print("   id:   presenceInRoom")
         stream.send(presenceStanza)
-        //NSlog("📤 Sent presence to room: %@", toJID)
-        //print("📤 Sent presence to room: \(toJID)")
+        print("✅ [XMPP] Room presence stanza sent")
     }
     
     /// Send presence to all rooms (allRoomPresences from TypeScript)
