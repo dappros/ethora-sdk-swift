@@ -45,6 +45,17 @@ public class StanzaHandlers {
     
     /// Handle real-time messages (onRealtimeMessage from TypeScript)
     public func onRealtimeMessage(_ stanza: XMPPStanza) {
+        guard stanza.name == "message" else {
+            return
+        }
+        
+        // Error stanzas must not be treated as regular incoming messages.
+        if stanza.attributes["type"] == "error" {
+            let roomJID = stanza.attributes["from"]?.components(separatedBy: "/").first ?? ""
+            onMessageError?(roomJID)
+            return
+        }
+        
         print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
         print("🔵 StanzaHandlers.onRealtimeMessage: START")
         print("   Stanza from: '\(stanza.attributes["from"] ?? "nil")'")
@@ -239,14 +250,20 @@ public class StanzaHandlers {
     
     /// Handle presence in room (onPresenceInRoom from TypeScript)
     public func onPresenceInRoom(_ stanza: XMPPStanza) {
-        guard stanza.attributes["id"] == "presenceInRoom",
+        guard stanza.name == "presence",
               stanza.getChild("error") == nil else {
             return
         }
         
         let from = stanza.attributes["from"] ?? ""
         let roomJID = from.components(separatedBy: "/").first ?? ""
+        guard !roomJID.isEmpty else { return }
+        
+        // Accept both explicit id-based responses and standard MUC presence echoes.
+        let hasPresenceId = stanza.attributes["id"] == "presenceInRoom"
         let role = stanza.getChild("x")?.getChild("item")?.attributes["role"] ?? ""
+        let looksLikeMucPresence = !role.isEmpty || roomJID.contains("@conference.")
+        guard hasPresenceId || looksLikeMucPresence else { return }
         onPresenceInRoom?(roomJID, role)
     }
     

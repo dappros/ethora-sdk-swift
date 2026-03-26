@@ -192,6 +192,14 @@ extension XMPPClient: XMPPStreamDelegate {
         
         // Also notify delegate
         delegate?.xmppClient(self, didReceiveStanza: stanza)
+
+        // For debug/feature code that needs to await IQ result stanzas (e.g. MUC Sub subscribe).
+        // This keeps subscription logic decoupled from the concrete stanza handlers.
+        NotificationCenter.default.post(
+            name: NSNotification.Name("XMPPStanzaReceived"),
+            object: self,
+            userInfo: ["stanza": stanza]
+        )
     }
     
     public func xmppStream(_ stream: XMPPStream, didSendStanza stanza: XMPPStanza) {
