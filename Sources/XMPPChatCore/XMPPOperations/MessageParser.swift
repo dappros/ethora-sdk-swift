@@ -72,6 +72,7 @@ public final class MessageParser {
         }
 
         let xmppId = fullData.attributes["id"]
+        let originId = fullData.getChild("origin-id")?.attributes["id"]
         let xmppFrom = fullData.attributes["from"] ?? ""
 
         let fromParts = xmppFrom.split(separator: "/").map(String.init)
@@ -92,7 +93,7 @@ public final class MessageParser {
             }
         }
 
-        let finalId = id ?? xmppId ?? "\(Int64(Date().timeIntervalSince1970 * 1000))"
+        let finalId = id ?? xmppId ?? originId ?? "\(Int64(Date().timeIntervalSince1970 * 1000))"
 
         let body = fullData.getChild("body")?.text
         let deleted = (fullData.getChild("deleted") != nil)
@@ -144,7 +145,8 @@ public final class MessageParser {
             deleted: deleted,
             translations: translations,
             langSource: langSource,
-            xmppId: xmppId,
+            // Prefer origin-id when present to match local optimistic customId.
+            xmppId: originId ?? xmppId,
             xmppFrom: xmppFrom
         )
     }

@@ -8,6 +8,11 @@ import XMPPChatCore
 
 extension ChatRoomViewModel {
     public func handleIncomingMessage(_ message: Message) {
+        // Strict delivery confirmation policy:
+        // Mark message as sent ONLY when message is not optimistic and has server origin.
+        let hasServerOrigin = !(message.xmppFrom ?? "").isEmpty
+        let isServerConfirmedMessage = (message.pending != true) && hasServerOrigin
+
         print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
         print("🔵 ChatRoomViewModel.handleIncomingMessage: START")
         print("   Message ID: '\(message.id)'")
@@ -177,7 +182,7 @@ extension ChatRoomViewModel {
                 locationPreview: message.locationPreview ?? existingMessage.locationPreview,
                 mimetype: message.mimetype ?? existingMessage.mimetype,
                 location: message.location ?? existingMessage.location,
-                pending: false,
+                pending: isServerConfirmedMessage ? false : existingMessage.pending,
                 timestamp: message.timestamp ?? existingMessage.timestamp,
                 showInChannel: message.showInChannel ?? existingMessage.showInChannel,
                 activeMessage: message.activeMessage ?? existingMessage.activeMessage,
@@ -276,68 +281,7 @@ extension ChatRoomViewModel {
         print("   isFromCurrentUser: \(isFromCurrentUser)")
         
         if isFromCurrentUser {
-            print("🔍 ChatRoomViewModel.handleIncomingMessage: Message is from current user - checking for pending messages with same body")
-            let pendingIndices = messages.enumerated().compactMap { index, msg -> Int? in
-                guard msg.pending == true else { return nil }
-                guard msg.body == message.body else { return nil }
-                
-                let msgIsFromCurrentUser = msg.user.id == currentUserId || 
-                                          msg.user.xmppUsername == currentUserId ||
-                                          msg.user.id == message.user.id ||
-                                          msg.user.xmppUsername == message.user.xmppUsername
-                
-                return msgIsFromCurrentUser ? index : nil
-            }
-            
-            if let pendingIndex = pendingIndices.first {
-                print("✅ ChatRoomViewModel.handleIncomingMessage: Replacing pending message at index \(pendingIndex)")
-                let pendingMessage = messages[pendingIndex]
-                let updatedMessage = Message(
-                    id: message.id,
-                    user: message.user,
-                    date: message.date,
-                    body: message.body,
-                    roomJid: message.roomJid,
-                    key: message.key ?? pendingMessage.key,
-                    coinsInMessage: message.coinsInMessage ?? pendingMessage.coinsInMessage,
-                    numberOfReplies: message.numberOfReplies ?? pendingMessage.numberOfReplies,
-                    isSystemMessage: message.isSystemMessage ?? pendingMessage.isSystemMessage,
-                    isMediafile: message.isMediafile ?? pendingMessage.isMediafile,
-                    locationPreview: message.locationPreview ?? pendingMessage.locationPreview,
-                    mimetype: message.mimetype ?? pendingMessage.mimetype,
-                    location: message.location ?? pendingMessage.location,
-                    pending: false,
-                    timestamp: message.timestamp ?? pendingMessage.timestamp,
-                    showInChannel: message.showInChannel ?? pendingMessage.showInChannel,
-                    activeMessage: message.activeMessage ?? pendingMessage.activeMessage,
-                    isReply: message.isReply ?? pendingMessage.isReply,
-                    isDeleted: message.isDeleted ?? pendingMessage.isDeleted,
-                    mainMessage: message.mainMessage ?? pendingMessage.mainMessage,
-                    reply: message.reply ?? pendingMessage.reply,
-                    reaction: message.reaction ?? pendingMessage.reaction,
-                    fileName: message.fileName ?? pendingMessage.fileName,
-                    translations: message.translations ?? pendingMessage.translations,
-                    langSource: message.langSource ?? pendingMessage.langSource,
-                    originalName: message.originalName ?? pendingMessage.originalName,
-                    size: message.size ?? pendingMessage.size,
-                    xmppId: message.xmppId ?? pendingMessage.xmppId,
-                    xmppFrom: message.xmppFrom ?? pendingMessage.xmppFrom,
-                    waveForm: message.waveForm ?? pendingMessage.waveForm
-                )
-                messages[pendingIndex] = updatedMessage
-                
-                if pendingIndices.count > 1 {
-                    for index in pendingIndices.dropFirst().reversed() {
-                        messages.remove(at: index)
-                    }
-                }
-                
-                room.messages = messages
-                
-                MessageCache.shared.saveMessages(messages, forRoomJID: room.jid)
-                
-                return
-            }
+            print("🔍 ChatRoomViewModel.handleIncomingMessage: Strict mode ON - no pending match by body")
         }
         
         let shouldInsertDelimiter = !messages.contains(where: { $0.id == "delimiter-new" }) &&
@@ -396,7 +340,7 @@ extension ChatRoomViewModel {
                     locationPreview: message.locationPreview ?? existingMessage.locationPreview,
                     mimetype: message.mimetype ?? existingMessage.mimetype,
                     location: message.location ?? existingMessage.location,
-                    pending: false,
+                    pending: isServerConfirmedMessage ? false : existingMessage.pending,
                     timestamp: message.timestamp ?? existingMessage.timestamp,
                     showInChannel: message.showInChannel ?? existingMessage.showInChannel,
                     activeMessage: message.activeMessage ?? existingMessage.activeMessage,

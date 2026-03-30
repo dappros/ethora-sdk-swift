@@ -567,7 +567,7 @@ public class RoomListViewModel: ObservableObject {
         self.config = config
         self.appId = appId ?? config?.appId ?? AppConfig.defaultAppId
         self.apiBaseURL = URL(string: config?.baseUrl ?? "") ?? apiBaseURL
-        self.conferenceDomain = config?.xmppSettings?.conference ?? conferenceDomain
+        self.conferenceDomain = Self.normalizeConferenceDomain(config?.xmppSettings?.conference ?? conferenceDomain)
         
         // Initialize message loader queue
         let queue = MessageLoaderQueue(client: client)
@@ -581,6 +581,27 @@ public class RoomListViewModel: ObservableObject {
             self?.isLoading ?? false
         }
         self.messageLoaderQueue = queue
+
+        // Single-room mode from config (used in token-based integration flows).
+        if config?.disableRooms == true, let defaults = config?.defaultRooms, !defaults.isEmpty {
+            self.rooms = defaults.map { room in
+                var normalizedRoom = room
+                let bare = room.jid.components(separatedBy: "/").first ?? room.jid
+                if !bare.contains("@") {
+                    normalizedRoom = Room(
+                        id: room.id,
+                        jid: "\(bare)@\(self.conferenceDomain)",
+                        name: room.name,
+                        title: room.title,
+                        usersCnt: room.usersCnt,
+                        messages: room.messages,
+                        isLoading: room.isLoading
+                    )
+                }
+                RoomStore.shared.addRoom(normalizedRoom)
+                return normalizedRoom
+            }
+        }
         
         // Listen for room messages updates to continue loading if needed
         NotificationCenter.default.addObserver(
@@ -746,6 +767,16 @@ public class RoomListViewModel: ObservableObject {
         return jid.components(separatedBy: "/").first ?? jid
     }
 
+    private static func normalizeConferenceDomain(_ raw: String) -> String {
+        var value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if value.isEmpty { return "conference.xmpp.ethoradev.com" }
+        value = value.replacingOccurrences(of: "conferenceconference.", with: "conference.")
+        value = value.replacingOccurrences(of: "conferenceconference", with: "conference.")
+        if value.hasPrefix("conference.") { return value }
+        // If host was passed instead of conference domain, prepend "conference."
+        return "conference.\(value)"
+    }
+
     private func updateUnreadCountIfNeeded(for roomIndex: Int) {
         let room = rooms[roomIndex]
         let roomJIDKey = normalizeRoomJID(room.jid)
@@ -815,7 +846,22 @@ public class RoomListViewModel: ObservableObject {
                 self.isLoading = false
                 return
             }
-            
+
+            // Single-room mode: skip /chats/my and use config.defaultRooms.
+            if self.config?.disableRooms == true, let defaults = self.config?.defaultRooms, !defaults.isEmpty {
+                self.rooms = defaults
+                self.isLoading = false
+                let roomJIDs = defaults.map { room -> String in
+                    let bare = room.jid.components(separatedBy: "/").first ?? room.jid
+                    return bare.contains("@") ? bare : "\(bare)@\(self.conferenceDomain)"
+                }
+                await client.sendPresenceToAllRooms(roomJIDs: roomJIDs)
+                if client.checkOnline() {
+                    messageLoaderQueue?.reset()
+                    messageLoaderQueue?.start()
+                }
+                return
+            }
             
             do {
                 // RoomsAPI now uses UserStore automatically
