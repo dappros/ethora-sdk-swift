@@ -9,9 +9,13 @@ import SwiftUI
 import Combine
 import XMPPChatCore
 import XMPPChatUI
+import FirebaseMessaging
 
 @main
 struct ChatAppExampleApp: App {
+    #if os(iOS)
+    @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+    #endif
     @StateObject private var appState = AppState()
     
     var body: some Scene {
@@ -143,7 +147,17 @@ class AppState: ObservableObject {
 
 extension AppState: XMPPClientDelegate {
     func xmppClientDidConnect(_ client: XMPPClient) {
-        //print("✅ XMPP Client connected")
+        Messaging.messaging().token { token, error in
+            guard let token = token else {
+                if let error = error {
+                    print("[Push] Failed to get FCM token: \(error)")
+                }
+                return
+            }
+            Task { @MainActor in
+                PushNotificationManager.shared.configure(fcmToken: token, client: client)
+            }
+        }
     }
     
     func xmppClientDidDisconnect(_ client: XMPPClient) {
