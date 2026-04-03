@@ -192,14 +192,20 @@ public class ChatWrapperViewModel: ObservableObject {
             return
         }
         
-        let xmppUsername: String
-        if let username = user.xmppUsername, !username.isEmpty {
-            xmppUsername = username
-        } else if let wallet = user.walletAddress, !wallet.isEmpty {
-            xmppUsername = wallet
-        } else {
-            xmppUsername = user.email ?? ""
-        }
+        let xmppHost = (config.xmppSettings?.host ?? ConfigStore.shared.config.xmppSettings?.host ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let xmppUsername: String = {
+            if let username = user.xmppUsername?.trimmingCharacters(in: .whitespacesAndNewlines), !username.isEmpty {
+                let local = username.components(separatedBy: "@").first ?? username
+                return xmppHost.isEmpty ? local : "\(local)@\(xmppHost)"
+            }
+            if let wallet = user.walletAddress, !wallet.isEmpty {
+                let local = walletToUsername(wallet)
+                return xmppHost.isEmpty ? local : "\(local)@\(xmppHost)"
+            }
+            let local = (user.email ?? "").components(separatedBy: "@").first ?? (user.email ?? "")
+            return xmppHost.isEmpty ? local : "\(local)@\(xmppHost)"
+        }()
         
         guard !xmppUsername.isEmpty else {
             await MainActor.run {
@@ -266,6 +272,12 @@ public class ChatWrapperViewModel: ObservableObject {
             self.loadingText = nil
             // Connection might still flap later – `isConnectionLost` is driven by ConnectionManager.
         }
+
+        // FCM backend + MUC push subscriptions need the live XMPP client (RN: after user + client ready).
+        await MainActor.run {
+            PushNotificationManager.shared.attachClient(activeClient)
+        }
+        await PushNotificationManager.shared.refreshRoomPushSubscriptions()
     }
     
     // MARK: - Helpers

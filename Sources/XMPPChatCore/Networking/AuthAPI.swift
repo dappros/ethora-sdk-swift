@@ -80,7 +80,7 @@ public struct AuthAPI {
         email: String,
         password: String,
         baseURL: URL = URL(string: "https://api.ethoradev.com/v1")!,
-        appToken: String? = nil
+        appToken: String = AppConfig.appToken
     ) async throws -> LoginResponse {
         // FORCE VISIBLE LOGGING - This MUST appear in Xcode console
         //NSlog("🔥🔥🔥 AUTHAPI.LOGINWITHEMAIL CALLED 🔥🔥🔥")
@@ -92,13 +92,9 @@ public struct AuthAPI {
         //print("🌐 AuthAPI.loginWithEmail: URL = \(url.absoluteString)")
         //print("📧 AuthAPI.loginWithEmail: email = \(email)")
         
-        let resolvedAppToken = await MainActor.run {
-            appToken ?? ConfigStore.shared.config.customAppToken ?? AppConfig.appToken
-        }
-
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.setValue(resolvedAppToken, forHTTPHeaderField: "Authorization")
+        request.setValue(appToken, forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         
@@ -228,17 +224,14 @@ public struct AuthAPI {
     public static func refreshToken(
         refreshToken: String,
         baseURL: URL = URL(string: "https://api.ethoradev.com/v1")!,
-        appToken: String? = nil
+        appToken: String = AppConfig.appToken
     ) async throws -> (token: String, refreshToken: String) {
         let url = baseURL.appendingPathComponent("users/login/refresh")
         //print("🌐 AuthAPI.refreshToken: URL = \(url.absoluteString)")
-        let resolvedAppToken = await MainActor.run {
-            appToken ?? ConfigStore.shared.config.customAppToken ?? AppConfig.appToken
-        }
         
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.setValue(resolvedAppToken, forHTTPHeaderField: "Authorization")
+        request.setValue(appToken, forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         
@@ -413,17 +406,14 @@ public struct AuthAPI {
     public static func checkEmailExist(
         email: String,
         baseURL: URL = URL(string: "https://api.ethoradev.com/v1")!,
-        appToken: String? = nil
+        appToken: String = AppConfig.appToken
     ) async throws -> Bool {
         let url = baseURL.appendingPathComponent("users/checkEmail/\(email)")
         //print("🌐 AuthAPI.checkEmailExist: URL = \(url.absoluteString)")
-        let resolvedAppToken = await MainActor.run {
-            appToken ?? ConfigStore.shared.config.customAppToken ?? AppConfig.appToken
-        }
         
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
-        request.setValue(resolvedAppToken, forHTTPHeaderField: "Authorization")
+        request.setValue(appToken, forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         
@@ -579,3 +569,4 @@ public enum AuthAPIError: Error, LocalizedError {
         }
     }
 }
+

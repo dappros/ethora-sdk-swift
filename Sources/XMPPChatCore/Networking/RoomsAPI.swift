@@ -29,12 +29,12 @@ public struct RoomsAPI {
             throw RoomsAPIError.networkError("No user token available. Please login first.")
         }
         
-        let appIdToUse = appId ?? AppConfig.defaultAppId
-        
         var request = URLRequest(url: url)
         request.httpMethod = method
         request.setValue(token, forHTTPHeaderField: "Authorization")
-        request.setValue(appIdToUse, forHTTPHeaderField: "x-app-id")
+        if let appId = appId, !appId.isEmpty {
+            request.setValue(appId, forHTTPHeaderField: "x-app-id")
+        }
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         

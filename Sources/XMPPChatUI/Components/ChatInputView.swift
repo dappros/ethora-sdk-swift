@@ -102,22 +102,6 @@ struct DefaultChatInputView: View {
     #endif
     @FocusState private var isFocused: Bool
     
-    private var inputBackground: Color {
-        #if os(iOS)
-        return Color(uiColor: .secondarySystemBackground)
-        #else
-        return Color(NSColor.controlBackgroundColor)
-        #endif
-    }
-    
-    private var iconBackground: Color {
-        #if os(iOS)
-        return Color(uiColor: .systemBackground)
-        #else
-        return Color(NSColor.windowBackgroundColor)
-        #endif
-    }
-    
     var body: some View {
         VStack(spacing: 0) {
             // Media Preview
@@ -142,6 +126,7 @@ struct DefaultChatInputView: View {
                     mediaData: mediaData,
                     mediaType: mediaType,
                     fileName: selectedMediaFileName,
+                    image: nil,
                     onCancel: {
                         selectedMediaData = nil
                         selectedMediaType = nil
@@ -168,13 +153,13 @@ struct DefaultChatInputView: View {
                     }) {
                         Image(systemName: "paperclip")
                             .font(.system(size: 20, weight: .medium))
-                            .foregroundColor(.primary)
+                            .foregroundColor(.black)
                             .frame(width: 40, height: 40)
-                            .background(iconBackground)
+                            .background(Color.white)
                             .clipShape(Circle())
                             .overlay(
                                 Circle()
-                                    .stroke(Color.secondary.opacity(0.3), lineWidth: 0.5)
+                                    .stroke(Color.gray.opacity(0.3), lineWidth: 0.5)
                             )
                     }
                 }
@@ -182,7 +167,7 @@ struct DefaultChatInputView: View {
                 ZStack(alignment: .leading) {
                     if messageText.isEmpty && selectedMediaData == nil {
                         Text(placeholderText)
-                            .foregroundColor(.secondary.opacity(0.6))
+                            .foregroundColor(.gray.opacity(0.6))
                             .padding(.horizontal, 16)
                     }
                     
@@ -197,13 +182,13 @@ struct DefaultChatInputView: View {
                     }
                     .padding(.horizontal, 16)
                     .padding(.vertical, 12)
-                    .foregroundColor(.primary)
+                    .foregroundColor(.black)
                 }
-                .background(inputBackground)
+                .background(Color.white)
                 .cornerRadius(20)
                 .overlay(
                     RoundedRectangle(cornerRadius: 20)
-                        .stroke(Color.secondary.opacity(0.3), lineWidth: 0.5)
+                        .stroke(Color.gray.opacity(0.3), lineWidth: 0.5)
                 )
                 .accentColor(.blue)
                 .focused($isFocused)
@@ -306,7 +291,6 @@ struct DefaultChatInputView: View {
     }
 }
 
-#if os(iOS)
 struct MediaPickerView: View {
     let onMediaSelected: (Data, String, String?) -> Void
     @Environment(\.dismiss) var dismiss
@@ -409,24 +393,6 @@ struct MediaPickerView: View {
         }
     }
 }
-#else
-struct MediaPickerView: View {
-    let onMediaSelected: (Data, String, String?) -> Void
-    @Environment(\.dismiss) var dismiss
-
-    var body: some View {
-        VStack(spacing: 12) {
-            Text("Media picker is available on iOS only")
-                .font(.subheadline)
-                .foregroundColor(.secondary)
-            Button("Close") {
-                dismiss()
-            }
-        }
-        .padding(24)
-    }
-}
-#endif
 
 // MARK: - Media Preview View
 struct MediaPreviewView: View {
@@ -439,14 +405,6 @@ struct MediaPreviewView: View {
     let image: Any? = nil
     #endif
     let onCancel: () -> Void
-
-    private var previewBackground: Color {
-        #if os(iOS)
-        return Color(uiColor: .secondarySystemBackground)
-        #else
-        return Color(NSColor.controlBackgroundColor)
-        #endif
-    }
     
     var body: some View {
         HStack(spacing: 12) {
@@ -507,11 +465,11 @@ struct MediaPreviewView: View {
             }
         }
         .padding(12)
-        .background(previewBackground)
+        .background(Color.white)
         .cornerRadius(12)
         .overlay(
             RoundedRectangle(cornerRadius: 12)
-                .stroke(Color.secondary.opacity(0.3), lineWidth: 0.5)
+                .stroke(Color.gray.opacity(0.3), lineWidth: 0.5)
         )
     }
     
@@ -597,7 +555,6 @@ func createTestPDF() -> Data? {
 // MARK: - Media Picker Presentation Modifier
 struct MediaPickerPresentationModifier: ViewModifier {
     func body(content: Content) -> some View {
-        #if os(iOS)
         if #available(iOS 16.0, *) {
             content
                 .presentationDetents([.fraction(0.2)])
@@ -605,8 +562,5 @@ struct MediaPickerPresentationModifier: ViewModifier {
         } else {
             content
         }
-        #else
-        content
-        #endif
     }
 }

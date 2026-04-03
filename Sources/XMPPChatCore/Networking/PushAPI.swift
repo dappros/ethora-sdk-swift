@@ -3,7 +3,7 @@
 //  XMPPChatCore
 //
 //  Push notification registration API
-//  Mirrors push/subscription/{appId}
+//  Mirrors RN/Kotlin push subscriptions flow
 //
 
 import Foundation
@@ -21,7 +21,7 @@ public struct PushAPI {
     }
 
     /// Register device push token
-    /// POST /push/subscription/{appId}
+    /// POST /push/subscriptions/{appId} (fallback: /push/subscription/{appId})
     /// - Parameters:
     ///   - registrationToken: FCM/APNs token
     ///   - deviceType: Platform identifier (ios/android/web)
@@ -45,12 +45,18 @@ public struct PushAPI {
         // Final appId: provided parameter > config.push.appId > AppConfig.defaultAppId
         let finalAppId = appId ?? config.push?.appId ?? AppConfig.defaultAppId
         
-        // Final pushBaseURL: provided parameter > config.push.pushBaseURL > AppConfig.defaultPushBaseURL
+        // Push registration lives on the main API (`…/v1/push/subscriptions/...`), same as RN — not a separate push host.
+        let apiBaseFromConfig: URL = {
+            if let s = config.baseUrl, let u = URL(string: s), !s.isEmpty { return u }
+            return AppConfig.defaultBaseURL
+        }()
+
+        // Final pushBaseURL: explicit override > config.push.pushBaseURL > Chat API baseUrl
         var finalPushBaseURL = pushBaseURL
-        if finalPushBaseURL == nil, let configURL = config.push?.pushBaseURL {
-            finalPushBaseURL = URL(string: configURL)
+        if finalPushBaseURL == nil, let configURL = config.push?.pushBaseURL, let u = URL(string: configURL) {
+            finalPushBaseURL = u
         }
-        let pushURL = finalPushBaseURL ?? AppConfig.defaultPushBaseURL
+        let pushURL = finalPushBaseURL ?? apiBaseFromConfig
         
         // Final authBaseURL: provided parameter > config.baseUrl > AppConfig.defaultBaseURL
         var finalAuthBaseURL = authBaseURL
@@ -66,28 +72,38 @@ public struct PushAPI {
             throw PushAPIError.networkError("No user token available. Please login first.")
         }
 
-        let url = pushURL
-            .appendingPathComponent("push")
-            .appendingPathComponent("subscription")
-            .appendingPathComponent(finalAppId)
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue(authorizationHeaderValue(userToken), forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-
         let body = PushSubscriptionBody(
             registrationToken: registrationToken,
             deviceType: deviceType.rawValue
         )
-
-        request.httpBody = try JSONEncoder().encode(body)
+        let bodyData = try JSONEncoder().encode(body)
+        let candidateURLs: [URL] = [
+            pushURL
+                .appendingPathComponent("push")
+                .appendingPathComponent("subscriptions")
+                .appendingPathComponent(finalAppId),
+            pushURL
+                .appendingPathComponent("push")
+                .appendingPathComponent("subscription")
+                .appendingPathComponent(finalAppId)
+        ]
 
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
+            var lastHTTPError: PushAPIError?
+            for url in candidateURLs {
+                print("[PushAPI] registering token at \(url.absoluteString)")
+                var request = URLRequest(url: url)
+                request.httpMethod = "POST"
+                request.setValue(authorizationHeaderValue(userToken), forHTTPHeaderField: "Authorization")
+                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                request.setValue("application/json", forHTTPHeaderField: "Accept")
+                request.httpBody = bodyData
 
-            if let httpResponse = response as? HTTPURLResponse {
+                let (data, response) = try await URLSession.shared.data(for: request)
+                guard let httpResponse = response as? HTTPURLResponse else {
+                    continue
+                }
+
                 if httpResponse.statusCode == 401 && !didRefresh {
                     let refreshToken = await MainActor.run { UserStore.shared.refreshToken }
 
@@ -119,10 +135,17 @@ public struct PushAPI {
                     }
                 }
 
-                if !(200..<300).contains(httpResponse.statusCode) {
-                    let errorBody = String(data: data, encoding: .utf8) ?? "<no body>"
-                    throw PushAPIError.httpError(httpResponse.statusCode, errorBody)
+                if (200..<300).contains(httpResponse.statusCode) {
+                    print("[PushAPI] registration success status=\(httpResponse.statusCode)")
+                    return
                 }
+
+                let errorBody = String(data: data, encoding: .utf8) ?? "<no body>"
+                lastHTTPError = .httpError(httpResponse.statusCode, errorBody)
+            }
+
+            if let lastHTTPError {
+                throw lastHTTPError
             }
         } catch let urlError {
             throw PushAPIError.networkError(urlError.localizedDescription)
