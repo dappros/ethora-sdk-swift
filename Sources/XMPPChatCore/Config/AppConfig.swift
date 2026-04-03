@@ -41,9 +41,10 @@ JWT eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJkYXRhIjp7ImlzVXNlckRhdGFFbmNyeXB0ZWQ
         return URL(string: "https://api.ethoradev.com/v1")!
     }
 
-    /// Default base URL for Push API calls
+    /// Default base URL for push registration API.
+    /// Must match the REST API base that exposes `push/subscriptions/{appId}` (same as RN `apiClient` baseURL, e.g. `…/v1`).
     public static var defaultPushBaseURL: URL {
-        return URL(string: "https://push.ethoradev.com/api")!
+        return defaultBaseURL
     }
     
     /// Default XMPP settings (production, not dev)

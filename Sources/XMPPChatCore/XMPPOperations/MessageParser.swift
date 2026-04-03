@@ -72,7 +72,6 @@ public final class MessageParser {
         }
 
         let xmppId = fullData.attributes["id"]
-        let originId = fullData.getChild("origin-id")?.attributes["id"]
         let xmppFrom = fullData.attributes["from"] ?? ""
 
         let fromParts = xmppFrom.split(separator: "/").map(String.init)
@@ -93,7 +92,7 @@ public final class MessageParser {
             }
         }
 
-        let finalId = id ?? xmppId ?? originId ?? "\(Int64(Date().timeIntervalSince1970 * 1000))"
+        let finalId = id ?? xmppId ?? "\(Int64(Date().timeIntervalSince1970 * 1000))"
 
         let body = fullData.getChild("body")?.text
         let deleted = (fullData.getChild("deleted") != nil)
@@ -145,8 +144,7 @@ public final class MessageParser {
             deleted: deleted,
             translations: translations,
             langSource: langSource,
-            // Prefer origin-id when present to match local optimistic customId.
-            xmppId: originId ?? xmppId,
+            xmppId: xmppId,
             xmppFrom: xmppFrom
         )
     }
@@ -181,7 +179,7 @@ public final class MessageParser {
             //print("   size: \(size ?? "nil")")
         }
 
-        // createMessageFromXml doesn't filter body, but addRoomMessage does
+        // Match TypeScript: createMessageFromXml doesn't filter body, but addRoomMessage does
         // So we create message with body (even if empty), and it will be filtered in handleIncomingMessage
         return Message(
             id: d.id,

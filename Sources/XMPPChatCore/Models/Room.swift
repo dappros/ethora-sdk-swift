@@ -239,14 +239,16 @@ public extension Room {
     init(apiRoom: ApiRoom, conferenceDomain: String, usersArrayLength: Int = 0) {
         let normalizedConference: String = {
             var value = conferenceDomain.trimmingCharacters(in: .whitespacesAndNewlines)
-            if value.isEmpty { return "conference.xmpp.ethoradev.com" }
+            if value.isEmpty { return AppConfig.defaultXMPPSettings.conference ?? "conference.xmpp.ethoradev.com" }
             value = value.replacingOccurrences(of: "conferenceconference.", with: "conference.")
             value = value.replacingOccurrences(of: "conferenceconference", with: "conference.")
             if value.hasPrefix("conference.") { return value }
             return "conference.\(value)"
         }()
-        let bareName = apiRoom.name.components(separatedBy: "/").first ?? apiRoom.name
-        let jid = bareName.contains("@") ? bareName : "\(bareName)@\(normalizedConference)"
+        // Always rebuild room JID with the currently resolved conference domain.
+        let bareNameWithNoResource = apiRoom.name.components(separatedBy: "/").first ?? apiRoom.name
+        let bareName = bareNameWithNoResource.components(separatedBy: "@").first ?? bareNameWithNoResource
+        let jid = "\(bareName)@\(normalizedConference)"
         self.init(
             id: apiRoom._id ?? apiRoom.name,
             jid: jid,

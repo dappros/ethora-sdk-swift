@@ -131,7 +131,8 @@ public struct ChatWrapperView: View {
                 .padding()
             }
         }
-        .onReceive(RoomStore.shared.$totalUnreadCount.removeDuplicates()) { count in
+        .onReceive(RoomStore.shared.$rooms) { rooms in
+            let count = rooms.values.reduce(0) { $0 + $1.unreadMessages }
             onUnreadCountChanged?(count)
         }
     }

@@ -199,36 +199,20 @@ struct MainChatView: View {
                 }
         }
         .onAppear {
-            //print("")
-            //print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-            //print("📱 MainChatView.onAppear - CALLED!")
-            //print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-            
+            // Wire FCM + backend push + MUC subscriptions to this client (ChatWrapperView does this in `ChatWrapperViewModel`).
+            PushNotificationManager.shared.attachClient(client)
+
             Task { @MainActor in
-                // Update currentUserId if needed
                 if let user = UserStore.shared.currentUser {
                     currentUserId = user.id
-                    //print("✅ Current User ID: \(currentUserId)")
                 }
-                
-                // Verify authentication state
+
                 let isAuth = UserStore.shared.isAuthenticated
                 let hasToken = UserStore.shared.token != nil
-                let tokenPreview = UserStore.shared.token?.prefix(30) ?? "nil"
-                //print("🔍 Authentication state:")
-                //print("   isAuthenticated: \(isAuth)")
-                //print("   hasToken: \(hasToken)")
-                //print("   token: \(tokenPreview)...")
-                
-                // Load rooms immediately if authenticated
+
                 if isAuth && hasToken {
-                    //print("✅ User authenticated, calling loadRooms() NOW...")
                     roomListViewModel.loadRooms()
-                } else {
-                    //print("❌ User not authenticated, cannot load rooms")
-                    //print("   This means login didn't work or UserStore wasn't updated")
                 }
-                //print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
             }
         }
     }
