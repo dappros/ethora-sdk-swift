@@ -74,13 +74,19 @@ public struct AuthAPI {
     ///   - email: User email
     ///   - password: User password
     ///   - baseURL: API base URL
-    ///   - appToken: App token for Authorization header
+    ///   - appToken: App token for Authorization header (see ``AppConfig/normalizedAppAuthorizationHeader(_:)``).
+    ///     Must be the **Ethora app JWT** (same as web `api.config` `appToken`), not a user token and not only the app ObjectId.
     /// - Returns: LoginResponse with token, refreshToken, and user data
+    ///
+    /// Mirrors web `loginEmail`: body is only `email` + `password`; app comes from `Authorization` (see Ethora `api/swagger.js`).
+    /// - Parameter useEthoraJwtWordPrefix: If `true` (default), uses ``AppConfig/normalizedAppAuthorizationHeader(_:)`` (`JWT eyJ…`).
+    ///   If `false`, sends only the raw three-part JWT (no leading `JWT ` / no `Bearer` added). See ``AppConfig/appAuthorizationHeader(fromPaste:useEthoraJwtWordPrefix:)``.
     public static func loginWithEmail(
         email: String,
         password: String,
         baseURL: URL = URL(string: "https://api.ethoradev.com/v1")!,
-        appToken: String = AppConfig.appToken
+        appToken: String = AppConfig.appToken,
+        useEthoraJwtWordPrefix: Bool = true
     ) async throws -> LoginResponse {
         // FORCE VISIBLE LOGGING - This MUST appear in Xcode console
         //NSlog("🔥🔥🔥 AUTHAPI.LOGINWITHEMAIL CALLED 🔥🔥🔥")
@@ -94,7 +100,11 @@ public struct AuthAPI {
         
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.setValue(appToken, forHTTPHeaderField: "Authorization")
+        let authHeader = AppConfig.appAuthorizationHeader(
+            fromPaste: appToken,
+            useEthoraJwtWordPrefix: useEthoraJwtWordPrefix
+        )
+        request.setValue(authHeader, forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         
@@ -231,7 +241,7 @@ public struct AuthAPI {
         
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.setValue(appToken, forHTTPHeaderField: "Authorization")
+        request.setValue(AppConfig.normalizedAppAuthorizationHeader(appToken), forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         
@@ -413,7 +423,7 @@ public struct AuthAPI {
         
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
-        request.setValue(appToken, forHTTPHeaderField: "Authorization")
+        request.setValue(AppConfig.normalizedAppAuthorizationHeader(appToken), forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         

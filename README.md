@@ -61,6 +61,10 @@ Copy these folders from this repository:
 
 Recommended: create a local Swift package in your app workspace and point it to copied sources.
 
+## SDK Playground (in-repo example app)
+
+For manual testing of API + XMPP + `ChatWrapperView` without a separate host app, use **`Examples/SDKPlayground`**: Tab bar (**Setup** / **Chat** / **Logs**), local package path `../..`. See [Examples/SDKPlayground/README.md](Examples/SDKPlayground/README.md).
+
 ## Chat Configuration
 
 Reliable integration flow in Swift is:

@@ -8,6 +8,103 @@
 import Foundation
 
 public enum AppConfig {
+    /// Normalizes the value used as `Authorization` on Ethora app-scoped REST calls.
+    ///
+    /// **What this does / does not do:**
+    /// - Does **not** add a `Bearer` OAuth prefix to app tokens. If the user pasted `Bearer …`, it is stripped
+    ///   and the remainder is normalized (same as web accidentally pasting OAuth style).
+    /// - If the value already starts with **`JWT `** (Ethora app token style, same as `api.config` web), it is left
+    ///   as that scheme — only cleaning whitespace inside the JWT.
+    /// - If the value is a raw **`eyJ…`** JWT (common in `.env`), **`JWT `** is prepended — this is **not** Bearer;
+    ///   it is the literal prefix Ethora’s REST layer expects for app JWTs (see `api/swagger.js` for
+    ///   `/users/login-with-email`).
+    ///
+    /// - Parameter raw: User-provided app token, or empty to fall back to ``appToken``.
+    ///
+    /// Handles: surrounding `'`/`"`, UTF-8 BOM, mistaken `Bearer …`, line breaks inside the JWT.
+    public static func normalizedAppAuthorizationHeader(_ raw: String) -> String {
+        var t = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        t = t.replacingOccurrences(of: "\u{FEFF}", with: "")
+        // Strip one or more layers of quotes from .env lines like APP_TOKEN="JWT eyJ..."
+        while t.count >= 2 {
+            let f = t.first!, l = t.last!
+            if (f == "\"" && l == "\"") || (f == "'" && l == "'") {
+                t = String(t.dropFirst().dropLast()).trimmingCharacters(in: .whitespacesAndNewlines)
+                continue
+            }
+            break
+        }
+        if t.isEmpty { return appToken }
+        if t.lowercased().hasPrefix("bearer ") {
+            let inner = String(t.dropFirst(7)).trimmingCharacters(in: .whitespacesAndNewlines)
+            return normalizedAppAuthorizationHeader(inner)
+        }
+        func jwtBodyWithoutInnerWhitespace(_ s: String) -> String {
+            s.filter { !$0.isWhitespace }
+        }
+        let upper = t.uppercased()
+        if upper.hasPrefix("JWT ") {
+            let rest = jwtBodyWithoutInnerWhitespace(String(t.dropFirst(4)))
+            return rest.isEmpty ? appToken : "JWT " + rest
+        }
+        if t.hasPrefix("eyJ") {
+            return "JWT " + jwtBodyWithoutInnerWhitespace(t)
+        }
+        // Rare: spaces/newlines only inside a raw three-part token
+        let compact = jwtBodyWithoutInnerWhitespace(t)
+        if compact.hasPrefix("eyJ"), compact.split(separator: ".", omittingEmptySubsequences: false).count == 3 {
+            return "JWT " + compact
+        }
+        return t
+    }
+
+    /// Extracts the three JWT segments (`xx.yy.zz`) after cleaning a pasted value (quotes, BOM, optional `Bearer` / `JWT `).
+    /// Does **not** add `Bearer` or `JWT ` — used when the server expects a raw JWT in `Authorization`.
+    public static func compactThreePartJWT(fromAppTokenPaste raw: String) -> String? {
+        var t = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        t = t.replacingOccurrences(of: "\u{FEFF}", with: "")
+        while t.count >= 2 {
+            let f = t.first!, l = t.last!
+            if (f == "\"" && l == "\"") || (f == "'" && l == "'") {
+                t = String(t.dropFirst().dropLast()).trimmingCharacters(in: .whitespacesAndNewlines)
+                continue
+            }
+            break
+        }
+        if t.isEmpty { return nil }
+        if t.lowercased().hasPrefix("bearer ") {
+            let inner = String(t.dropFirst(7)).trimmingCharacters(in: .whitespacesAndNewlines)
+            return compactThreePartJWT(fromAppTokenPaste: inner)
+        }
+        func strip(_ s: String) -> String { s.filter { !$0.isWhitespace } }
+        let upper = t.uppercased()
+        let body: String
+        if upper.hasPrefix("JWT ") {
+            body = strip(String(t.dropFirst(4)))
+        } else {
+            body = strip(t)
+        }
+        if body.isEmpty { return nil }
+        let parts = body.split(separator: ".", omittingEmptySubsequences: false)
+        guard parts.count == 3 else { return nil }
+        return body
+    }
+
+    /// Builds the `Authorization` value for an app token pasted by the user.
+    /// - `useEthoraJwtWordPrefix: true` — same as ``normalizedAppAuthorizationHeader(_:)`` (`JWT eyJ…`, Ethora public API).
+    /// - `useEthoraJwtWordPrefix: false` — only `eyJ…` (no leading `JWT ` / no `Bearer` added).
+    public static func appAuthorizationHeader(fromPaste raw: String, useEthoraJwtWordPrefix: Bool) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { return appToken }
+        if useEthoraJwtWordPrefix {
+            return normalizedAppAuthorizationHeader(raw)
+        }
+        if let core = compactThreePartJWT(fromAppTokenPaste: raw) {
+            return core
+        }
+        return normalizedAppAuthorizationHeader(raw)
+    }
+
     /// Ethora appToken used when calling auth endpoints (same as `src/api.config.ts appToken`).
     ///
     /// It is read from the `ETHORA_APP_TOKEN` environment variable if present,
