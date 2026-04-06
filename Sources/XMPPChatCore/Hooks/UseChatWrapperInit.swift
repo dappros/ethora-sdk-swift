@@ -313,7 +313,15 @@ public class ChatWrapperViewModel: ObservableObject {
         }
         
         do {
-            let baseURL = URL(string: config.baseUrl ?? "https://api.ethoradev.com/v1")!
+            let baseURLString = (config.baseUrl ?? "https://api.ethoradev.com/v1")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let baseURL = URL(string: baseURLString), !baseURLString.isEmpty else {
+                await MainActor.run {
+                    self.roomsRetryState = .noRooms
+                    self.loadingText = nil
+                }
+                return
+            }
             let conferenceDomain = config.xmppSettings?.conference ?? "conference.xmpp.ethoradev.com"
             let rooms = try await RoomsAPI.getRooms(
                 baseURL: baseURL,
@@ -364,7 +372,11 @@ public class ChatWrapperViewModel: ObservableObject {
         }
         
         // If no custom function is provided, fall back to AuthAPI.refreshToken using UserStore.refreshToken.
-        let baseURL = URL(string: config.baseUrl ?? "https://api.ethoradev.com/v1")!
+        let baseURLString = (config.baseUrl ?? "https://api.ethoradev.com/v1")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let baseURL = URL(string: baseURLString), !baseURLString.isEmpty else {
+            return
+        }
         let currentRefreshToken = UserStore.shared.refreshToken
         
         guard let refreshToken = currentRefreshToken, !refreshToken.isEmpty else {

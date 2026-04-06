@@ -13,7 +13,10 @@ struct ChatTabView: View {
     var body: some View {
         Group {
             if session.isConnected {
-                ChatWrapperView(config: session.buildChatConfig())
+                ChatWrapperView(
+                    config: session.buildChatConfig(),
+                    initialRoomJID: session.initialRoomJIDForChatWrapper
+                )
                     .id(session.chatInstanceId)
             } else {
                 VStack(spacing: 16) {

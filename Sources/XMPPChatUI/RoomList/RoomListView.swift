@@ -43,42 +43,26 @@ private struct ChatRoomViewWrapper: View {
 
 public struct RoomListView: View {
     @ObservedObject var viewModel: RoomListViewModel
+    private let singleRoomJID: String?
+    private let hideRoomList: Bool
     @State private var searchText: String = ""
     /// Programmatic navigation when opening a room from a push (RN `PENDING_NOTIFICATION_JID_KEY` flow).
     @State private var pushNavActive: Bool = false
     @State private var pushNavRoomBareJID: String?
     
-    public init(viewModel: RoomListViewModel) {
+    public init(viewModel: RoomListViewModel, singleRoomJID: String? = nil, hideRoomList: Bool = false) {
         self.viewModel = viewModel
+        self.singleRoomJID = singleRoomJID
+        self.hideRoomList = hideRoomList
     }
     
     public var body: some View {
         NavigationView {
-            List {
-                if filteredRooms.isEmpty {
-                    if viewModel.isLoading {
-                        HStack {
-                            ProgressView()
-                            Text("Loading rooms…")
-                        }
-                    } else if let error = viewModel.errorMessage {
-                        Text(error)
-                            .foregroundColor(.red)
-                            .multilineTextAlignment(.center)
-                    } else {
-                        Text("No rooms loaded")
-                            .foregroundColor(.secondary)
-                    }
+            Group {
+                if hideRoomList {
+                    singleRoomContent
                 } else {
-                    ForEach(filteredRooms) { room in
-                        NavigationLink(destination: destinationView(for: room)) {
-                            RoomListItemView(
-                                room: room,
-                                currentUserId: viewModel.currentUserId,
-                                messages: room.messages
-                            )
-                        }
-                    }
+                    roomListContent
                 }
             }
             .background(
@@ -89,56 +73,7 @@ public struct RoomListView: View {
                 )
                 .ignoresSafeArea()
             )
-            .searchable(text: $searchText)
-            .navigationTitle("Chats")
-            .toolbar {
-                #if os(iOS)
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button(action: {
-                        viewModel.showNewChatModal = true
-                    }) {
-                        Image(systemName: "plus")
-                    }
-                }
-                #else
-                ToolbarItem(placement: .automatic) {
-                    Button(action: {
-                        viewModel.showNewChatModal = true
-                    }) {
-                        Image(systemName: "plus")
-                    }
-                }
-                #endif
-            }
-            .sheet(isPresented: $viewModel.showNewChatModal) {
-                NewChatModal(
-                    availableUsers: viewModel.getAvailableUsers(),
-                    onCreateChat: { chatName, description, users in
-                        Task { @MainActor in
-                            do {
-                                if users.count == 1, let user = users.first {
-                                    // Private chat
-                                    try await viewModel.createPrivateRoom(with: user)
-                                } else {
-                                    // Group chat
-                                    try await viewModel.createRoom(
-                                        title: chatName,
-                                        description: description ?? "",
-                                        members: users
-                                    )
-                                }
-                                viewModel.showNewChatModal = false
-                            } catch {
-                                //print("❌ Failed to create chat: \(error.localizedDescription)")
-                                viewModel.errorMessage = error.localizedDescription
-                            }
-                        }
-                    },
-                    onClose: {
-                        viewModel.showNewChatModal = false
-                    }
-                )
-            }
+            .modifier(RoomListModeModifier(hideRoomList: hideRoomList, searchText: $searchText, viewModel: viewModel))
             .background(pushNavigationLink)
             .onAppear {
                 // Call loadRooms if not already loading
@@ -155,6 +90,84 @@ public struct RoomListView: View {
                     tryOpenRoomFromPendingPushNotification()
                 }
             }
+        }
+    }
+    
+    @ViewBuilder
+    private var roomListContent: some View {
+        List {
+            if filteredRooms.isEmpty {
+                if viewModel.isLoading {
+                    HStack {
+                        ProgressView()
+                        Text("Loading rooms…")
+                    }
+                } else if let error = viewModel.errorMessage {
+                    Text(error)
+                        .foregroundColor(.red)
+                        .multilineTextAlignment(.center)
+                } else {
+                    Text("No rooms loaded")
+                        .foregroundColor(.secondary)
+                }
+            } else {
+                ForEach(filteredRooms) { room in
+                    NavigationLink(destination: destinationView(for: room)) {
+                        RoomListItemView(
+                            room: room,
+                            currentUserId: viewModel.currentUserId,
+                            messages: room.messages
+                        )
+                    }
+                }
+            }
+        }
+    }
+    
+    @ViewBuilder
+    private var singleRoomContent: some View {
+        if let room = matchedSingleRoom {
+            destinationView(for: room)
+        } else if viewModel.isLoading {
+            VStack(spacing: 10) {
+                ProgressView()
+                Text("Loading selected chat...")
+                    .foregroundColor(.secondary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if let wanted = normalizedSingleRoomBareJID {
+            VStack(spacing: 10) {
+                Text("Selected chat was not found.")
+                    .font(.headline)
+                Text("Room: \(wanted)")
+                    .font(.footnote)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+            .padding()
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            VStack(spacing: 10) {
+                Text("Single chat mode is enabled, but Room JID is empty.")
+                    .font(.headline)
+            }
+            .padding()
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    private var normalizedSingleRoomBareJID: String? {
+        guard let singleRoomJID else { return nil }
+        let trimmed = singleRoomJID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        return trimmed.components(separatedBy: "/").first
+    }
+    
+    private var matchedSingleRoom: Room? {
+        guard let target = normalizedSingleRoomBareJID?.lowercased() else { return nil }
+        return viewModel.rooms.first { room in
+            let bare = (room.jid.components(separatedBy: "/").first ?? room.jid).lowercased()
+            return bare == target
         }
     }
 
@@ -252,6 +265,67 @@ public struct RoomListView: View {
                 }
             }
         )
+    }
+}
+
+private struct RoomListModeModifier: ViewModifier {
+    let hideRoomList: Bool
+    @Binding var searchText: String
+    @ObservedObject var viewModel: RoomListViewModel
+
+    func body(content: Content) -> some View {
+        if hideRoomList {
+            content.navigationTitle("Chat")
+        } else {
+            content
+                .searchable(text: $searchText)
+                .navigationTitle("Chats")
+                .toolbar {
+                    #if os(iOS)
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        Button(action: {
+                            viewModel.showNewChatModal = true
+                        }) {
+                            Image(systemName: "plus")
+                        }
+                    }
+                    #else
+                    ToolbarItem(placement: .automatic) {
+                        Button(action: {
+                            viewModel.showNewChatModal = true
+                        }) {
+                            Image(systemName: "plus")
+                        }
+                    }
+                    #endif
+                }
+                .sheet(isPresented: $viewModel.showNewChatModal) {
+                    NewChatModal(
+                        availableUsers: viewModel.getAvailableUsers(),
+                        onCreateChat: { chatName, description, users in
+                            Task { @MainActor in
+                                do {
+                                    if users.count == 1, let user = users.first {
+                                        try await viewModel.createPrivateRoom(with: user)
+                                    } else {
+                                        try await viewModel.createRoom(
+                                            title: chatName,
+                                            description: description ?? "",
+                                            members: users
+                                        )
+                                    }
+                                    viewModel.showNewChatModal = false
+                                } catch {
+                                    viewModel.errorMessage = error.localizedDescription
+                                }
+                            }
+                        },
+                        onClose: {
+                            viewModel.showNewChatModal = false
+                        }
+                    )
+                }
+        }
     }
 }
 
