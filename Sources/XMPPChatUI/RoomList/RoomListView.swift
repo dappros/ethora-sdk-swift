@@ -27,7 +27,8 @@ private struct ChatRoomViewWrapper: View {
         _viewModel = StateObject(wrappedValue: ChatRoomViewModel(
             room: room.wrappedValue,
             client: client,
-            currentUserId: currentUserId
+            currentUserId: currentUserId,
+            config: ConfigStore.shared.config
         ))
     }
     

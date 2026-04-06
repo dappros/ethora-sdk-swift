@@ -71,6 +71,18 @@ public struct ChatRoomView: View {
     @State private var selectedMediaMessage: Message? = nil
     @ObservedObject private var connectionManager: ConnectionManager
     
+    private var chatBackgroundColor: Color {
+        let effectiveConfig = viewModel.config ?? ConfigStore.shared.config
+        if let hex = effectiveConfig.backgroundChat?.color, !hex.isEmpty {
+            return Color(hex: hex)
+        }
+        #if os(iOS)
+        return Color(uiColor: .systemGray6)
+        #else
+        return Color(NSColor.windowBackgroundColor)
+        #endif
+    }
+    
     public init(viewModel: ChatRoomViewModel) {
         self.viewModel = viewModel
         self._connectionManager = ObservedObject(wrappedValue: ConnectionManager.shared)
@@ -688,8 +700,7 @@ public struct ChatRoomView: View {
         }
         // Web-like background
         .background(
-            Color(red: 0.98, green: 0.98, blue: 0.99)
-            .ignoresSafeArea()
+            chatBackgroundColor.ignoresSafeArea()
         )
         #if os(iOS)
         .navigationBarHidden(true)
