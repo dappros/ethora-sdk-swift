@@ -1,0 +1,30 @@
+name: SDKPlayground
+options:
+  bundleIdPrefix: com.ethora
+  deploymentTarget:
+    iOS: '15.0'
+packages:
+  EthoraSDK:
+    path: ../..
+targets:
+  SDKPlayground:
+    type: application
+    platform: iOS
+    sources:
+      - path: SDKPlayground
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.ethora.SDKPlayground
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+        INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: UIInterfaceOrientationPortrait
+        SWIFT_VERSION: 5.9
+    dependencies:
+      - package: EthoraSDK
+        product: XMPPChatCore
+      - package: EthoraSDK
+        product: XMPPChatUI
+    scheme:
+      testTargets: []
