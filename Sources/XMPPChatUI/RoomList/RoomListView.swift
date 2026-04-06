@@ -595,6 +595,7 @@ public class RoomListViewModel: ObservableObject {
     
     // Composing timeouts per room
     private var composingTimeouts: [String: Timer] = [:]
+    private var notificationObservers: [NSObjectProtocol] = []
     
     // New initializer - token is now managed by UserStore
     public init(
@@ -624,7 +625,7 @@ public class RoomListViewModel: ObservableObject {
         self.messageLoaderQueue = queue
         
         // Listen for room messages updates to continue loading if needed
-        NotificationCenter.default.addObserver(
+        let roomMessagesUpdatedToken = NotificationCenter.default.addObserver(
             forName: NSNotification.Name("RoomMessagesUpdated"),
             object: nil,
             queue: .main
@@ -639,9 +640,10 @@ public class RoomListViewModel: ObservableObject {
                 currentMessageCount: messageCount
             )
         }
+        notificationObservers.append(roomMessagesUpdatedToken)
         
         // Start queue when client comes online
-        NotificationCenter.default.addObserver(
+        let didConnectToken = NotificationCenter.default.addObserver(
             forName: NSNotification.Name("XMPPClientDidConnect"),
             object: nil,
             queue: .main
@@ -652,9 +654,10 @@ public class RoomListViewModel: ObservableObject {
                 //print("🔄 RoomListViewModel: Started auto-load history queue (client connected)")
             }
         }
+        notificationObservers.append(didConnectToken)
         
         // Listen for room messages updates to update the room's messages array
-        NotificationCenter.default.addObserver(
+        let roomMessagesRefreshToken = NotificationCenter.default.addObserver(
             forName: NSNotification.Name("RoomMessagesUpdated"),
             object: nil,
             queue: .main
@@ -686,9 +689,10 @@ public class RoomListViewModel: ObservableObject {
                 }
             }
         }
+        notificationObservers.append(roomMessagesRefreshToken)
         
         // Listen for composing (typing) indicator changes
-        NotificationCenter.default.addObserver(
+        let composingChangedToken = NotificationCenter.default.addObserver(
             forName: NSNotification.Name("XMPPComposingChanged"),
             object: nil,
             queue: .main
@@ -762,16 +766,19 @@ public class RoomListViewModel: ObservableObject {
                 //print("⌨️ RoomListViewModel: Updated composing state for room \(roomJID) - isComposing: \(isComposing), users: \(filteredComposingList)")
             }
         }
+        notificationObservers.append(composingChangedToken)
     }
     
     deinit {
+        // Never capture `self` in async work from `deinit`.
+        let queue = messageLoaderQueue
+        let timers = Array(composingTimeouts.values)
+        let observers = notificationObservers
         Task { @MainActor in
-            messageLoaderQueue?.stop()
-            // Invalidate all composing timeouts
-            composingTimeouts.values.forEach { $0.invalidate() }
-            composingTimeouts.removeAll()
+            queue?.stop()
+            timers.forEach { $0.invalidate() }
+            observers.forEach { NotificationCenter.default.removeObserver($0) }
         }
-        NotificationCenter.default.removeObserver(self)
     }
     
     public func loadRooms() {
