@@ -18,6 +18,7 @@ public struct ChatWrapperView: View {
     @StateObject private var viewModel: ChatWrapperViewModel
     
     private let config: ChatConfig
+    private let initialRoomJID: String?
     private let onUnreadCountChanged: ((Int) -> Void)?
     
     public init(
@@ -42,6 +43,7 @@ public struct ChatWrapperView: View {
             )
         )
         self.config = resolvedConfig
+        self.initialRoomJID = initialRoomJID
         self.onUnreadCountChanged = onUnreadCountChanged
     }
     
@@ -116,7 +118,9 @@ public struct ChatWrapperView: View {
                             client: client,
                             currentUserId: viewModel.currentUserId,
                             config: config
-                        )
+                        ),
+                        singleRoomJID: initialRoomJID,
+                        hideRoomList: config.disableRooms == true
                     )
                 }
             } else {

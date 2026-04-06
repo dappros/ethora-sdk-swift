@@ -36,6 +36,10 @@ struct SetupView: View {
     "webSocketUrl": "wss://xmpp.ethoradev.com:5443/ws",
     "host": "xmpp.ethoradev.com",
     "conference": "conference.xmpp.ethoradev.com"
+  },
+  "chat": {
+    "singleRoomMode": false,
+    "roomJid": "699c6923429c2757ac8ab6a4_playground-room-1@conference.xmpp.ethoradev.com"
   }
 }
 """
@@ -98,6 +102,13 @@ struct SetupView: View {
                             TextField("Conference domain", text: $session.xmppConference)
                                 .textInputAutocapitalization(.never)
                                 .autocorrectionDisabled()
+                            
+                            Toggle("Single chat mode (hide rooms list)", isOn: $session.useSingleChatMode)
+                            if session.useSingleChatMode {
+                                TextField("Room JID", text: $session.singleChatRoomJID)
+                                    .textInputAutocapitalization(.never)
+                                    .autocorrectionDisabled()
+                            }
                         } else {
                             VStack(alignment: .leading, spacing: 8) {
                                 Text("Paste a configuration JSON object")

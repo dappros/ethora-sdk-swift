@@ -58,6 +58,8 @@ final class PlaygroundSession: ObservableObject {
     @Published var xmppWebSocketURL: String = ""
     @Published var xmppHost: String = ""
     @Published var xmppConference: String = ""
+    @Published var useSingleChatMode: Bool = false
+    @Published var singleChatRoomJID: String = ""
     
     @Published var primaryColorHex: String = "#5E3FDE"
     @Published var secondaryColorHex: String = "#E1E4FE"
@@ -74,6 +76,11 @@ final class PlaygroundSession: ObservableObject {
     @Published var chatInstanceId = UUID()
 
     private let userDefaultsKey = "sdk_playground_form_v1"
+    
+    var initialRoomJIDForChatWrapper: String? {
+        guard useSingleChatMode else { return nil }
+        return resolvedSingleRoomJID()
+    }
 
     init() {
         loadFromDefaults()
@@ -93,6 +100,8 @@ final class PlaygroundSession: ObservableObject {
         xmppWebSocketURL = snap.xmppWebSocketURL
         xmppHost = snap.xmppHost
         xmppConference = snap.xmppConference
+        useSingleChatMode = snap.useSingleChatMode
+        singleChatRoomJID = snap.singleChatRoomJID
         primaryColorHex = snap.primaryColorHex
         secondaryColorHex = snap.secondaryColorHex
         incomingMessageColorHex = snap.incomingMessageColorHex
@@ -127,6 +136,8 @@ final class PlaygroundSession: ObservableObject {
             xmppWebSocketURL: xmppWebSocketURL,
             xmppHost: xmppHost,
             xmppConference: xmppConference,
+            useSingleChatMode: useSingleChatMode,
+            singleChatRoomJID: singleChatRoomJID,
             connectionPresetRaw: connectionPreset.rawValue,
             uiPresetRaw: uiPreset.rawValue,
             appThemeRaw: appTheme.rawValue,
@@ -167,6 +178,11 @@ final class PlaygroundSession: ObservableObject {
                 host: host.isEmpty ? nil : host,
                 conference: conf.isEmpty ? nil : conf
             )
+        }
+        c.disableRooms = useSingleChatMode
+        if useSingleChatMode {
+            c.forceSetRoom = true
+            c.setRoomJidInPath = true
         }
         c.colors = ChatColors(primary: normalizedHex(primaryColorHex), secondary: normalizedHex(secondaryColorHex))
         c.bubleMessage = MessageBubbleStyle(
@@ -226,7 +242,8 @@ final class PlaygroundSession: ObservableObject {
     ///   "connectionProfile": "ethoraDev|custom",
     ///   "auth": { "mode": "email|jwt", "email": "", "password": "", "token": "" },
     ///   "api": { "baseUrl": "", "appToken": "", "appId": "", "useJwtPrefix": true },
-    ///   "xmpp": { "webSocketUrl": "", "host": "", "conference": "" }
+    ///   "xmpp": { "webSocketUrl": "", "host": "", "conference": "" },
+    ///   "chat": { "singleRoomMode": false, "roomJid": "" }
     /// }
     func applySetupJSONObject(_ rawJSON: String) throws {
         let trimmed = rawJSON.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -311,6 +328,23 @@ final class PlaygroundSession: ObservableObject {
                 xmppConference = conf
             }
         }
+        
+        if let chat = root["chat"] as? [String: Any] {
+            if let single = bool(chat, "singleRoomMode") {
+                useSingleChatMode = single
+            }
+            if let roomJid = string(chat, "roomJid") {
+                singleChatRoomJID = roomJid
+            }
+        }
+        
+        // Compatibility aliases to match common config naming.
+        if let disableRooms = bool(root, "disableRooms") {
+            useSingleChatMode = disableRooms
+        }
+        if let initialRoom = string(root, "initialRoomJID"), !initialRoom.isEmpty {
+            singleChatRoomJID = initialRoom
+        }
     }
 
     func connect(log: PlaygroundLogStore) async {
@@ -324,6 +358,12 @@ final class PlaygroundSession: ObservableObject {
               !baseURLString.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             lastError = "Invalid Base URL."
             log.append("Connect failed: invalid Base URL.", level: .error)
+            return
+        }
+        
+        if useSingleChatMode && initialRoomJIDForChatWrapper == nil {
+            lastError = "Single chat mode requires a Room JID."
+            log.append("Connect failed: single chat mode enabled but Room JID is empty.", level: .error)
             return
         }
 
@@ -432,6 +472,8 @@ final class PlaygroundSession: ObservableObject {
         var xmppWebSocketURL: String
         var xmppHost: String
         var xmppConference: String
+        var useSingleChatMode: Bool
+        var singleChatRoomJID: String
         var connectionPresetRaw: String
         var uiPresetRaw: String
         var appThemeRaw: String
@@ -446,6 +488,7 @@ final class PlaygroundSession: ObservableObject {
         enum CodingKeys: String, CodingKey {
             case authModeRaw, baseURLString, appToken, useEthoraJwtWordPrefixForAppToken, appId, jwtToken, email, password
             case xmppWebSocketURL, xmppHost, xmppConference
+            case useSingleChatMode, singleChatRoomJID
             case connectionPresetRaw, uiPresetRaw, appThemeRaw
             case primaryColorHex, secondaryColorHex
             case incomingMessageColorHex, outgoingMessageColorHex
@@ -465,6 +508,8 @@ final class PlaygroundSession: ObservableObject {
             xmppWebSocketURL: String,
             xmppHost: String,
             xmppConference: String,
+            useSingleChatMode: Bool,
+            singleChatRoomJID: String,
             connectionPresetRaw: String,
             uiPresetRaw: String,
             appThemeRaw: String,
@@ -487,6 +532,8 @@ final class PlaygroundSession: ObservableObject {
             self.xmppWebSocketURL = xmppWebSocketURL
             self.xmppHost = xmppHost
             self.xmppConference = xmppConference
+            self.useSingleChatMode = useSingleChatMode
+            self.singleChatRoomJID = singleChatRoomJID
             self.connectionPresetRaw = connectionPresetRaw
             self.uiPresetRaw = uiPresetRaw
             self.appThemeRaw = appThemeRaw
@@ -513,6 +560,8 @@ final class PlaygroundSession: ObservableObject {
             xmppWebSocketURL = try c.decodeIfPresent(String.self, forKey: .xmppWebSocketURL) ?? ""
             xmppHost = try c.decodeIfPresent(String.self, forKey: .xmppHost) ?? ""
             xmppConference = try c.decodeIfPresent(String.self, forKey: .xmppConference) ?? ""
+            useSingleChatMode = try c.decodeIfPresent(Bool.self, forKey: .useSingleChatMode) ?? false
+            singleChatRoomJID = try c.decodeIfPresent(String.self, forKey: .singleChatRoomJID) ?? ""
             connectionPresetRaw = try c.decodeIfPresent(String.self, forKey: .connectionPresetRaw) ?? ConnectionPreset.ethoraDev.rawValue
             uiPresetRaw = try c.decodeIfPresent(String.self, forKey: .uiPresetRaw) ?? UIPreset.light.rawValue
             appThemeRaw = try c.decodeIfPresent(String.self, forKey: .appThemeRaw) ?? AppTheme.system.rawValue
@@ -530,5 +579,18 @@ final class PlaygroundSession: ObservableObject {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return "#000000" }
         return trimmed.hasPrefix("#") ? trimmed : "#\(trimmed)"
+    }
+    
+    private func resolvedSingleRoomJID() -> String? {
+        let raw = singleChatRoomJID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !raw.isEmpty else { return nil }
+        if raw.contains("@") {
+            return raw
+        }
+        let conference = xmppConference.trimmingCharacters(in: .whitespacesAndNewlines)
+        if conference.isEmpty {
+            return raw
+        }
+        return "\(raw)@\(conference)"
     }
 }
