@@ -102,6 +102,22 @@ struct DefaultChatInputView: View {
     #endif
     @FocusState private var isFocused: Bool
     
+    private var inputSurfaceColor: Color {
+        #if os(iOS)
+        return Color(uiColor: .secondarySystemBackground)
+        #else
+        return Color(NSColor.controlBackgroundColor)
+        #endif
+    }
+    
+    private var iconForegroundColor: Color {
+        #if os(iOS)
+        return Color(uiColor: .label)
+        #else
+        return .primary
+        #endif
+    }
+    
     var body: some View {
         VStack(spacing: 0) {
             // Media Preview
@@ -153,9 +169,9 @@ struct DefaultChatInputView: View {
                     }) {
                         Image(systemName: "paperclip")
                             .font(.system(size: 20, weight: .medium))
-                            .foregroundColor(.black)
+                            .foregroundColor(iconForegroundColor)
                             .frame(width: 40, height: 40)
-                            .background(Color.white)
+                            .background(inputSurfaceColor)
                             .clipShape(Circle())
                             .overlay(
                                 Circle()
@@ -182,9 +198,9 @@ struct DefaultChatInputView: View {
                     }
                     .padding(.horizontal, 16)
                     .padding(.vertical, 12)
-                    .foregroundColor(.black)
+                    .foregroundColor(.primary)
                 }
-                .background(Color.white)
+                .background(inputSurfaceColor)
                 .cornerRadius(20)
                 .overlay(
                     RoundedRectangle(cornerRadius: 20)
@@ -465,7 +481,11 @@ struct MediaPreviewView: View {
             }
         }
         .padding(12)
-        .background(Color.white)
+        #if os(iOS)
+        .background(Color(uiColor: .secondarySystemBackground))
+        #else
+        .background(Color(NSColor.controlBackgroundColor))
+        #endif
         .cornerRadius(12)
         .overlay(
             RoundedRectangle(cornerRadius: 12)

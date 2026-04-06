@@ -16,8 +16,34 @@ final class PlaygroundSession: ObservableObject {
 
         var id: String { rawValue }
     }
+    
+    enum ConnectionPreset: String, CaseIterable, Identifiable {
+        case ethoraDev = "Ethora Dev"
+        case custom = "Custom"
+        
+        var id: String { rawValue }
+    }
+    
+    enum UIPreset: String, CaseIterable, Identifiable {
+        case light = "Light"
+        case dark = "Dark"
+        case custom = "Custom"
+        
+        var id: String { rawValue }
+    }
+    
+    enum AppTheme: String, CaseIterable, Identifiable {
+        case system = "System"
+        case light = "Light"
+        case dark = "Dark"
+        
+        var id: String { rawValue }
+    }
 
     @Published var authMode: AuthMode = .emailPassword
+    @Published var connectionPreset: ConnectionPreset = .ethoraDev
+    @Published var uiPreset: UIPreset = .light
+    @Published var appTheme: AppTheme = .system
 
     @Published var baseURLString: String = "https://api.ethoradev.com/v1"
     @Published var appToken: String = ""
@@ -32,6 +58,14 @@ final class PlaygroundSession: ObservableObject {
     @Published var xmppWebSocketURL: String = ""
     @Published var xmppHost: String = ""
     @Published var xmppConference: String = ""
+    
+    @Published var primaryColorHex: String = "#5E3FDE"
+    @Published var secondaryColorHex: String = "#E1E4FE"
+    @Published var incomingMessageColorHex: String = "#F2F4F8"
+    @Published var outgoingMessageColorHex: String = "#5E3FDE"
+    @Published var incomingMessageTextColorHex: String = "#111827"
+    @Published var outgoingMessageTextColorHex: String = "#FFFFFF"
+    @Published var chatBackgroundColorHex: String = ""
 
     @Published private(set) var isConnected: Bool = false
     @Published private(set) var isBusy: Bool = false
@@ -59,8 +93,24 @@ final class PlaygroundSession: ObservableObject {
         xmppWebSocketURL = snap.xmppWebSocketURL
         xmppHost = snap.xmppHost
         xmppConference = snap.xmppConference
+        primaryColorHex = snap.primaryColorHex
+        secondaryColorHex = snap.secondaryColorHex
+        incomingMessageColorHex = snap.incomingMessageColorHex
+        outgoingMessageColorHex = snap.outgoingMessageColorHex
+        incomingMessageTextColorHex = snap.incomingMessageTextColorHex
+        outgoingMessageTextColorHex = snap.outgoingMessageTextColorHex
+        chatBackgroundColorHex = snap.chatBackgroundColorHex
         if let m = AuthMode(rawValue: snap.authModeRaw) {
             authMode = m
+        }
+        if let preset = ConnectionPreset(rawValue: snap.connectionPresetRaw) {
+            connectionPreset = preset
+        }
+        if let preset = UIPreset(rawValue: snap.uiPresetRaw) {
+            uiPreset = preset
+        }
+        if let theme = AppTheme(rawValue: snap.appThemeRaw) {
+            appTheme = theme
         }
     }
 
@@ -76,7 +126,17 @@ final class PlaygroundSession: ObservableObject {
             password: password,
             xmppWebSocketURL: xmppWebSocketURL,
             xmppHost: xmppHost,
-            xmppConference: xmppConference
+            xmppConference: xmppConference,
+            connectionPresetRaw: connectionPreset.rawValue,
+            uiPresetRaw: uiPreset.rawValue,
+            appThemeRaw: appTheme.rawValue,
+            primaryColorHex: primaryColorHex,
+            secondaryColorHex: secondaryColorHex,
+            incomingMessageColorHex: incomingMessageColorHex,
+            outgoingMessageColorHex: outgoingMessageColorHex,
+            incomingMessageTextColorHex: incomingMessageTextColorHex,
+            outgoingMessageTextColorHex: outgoingMessageTextColorHex,
+            chatBackgroundColorHex: chatBackgroundColorHex
         )
         if let data = try? JSONEncoder().encode(snap) {
             UserDefaults.standard.set(data, forKey: userDefaultsKey)
@@ -108,7 +168,149 @@ final class PlaygroundSession: ObservableObject {
                 conference: conf.isEmpty ? nil : conf
             )
         }
+        c.colors = ChatColors(primary: normalizedHex(primaryColorHex), secondary: normalizedHex(secondaryColorHex))
+        c.bubleMessage = MessageBubbleStyle(
+            backgroundMessageUser: normalizedHex(outgoingMessageColorHex),
+            backgroundMessage: normalizedHex(incomingMessageColorHex),
+            colorUser: normalizedHex(outgoingMessageTextColorHex),
+            color: normalizedHex(incomingMessageTextColorHex),
+            borderRadius: 16
+        )
+        let bg = chatBackgroundColorHex.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !bg.isEmpty {
+            c.backgroundChat = BackgroundChatConfig(color: normalizedHex(bg), image: nil)
+        }
         return c
+    }
+    
+    func applyConnectionPreset() {
+        switch connectionPreset {
+        case .ethoraDev:
+            baseURLString = "https://api.ethoradev.com/v1"
+            xmppWebSocketURL = "wss://xmpp.ethoradev.com:5443/ws"
+            xmppHost = "xmpp.ethoradev.com"
+            xmppConference = "conference.xmpp.ethoradev.com"
+        case .custom:
+            break
+        }
+    }
+    
+    func applyUIPreset() {
+        switch uiPreset {
+        case .light:
+            appTheme = .light
+            primaryColorHex = "#5E3FDE"
+            secondaryColorHex = "#E1E4FE"
+            incomingMessageColorHex = "#F2F4F8"
+            outgoingMessageColorHex = "#5E3FDE"
+            incomingMessageTextColorHex = "#111827"
+            outgoingMessageTextColorHex = "#FFFFFF"
+            chatBackgroundColorHex = "#FFFFFF"
+        case .dark:
+            appTheme = .dark
+            primaryColorHex = "#8B7BFF"
+            secondaryColorHex = "#1F2937"
+            incomingMessageColorHex = "#1F2937"
+            outgoingMessageColorHex = "#6D5EF5"
+            incomingMessageTextColorHex = "#E5E7EB"
+            outgoingMessageTextColorHex = "#FFFFFF"
+            chatBackgroundColorHex = "#0B1220"
+        case .custom:
+            break
+        }
+    }
+    
+    /// Applies Setup values from a JSON object pasted by user.
+    /// Expected shape:
+    /// {
+    ///   "connectionProfile": "ethoraDev|custom",
+    ///   "auth": { "mode": "email|jwt", "email": "", "password": "", "token": "" },
+    ///   "api": { "baseUrl": "", "appToken": "", "appId": "", "useJwtPrefix": true },
+    ///   "xmpp": { "webSocketUrl": "", "host": "", "conference": "" }
+    /// }
+    func applySetupJSONObject(_ rawJSON: String) throws {
+        let trimmed = rawJSON.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw NSError(domain: "PlaygroundSession", code: 1, userInfo: [
+                NSLocalizedDescriptionKey: "JSON is empty."
+            ])
+        }
+        
+        let data = Data(trimmed.utf8)
+        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw NSError(domain: "PlaygroundSession", code: 2, userInfo: [
+                NSLocalizedDescriptionKey: "JSON root must be an object."
+            ])
+        }
+        
+        func string(_ dict: [String: Any], _ key: String) -> String? {
+            (dict[key] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        
+        func bool(_ dict: [String: Any], _ key: String) -> Bool? {
+            if let v = dict[key] as? Bool { return v }
+            if let s = dict[key] as? String {
+                let x = s.lowercased()
+                if x == "true" { return true }
+                if x == "false" { return false }
+            }
+            return nil
+        }
+        
+        if let profile = string(root, "connectionProfile")?.lowercased() {
+            if profile.contains("ethora") || profile == "ethoradev" || profile == "default" {
+                connectionPreset = .ethoraDev
+                applyConnectionPreset()
+            } else if profile == "custom" {
+                connectionPreset = .custom
+            }
+        }
+        
+        if let auth = root["auth"] as? [String: Any] {
+            if let mode = string(auth, "mode")?.lowercased() {
+                if mode == "jwt" || mode == "jwtcustom" {
+                    authMode = .jwtCustom
+                } else if mode == "email" || mode == "emailpassword" {
+                    authMode = .emailPassword
+                }
+            }
+            if let token = string(auth, "token"), !token.isEmpty {
+                jwtToken = token
+            }
+            if let mail = string(auth, "email"), !mail.isEmpty {
+                email = mail
+            }
+            if let pass = string(auth, "password"), !pass.isEmpty {
+                password = pass
+            }
+        }
+        
+        if let api = root["api"] as? [String: Any] {
+            if let base = string(api, "baseUrl"), !base.isEmpty {
+                baseURLString = base
+            }
+            if let token = string(api, "appToken") {
+                appToken = token
+            }
+            if let id = string(api, "appId") {
+                appId = id
+            }
+            if let prefix = bool(api, "useJwtPrefix") {
+                useEthoraJwtWordPrefixForAppToken = prefix
+            }
+        }
+        
+        if let xmpp = root["xmpp"] as? [String: Any] {
+            if let ws = string(xmpp, "webSocketUrl"), !ws.isEmpty {
+                xmppWebSocketURL = ws
+            }
+            if let host = string(xmpp, "host"), !host.isEmpty {
+                xmppHost = host
+            }
+            if let conf = string(xmpp, "conference"), !conf.isEmpty {
+                xmppConference = conf
+            }
+        }
     }
 
     func connect(log: PlaygroundLogStore) async {
@@ -154,14 +356,14 @@ final class PlaygroundSession: ObservableObject {
                 }
                 log.append("Auth: POST /users/login-with-email...", level: .info)
                 if tokenForAPI.isEmpty {
-                    log.append("Auth: App token пустой — Authorization = встроенный dev app JWT из SDK.", level: .info)
+                    log.append("Auth: App token is empty — Authorization uses built-in SDK dev app JWT.", level: .info)
                 } else {
                     let header = AppConfig.appAuthorizationHeader(
                         fromPaste: tokenForAPI,
                         useEthoraJwtWordPrefix: useEthoraJwtWordPrefixForAppToken
                     )
-                    let mode = useEthoraJwtWordPrefixForAppToken ? "JWT eyJ… (Ethora)" : "только eyJ… (без слова JWT)"
-                    log.append("Auth: ваш App token — \(header.count) символов в Authorization, режим: \(mode).", level: .info)
+                    let mode = useEthoraJwtWordPrefixForAppToken ? "JWT eyJ… (Ethora)" : "raw eyJ… (without JWT word)"
+                    log.append("Auth: custom App token — \(header.count) chars in Authorization, mode: \(mode).", level: .info)
                 }
                 let appTok = tokenForAPI.isEmpty ? AppConfig.appToken : tokenForAPI
                 if let tokenHint = Self.emailLoginAppTokenValidationMessage(rawToken: tokenForAPI) {
@@ -210,10 +412,10 @@ final class PlaygroundSession: ObservableObject {
         let t = rawToken.trimmingCharacters(in: .whitespacesAndNewlines)
         if t.isEmpty { return nil }
         if t.range(of: "^[a-fA-F0-9]{24}$", options: .regularExpression) != nil {
-            return "В App token попал только App ID (24 hex). Нужен полный JWT приложения (eyJ…), как appToken в web. Либо очистите App token — SDK подставит встроенный dev JWT."
+            return "App token looks like App ID only (24 hex). A full app JWT (eyJ…) is required, as in web appToken. Or leave App token empty to use built-in SDK dev JWT."
         }
         guard AppConfig.compactThreePartJWT(fromAppTokenPaste: t) != nil else {
-            return "App token не похож на JWT из трёх частей (xx.yy.zz). Проверьте .env: кавычки, переносы; нужен app JWT, не user token."
+            return "App token is not a valid 3-part JWT (xx.yy.zz). Check .env quotes/newlines; app JWT is required, not a user token."
         }
         return nil
     }
@@ -230,10 +432,25 @@ final class PlaygroundSession: ObservableObject {
         var xmppWebSocketURL: String
         var xmppHost: String
         var xmppConference: String
+        var connectionPresetRaw: String
+        var uiPresetRaw: String
+        var appThemeRaw: String
+        var primaryColorHex: String
+        var secondaryColorHex: String
+        var incomingMessageColorHex: String
+        var outgoingMessageColorHex: String
+        var incomingMessageTextColorHex: String
+        var outgoingMessageTextColorHex: String
+        var chatBackgroundColorHex: String
 
         enum CodingKeys: String, CodingKey {
             case authModeRaw, baseURLString, appToken, useEthoraJwtWordPrefixForAppToken, appId, jwtToken, email, password
             case xmppWebSocketURL, xmppHost, xmppConference
+            case connectionPresetRaw, uiPresetRaw, appThemeRaw
+            case primaryColorHex, secondaryColorHex
+            case incomingMessageColorHex, outgoingMessageColorHex
+            case incomingMessageTextColorHex, outgoingMessageTextColorHex
+            case chatBackgroundColorHex
         }
 
         init(
@@ -247,7 +464,17 @@ final class PlaygroundSession: ObservableObject {
             password: String,
             xmppWebSocketURL: String,
             xmppHost: String,
-            xmppConference: String
+            xmppConference: String,
+            connectionPresetRaw: String,
+            uiPresetRaw: String,
+            appThemeRaw: String,
+            primaryColorHex: String,
+            secondaryColorHex: String,
+            incomingMessageColorHex: String,
+            outgoingMessageColorHex: String,
+            incomingMessageTextColorHex: String,
+            outgoingMessageTextColorHex: String,
+            chatBackgroundColorHex: String
         ) {
             self.authModeRaw = authModeRaw
             self.baseURLString = baseURLString
@@ -260,6 +487,16 @@ final class PlaygroundSession: ObservableObject {
             self.xmppWebSocketURL = xmppWebSocketURL
             self.xmppHost = xmppHost
             self.xmppConference = xmppConference
+            self.connectionPresetRaw = connectionPresetRaw
+            self.uiPresetRaw = uiPresetRaw
+            self.appThemeRaw = appThemeRaw
+            self.primaryColorHex = primaryColorHex
+            self.secondaryColorHex = secondaryColorHex
+            self.incomingMessageColorHex = incomingMessageColorHex
+            self.outgoingMessageColorHex = outgoingMessageColorHex
+            self.incomingMessageTextColorHex = incomingMessageTextColorHex
+            self.outgoingMessageTextColorHex = outgoingMessageTextColorHex
+            self.chatBackgroundColorHex = chatBackgroundColorHex
         }
 
         init(from decoder: Decoder) throws {
@@ -276,6 +513,22 @@ final class PlaygroundSession: ObservableObject {
             xmppWebSocketURL = try c.decodeIfPresent(String.self, forKey: .xmppWebSocketURL) ?? ""
             xmppHost = try c.decodeIfPresent(String.self, forKey: .xmppHost) ?? ""
             xmppConference = try c.decodeIfPresent(String.self, forKey: .xmppConference) ?? ""
+            connectionPresetRaw = try c.decodeIfPresent(String.self, forKey: .connectionPresetRaw) ?? ConnectionPreset.ethoraDev.rawValue
+            uiPresetRaw = try c.decodeIfPresent(String.self, forKey: .uiPresetRaw) ?? UIPreset.light.rawValue
+            appThemeRaw = try c.decodeIfPresent(String.self, forKey: .appThemeRaw) ?? AppTheme.system.rawValue
+            primaryColorHex = try c.decodeIfPresent(String.self, forKey: .primaryColorHex) ?? "#5E3FDE"
+            secondaryColorHex = try c.decodeIfPresent(String.self, forKey: .secondaryColorHex) ?? "#E1E4FE"
+            incomingMessageColorHex = try c.decodeIfPresent(String.self, forKey: .incomingMessageColorHex) ?? "#F2F4F8"
+            outgoingMessageColorHex = try c.decodeIfPresent(String.self, forKey: .outgoingMessageColorHex) ?? "#5E3FDE"
+            incomingMessageTextColorHex = try c.decodeIfPresent(String.self, forKey: .incomingMessageTextColorHex) ?? "#111827"
+            outgoingMessageTextColorHex = try c.decodeIfPresent(String.self, forKey: .outgoingMessageTextColorHex) ?? "#FFFFFF"
+            chatBackgroundColorHex = try c.decodeIfPresent(String.self, forKey: .chatBackgroundColorHex) ?? ""
         }
+    }
+    
+    private func normalizedHex(_ raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "#000000" }
+        return trimmed.hasPrefix("#") ? trimmed : "#\(trimmed)"
     }
 }

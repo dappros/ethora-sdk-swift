@@ -25,5 +25,15 @@ struct RootTabView: View {
                     Label("Logs", systemImage: "doc.text.fill")
                 }
         }
+        .preferredColorScheme({
+            switch session.appTheme {
+            case .system:
+                return nil
+            case .light:
+                return .light
+            case .dark:
+                return .dark
+            }
+        }())
     }
 }

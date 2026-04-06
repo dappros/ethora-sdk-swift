@@ -7,11 +7,18 @@ import SwiftUI
 
 struct LogsView: View {
     @EnvironmentObject private var logs: PlaygroundLogStore
+    @State private var filterText: String = ""
 
     var body: some View {
         NavigationView {
             List {
-                ForEach(logs.lines) { line in
+                Section {
+                    TextField("Filter logs (text or level: info/error/...)", text: $filterText)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                }
+
+                ForEach(filteredLines) { line in
                     VStack(alignment: .leading, spacing: 4) {
                         Text(line.date, style: .time)
                             .font(.caption2)
@@ -31,6 +38,15 @@ struct LogsView: View {
                     }
                 }
             }
+        }
+    }
+    
+    private var filteredLines: [PlaygroundLogStore.LogLine] {
+        let query = filterText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !query.isEmpty else { return logs.lines }
+        return logs.lines.filter { line in
+            line.message.lowercased().contains(query) ||
+            line.level.rawValue.lowercased().contains(query)
         }
     }
 
