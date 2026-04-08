@@ -24,13 +24,13 @@ extension XMPPClient {
             guard let self = self else { return }
             guard self.status == .online && !self.pingInFlight else { return }
             
-            self.pingInFlight = true
-            // TODO: Implement sendPing - for now, we'll skip ping
-            // In production, implement proper XMPP ping
+            // XMPP ping not wired here yet. Do not set pingInFlight without sending a ping:
+            // it would stay true forever (no pong), and every later idle timer would bail on
+            // the guard above — adaptive ping scheduling would stop after the first idle window.
+            //
+            // When implementing: set pingInFlight = true, send ping, set lastPingId; handlePong clears state.
             // let pingId = sendPing(self.xmppStream, self.host)
             // self.lastPingId = pingId
-            
-            // This would be implemented when we have proper XMPP ping/pong
         }
     }
     

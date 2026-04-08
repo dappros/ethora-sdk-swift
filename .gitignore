@@ -1,2 +1,7 @@
 .build
 /web
+
+# Xcode / SwiftPM user-specific state (should not be committed)
+**/.swiftpm/xcode/xcuserdata/
+**/xcuserdata/
+*.xcuserstate
