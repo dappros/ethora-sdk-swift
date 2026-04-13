@@ -94,7 +94,7 @@ public class MessageLoaderQueue {
         // Don't process if already processing, client is not online, or if loading
         guard !isProcessing,
               let client = client,
-              client.checkOnline() else {
+              client.isFullyConnected() else {
             // //print("⏭️ MessageLoaderQueue: Skipping queue process - isProcessing: \(isProcessing), client online: \(client?.checkOnline() ?? false)")
             return
         }
@@ -181,20 +181,30 @@ public class MessageLoaderQueue {
         }
         
         guard let client = client,
-              client.checkOnline() else {
+              client.isFullyConnected() else {
             processedRooms.insert(room.jid)
             // //print("⚠️ MessageLoaderQueue: Cannot load for room \(room.title) (client offline)")
             return
         }
         
+        // Join/refresh MUC presence before requesting history. This matches Kotlin optimization
+        // and avoids server-side history misses when occupant presence isn't established yet.
+        await client.sendPresenceToRoom(roomJID: room.jid)
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        
         // //print("📥 MessageLoaderQueue: Loading \(pageSize) messages for room: \(room.title) (\(room.jid))")
         
+        let beforeMessageId: Int64? = {
+            guard let oldestMessage = room.messages.first else { return nil }
+            return Int64(oldestMessage.id)
+        }()
+        
         // Send get-history request (matching TypeScript: await loadMoreMessages(jid, pageSize))
-        // Note: TypeScript version doesn't pass before parameter, so we load from latest
+        // If we already have cached messages, continue pagination from the oldest known message.
         client.operations.sendGetHistory(
             chatJID: room.jid,
             max: pageSize,
-            before: nil as Int64?
+            before: beforeMessageId
         )
         
         // Wait 200ms between rooms (matching TypeScript: await new Promise((res) => setTimeout(res, 200)))
