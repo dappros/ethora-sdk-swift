@@ -826,7 +826,7 @@ public class RoomListViewModel: ObservableObject {
                 // This is needed so the user can receive history for each room
                 if !loadedRooms.isEmpty {
                     let roomJIDs = loadedRooms.compactMap { $0.jid }
-                    await client.sendPresenceToAllRooms(roomJIDs: roomJIDs)
+                    _ = await client.joinRoomsAndWait(roomJIDs: roomJIDs, timeout: 3.5)
                     
                     // Start auto-loading history for all rooms when XMPP is idle
                     if client.checkOnline() {
