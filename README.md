@@ -1,17 +1,64 @@
-# Ethora Chat Component (Swift)
+# Ethora SDK for Swift (`ethora-sdk-swift`)
 
-This SDK gives you a ready-to-use chat UI + chat core for Swift (SwiftUI, SPM).
+Production-ready iOS chat SDK with:
+- `XMPPChatCore` for auth, API, XMPP transport, stores, and messaging operations
+- `XMPPChatUI` for ready-made SwiftUI chat UI on top of the core
 
-Part of the [Ethora SDK ecosystem](https://github.com/dappros/ethora#ecosystem) — see all SDKs, tools, and sample apps. Follow cross-SDK updates in the [Release Notes](https://github.com/dappros/ethora/blob/main/RELEASE-NOTES.md).
+This repository ships as a Swift Package with both products.
 
-## Install Option 1: Swift Package Manager (Xcode)
+## Table of Contents
 
-### 1. Add package
+1. [What You Get](#what-you-get)
+2. [Requirements](#requirements)
+3. [Installation](#installation)
+4. [Quick Start (Recommended)](#quick-start-recommended)
+5. [Authentication Flows](#authentication-flows)
+6. [Using `XMPPChatCore` Without UI](#using-xmppchatcore-without-ui)
+7. [Configuration Reference (`ChatConfig`)](#configuration-reference-chatconfig)
+8. [Core API Reference](#core-api-reference)
+9. [Push Notifications (FCM)](#push-notifications-fcm)
+10. [Persistence and Stores](#persistence-and-stores)
+11. [Examples in This Repo](#examples-in-this-repo)
+12. [Production Notes and Pitfalls](#production-notes-and-pitfalls)
+13. [Build and Validation](#build-and-validation)
 
-In Xcode:
+## What You Get
 
-1. File -> Add Package Dependencies...
-2. Enter repository URL:
+### `XMPPChatCore`
+
+- XMPP over WebSocket (`Starscream`)
+- Connection lifecycle and reconnect logic
+- Presence handling (global + per-room)
+- Message operations: text, media metadata, reactions, edit, delete, typing, history (MAM)
+- REST APIs:
+  - auth (`loginWithEmail`, `loginViaJwt`, token refresh)
+  - rooms (fetch/create/private/create member actions/report/delete)
+  - file upload
+  - push registration
+- Global stores (`ConfigStore`, `UserStore`, `RoomStore`)
+- Push subscription orchestration for backend + room-level subscriptions
+
+### `XMPPChatUI`
+
+- Drop-in `ChatWrapperView`
+- Room list and single-room mode
+- Chat room screen with message list, media rendering, typing indicator, status views
+- Modals for profile/settings/report/member actions
+- Empty/loading/error states and retry surfaces
+- Unread count callback for host-app badge sync
+
+## Requirements
+
+- iOS 15+
+- Swift tools 5.9+
+- Xcode with Swift Package Manager support
+
+## Installation
+
+### Option 1: Xcode UI (most common)
+
+1. `File` -> `Add Package Dependencies...`
+2. Enter:
 
 ```text
 https://github.com/dappros/ethora-sdk-swift
@@ -21,14 +68,7 @@ https://github.com/dappros/ethora-sdk-swift
 - `XMPPChatCore`
 - `XMPPChatUI`
 
-### 2. Import modules
-
-```swift
-import XMPPChatCore
-import XMPPChatUI
-```
-
-## Install Option 2: Package.swift dependency
+### Option 2: `Package.swift`
 
 ```swift
 // Package.swift
@@ -37,7 +77,7 @@ import XMPPChatUI
 ]),
 .targets([
     .target(
-        name: "YourTarget",
+        name: "YourAppTarget",
         dependencies: [
             .product(name: "XMPPChatCore", package: "ethora-sdk-swift"),
             .product(name: "XMPPChatUI", package: "ethora-sdk-swift")
@@ -46,180 +86,327 @@ import XMPPChatUI
 ])
 ```
 
-## Install Option 3: Manual Source Copy
+### Option 3: Manual source copy (enterprise/offline)
 
-Use this when your org cannot fetch remote packages at build time (enterprise/offline/vendor-policy constraints).
-
-### 1. Copy folders into your project
-
-Copy these folders from this repository:
-
+Copy:
 - `Sources/XMPPChatCore`
 - `Sources/XMPPChatUI`
 
-### 2. Add as local package or local targets
+If you do this, ensure dependency parity for core transport (`Starscream`).
 
-Recommended: create a local Swift package in your app workspace and point it to copied sources.
+## Quick Start (Recommended)
 
-## Install Option Selection
+This path is fastest for production embedding.
 
-- Use **Option 1 (Xcode SPM)** for most app teams.
-- Use **Option 2 (`Package.swift`)** for package-first or multi-module repositories.
-- Use **Option 3 (manual copy)** for controlled distribution environments.
-
-## SDK Playground (in-repo example app)
-
-For manual testing of API + XMPP + `ChatWrapperView` without a separate host app, use **`Examples/SDKPlayground`**: Tab bar (**Setup** / **Chat** / **Logs**), local package path `../..`. See [Examples/SDKPlayground/README.md](Examples/SDKPlayground/README.md).
-
-## Chat Configuration
-
-Reliable integration flow in Swift is:
-
-1. Build `ChatConfig`
-2. Apply config with `ConfigStore.shared.mergeConfig(...)` (or `updateConfig(...)`)
-3. Render `ChatWrapperView(config:initialRoomJID:onUnreadCountChanged:)`
+### 1. Import modules
 
 ```swift
 import SwiftUI
 import XMPPChatCore
 import XMPPChatUI
+```
 
-struct EthoraChatScreen: View {
-    private let singleRoomJid = "699c6923429c2757ac8ab6a4_playground-room-1"
+### 2. Build config
 
-    private var appConfig: ChatConfig {
-        var config = ChatConfig()
-        config.appId = BuildConfig.APP_ID
-        config.baseUrl = BuildConfig.API_BASE_URL
-        config.customAppToken = BuildConfig.API_TOKEN
-        config.disableRooms = true
-        config.defaultLogin = false
+```swift
+private func makeChatConfig() -> ChatConfig {
+    var config = ChatConfig()
 
-        config.chatHeaderSettings = ChatHeaderSettingsConfig(
-            roomTitleOverrides: [singleRoomJid: "Playground Room 1"],
-            chatInfoButtonDisabled: true,
-            backButtonDisabled: true
-        )
+    // API/XMPP
+    config.baseUrl = "https://api.ethoradev.com/v1"
+    config.appId = "YOUR_APP_ID"
+    config.customAppToken = "YOUR_ETHORA_APP_TOKEN"
+    config.xmppSettings = XMPPSettings(
+        xmppServerUrl: "wss://xmpp.ethoradev.com:5443/ws",
+        host: "xmpp.ethoradev.com",
+        conference: "conference.xmpp.ethoradev.com"
+    )
 
-        config.xmppSettings = XMPPSettings(
-            xmppServerUrl: BuildConfig.XMPP_DEV_SERVER,
-            host: BuildConfig.XMPP_HOST,
-            conference: BuildConfig.XMPP_CONFERENCE
-        )
+    // Auth (JWT autologin via /users/client)
+    config.jwtLogin = JWTLoginConfig(token: "YOUR_CLIENT_JWT", enabled: true)
 
-        if !BuildConfig.USER_TOKEN.isEmpty {
-            config.jwtLogin = JWTLoginConfig(
-                token: BuildConfig.USER_TOKEN,
-                enabled: true
-            )
-        }
+    // Optional: single-room mode
+    config.disableRooms = true
 
-        return config
-    }
+    return config
+}
+```
+
+### 3. Render chat
+
+```swift
+struct ChatScreen: View {
+    private let roomJID = "my-room@conference.xmpp.ethoradev.com"
 
     var body: some View {
+        let config = makeChatConfig()
+
         ChatWrapperView(
-            config: appConfig,
-            initialRoomJID: singleRoomJid,
+            config: config,
+            initialRoomJID: roomJID,
             onUnreadCountChanged: { totalUnread in
-                // use this to update your external tab bar badge
-                print("Unread count: \(totalUnread)")
+                // Sync tab badge / app badge
+                print("Unread: \(totalUnread)")
             }
         )
         .onAppear {
-            ConfigStore.shared.mergeConfig(appConfig)
+            // Keep global config synced for other stores/components
+            ConfigStore.shared.mergeConfig(config)
         }
     }
 }
 ```
 
-### Config notes
+## Authentication Flows
 
-- `disableRooms = true` + `initialRoomJID` gives single-room mode behavior.
-- `jwtLogin` is used when `enabled = true` and token is provided.
-- `chatHeaderSettings.roomTitleOverrides` lets you replace raw JID in header.
-- `customAppToken`, `baseUrl`, `appId`, `xmppSettings` are consumed by API/XMPP flows.
+### A) JWT login (recommended for host apps)
 
-## Authentication Options
+- Set `config.jwtLogin = JWTLoginConfig(token: ..., enabled: true)`
+- `ChatWrapperViewModel` performs autologin through `AuthAPI.loginViaJwt(clientToken:)`
 
-### Option A: JWT login via config
-
-```swift
-var config = ChatConfig()
-config.jwtLogin = JWTLoginConfig(token: "YOUR_JWT", enabled: true)
-ConfigStore.shared.updateConfig(config)
-```
-
-`ChatWrapperView` will run JWT autologin automatically when this is enabled.
-
-### Option B: Email/password login
+### B) Email/password
 
 ```swift
 let response = try await AuthAPI.loginWithEmail(
     email: email,
-    password: password
+    password: password,
+    baseURL: URL(string: "https://api.ethoradev.com/v1")!,
+    appToken: "YOUR_ETHORA_APP_TOKEN"
 )
 await UserStore.shared.setUser(from: response)
 ```
 
-## Host App Unread Hook (drop-in)
-
-Use these iOS drop-in patterns to propagate unread values into app-level badges:
-
-### Pattern A: wrapper callback (immediate badge propagation)
+### C) Preloaded user
 
 ```swift
-ChatWrapperView(
-    config: appConfig,
-    initialRoomJID: singleRoomJid,
-    onUnreadCountChanged: { totalUnread in
-        appBadgeStore.setChatUnread(totalUnread)
-    }
+var config = ChatConfig()
+config.userLogin = UserLoginConfig(enabled: true, user: preAuthenticatedUser)
+```
+
+## Using `XMPPChatCore` Without UI
+
+Use this when you need a custom UI while reusing transport + operations.
+
+```swift
+import XMPPChatCore
+
+let settings = XMPPSettings(
+    xmppServerUrl: "wss://xmpp.ethoradev.com:5443/ws",
+    host: "xmpp.ethoradev.com",
+    conference: "conference.xmpp.ethoradev.com"
+)
+
+let client = XMPPClient(
+    username: "user@xmpp.ethoradev.com",
+    password: "xmppPassword",
+    settings: settings
+)
+
+client.delegate = self
+
+// Wait until fully connected if needed
+while !client.isFullyConnected() {
+    try? await Task.sleep(nanoseconds: 300_000_000)
+}
+
+await client.sendPresenceToRoom(roomJID: "room@conference.xmpp.ethoradev.com")
+
+client.operations.sendTextMessage(
+    roomJID: "room@conference.xmpp.ethoradev.com",
+    firstName: "John",
+    lastName: "Doe",
+    photo: "",
+    walletAddress: "",
+    userMessage: "Hello"
+)
+
+client.operations.sendGetHistory(
+    chatJID: "room@conference.xmpp.ethoradev.com",
+    max: 20,
+    before: nil
 )
 ```
 
-### Pattern B: reactive store binding (global app-shell badge)
+## Configuration Reference (`ChatConfig`)
+
+`ChatConfig` has many options. Key groups below.
+
+### Core connectivity
+
+- `baseUrl`: REST base URL
+- `appId`: app id used in room/push requests
+- `customAppToken`: app token for app-scoped auth requests
+- `xmppSettings`: `XMPPSettings` (WebSocket URL, host, conference)
+
+`XMPPSettings` fields:
+- `xmppServerUrl`: preferred server URL key
+- `devServer`: legacy alias, kept for compatibility
+- `host`
+- `conference`
+- `xmppPingOnSendEnabled`
+
+### Login/auth config
+
+- `googleLogin: GoogleLoginConfig`
+- `jwtLogin: JWTLoginConfig`
+- `userLogin: UserLoginConfig`
+- `customLogin: CustomLoginConfig`
+- `refreshTokens: RefreshTokensConfig`
+
+### UI/UX toggles
+
+- `disableHeader`, `disableMedia`, `disableRooms`
+- `disableInteractions`, `disableRoomMenu`, `disableRoomConfig`, `disableNewChatButton`
+- `disableProfilesInteractions`, `disableUserCount`, `disableTypingIndicator`
+- `disableChatInfo: DisableChatInfoConfig`
+- `chatHeaderSettings: ChatHeaderSettingsConfig`
+- `enableRoomsRetry: EnableRoomsRetryConfig`
+
+### Styling
+
+- `colors: ChatColors` (`primary`, `secondary`)
+- `backgroundChat: BackgroundChatConfig`
+- `bubleMessage: MessageBubbleStyle`
+- `roomListStyles`, `chatRoomStyles` (dynamic dictionaries)
+- `headerLogo`
+
+### Message pipeline and behavior hooks
+
+- `messageTextFilter: MessageTextFilterConfig`
+- `secondarySendButton: SecondarySendButtonConfig`
+- `customTypingIndicator: CustomTypingIndicatorConfig`
+- `blockMessageSendingWhenProcessing: BlockMessageSendingConfig`
+- `eventHandlers: ChatEventHandlers`
+- `messageNotifications: MessageNotificationConfig`
+- `customComponents: CustomComponentsProtocol`
+
+### Rooms and data behavior
+
+- `defaultRooms`, `customRooms`
+- `forceSetRoom`, `setRoomJidInPath`, `chatHeaderBurgerMenu`
+- `clearStoreBeforeInit`, `disableSentLogic`, `initBeforeLoad`, `newArch`
+- `botMessageAutoScroll`
+- `whitelistSystemMessage`
+- `translates: TranslationsConfig`
+- `push: PushNotificationConfig`
+
+### Important persistence detail
+
+`ConfigStore` persists only codable fields. Closure- and `AnyView`-based options are runtime-only and are not serialized.
+
+## Core API Reference
+
+### Auth
+
+- `AuthAPI.loginWithEmail(email:password:baseURL:appToken:useEthoraJwtWordPrefix:)`
+- `AuthAPI.loginViaJwt(clientToken:baseURL:)`
+- `AuthAPI.refreshToken(refreshToken:baseURL:appToken:)`
+- `AuthAPI.checkEmailExist(email:baseURL:appToken:)`
+- `AuthAPI.uploadFile(fileData:fileName:mimeType:baseURL:token:)`
+
+### Rooms
+
+- `RoomsAPI.getRooms(baseURL:appId:conferenceDomain:)`
+- `RoomsAPI.postRoom(...)`
+- `RoomsAPI.postPrivateRoom(...)`
+- `RoomsAPI.getRoomByName(...)`
+- `RoomsAPI.postAddRoomMember(...)`
+- `RoomsAPI.deleteRoomMember(...)`
+- `RoomsAPI.postReportRoom(...)`
+- `RoomsAPI.postReportMessage(...)`
+- `RoomsAPI.deleteRoom(...)`
+
+### XMPP client
+
+- `XMPPClient.checkOnline()`
+- `XMPPClient.checkConnecting()`
+- `XMPPClient.isFullyConnected()`
+- `XMPPClient.ensureConnected(timeout:)`
+- `XMPPClient.sendGlobalPresence()`
+- `XMPPClient.sendPresenceToRoom(roomJID:)`
+- `XMPPClient.joinRoomsAndWait(roomJIDs:timeout:)`
+- `XMPPClient.disconnect()`
+
+### Message operations (`client.operations`)
+
+- `sendTextMessage(...)`
+- `sendMediaMessage(...)`
+- `sendGetHistory(chatJID:max:before:otherId:)`
+- `editMessage(chatId:messageId:text:)`
+- `deleteMessage(room:msgId:)`
+- `sendMessageReaction(...)`
+- `sendTypingRequest(chatId:fullName:start:)`
+
+## Push Notifications (FCM)
+
+The SDK supports:
+- backend push token registration (`PushAPI`)
+- room-level push subscriptions (`PushSubscriptionService`)
+
+Typical sequence:
+
+1. Complete auth (`UserStore` must have user token)
+2. Attach live XMPP client
+3. Provide/update FCM token
 
 ```swift
-import SwiftUI
-import XMPPChatCore
-
-struct ChatTabBadge: View {
-    @ObservedObject private var roomStore = RoomStore.shared
-
-    var body: some View {
-        ZStack(alignment: .topTrailing) {
-            Image(systemName: "message")
-            if roomStore.totalUnreadCount > 0 {
-                Text(displayCount(roomStore.totalUnreadCount, maxCount: 99))
-                    .font(.caption2)
-                    .padding(4)
-                    .background(Color.red)
-                    .foregroundColor(.white)
-                    .clipShape(Capsule())
-                    .offset(x: 10, y: -8)
-            }
-        }
-    }
-
-    private func displayCount(_ count: Int, maxCount: Int) -> String {
-        count > maxCount ? "\(maxCount)+" : "\(count)"
-    }
-}
+PushNotificationManager.shared.attachClient(client)
+PushNotificationManager.shared.updateFCMToken(fcmToken)
 ```
 
-Important behavior:
+Optional config:
 
-- Unread values become meaningful after chat initialization and room loading.
-- If chat is not initialized yet, count is `0`.
+```swift
+config.push = PushNotificationConfig(
+    enabled: true,
+    appId: "YOUR_APP_ID",
+    pushBaseURL: "https://api.ethoradev.com/v1"
+)
+```
 
-## Persistence
+## Persistence and Stores
 
-- `ConfigStore` persists codable config fields in `UserDefaults`.
-- `UserStore` persists user/token/refresh-token in `UserDefaults`.
-- `RoomStore` tracks total unread state for badge integration.
+### `UserStore`
 
-## Build / Validate
+- Holds current user, token, refresh token, auth state
+- Persists under `UserDefaults`
+- Call `clearUser()` on logout
+
+### `RoomStore`
+
+- Holds room dictionary, active room, unread data, edit state
+- Persists room data in cache
+- Message cache is bounded (keeps recent messages per room)
+
+### `ConfigStore`
+
+- Global chat config singleton
+- `mergeConfig(_:)` for partial updates
+- `updateConfig(_:)` for full replacement
+- Persists codable part of config
+
+## Examples in This Repo
+
+- `Examples/ChatAppExample` – app integration example
+- `Examples/XMPPChatCoreMockiOSApp` – core-focused demo
+- `Examples/SDKPlayground` – interactive playground with setup/chat/log tabs
+
+Also see:
+- `INSTALLATION.md`
+- `INTEGRATION.md`
+- `features.md`
+
+## Production Notes and Pitfalls
+
+- Do not rely on bundled dev defaults from `AppConfig` in production.
+- `ConfigStore` initialization applies Ethora dev defaults; always merge/update your own `baseUrl`, `appId`, and `xmppSettings` before presenting chat.
+- Ensure your auth flow provides `xmppUsername`/`xmppPassword` before showing chat.
+- `ChatWrapperView` shows a blocking auth message when user credentials are missing.
+- For single-room mode, use full room JID: `room@conference.domain`.
+- `RoomsAPI` requires user auth in `UserStore`; call login first.
+- Non-codable config entries (closures/custom views) must be reapplied each app launch.
+
+## Build and Validation
 
 ```bash
 xcodebuild -scheme XMPPChatSwift-Package -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build
