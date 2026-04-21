@@ -6,8 +6,7 @@ import PackageDescription
 let package = Package(
     name: "XMPPChatSwift",
     platforms: [
-        .iOS(.v15),
-        .macOS(.v12)
+        .iOS(.v15)
     ],
     products: [
         .library(
@@ -16,9 +15,6 @@ let package = Package(
         .library(
             name: "XMPPChatUI",
             targets: ["XMPPChatUI"]),
-        .executable(
-            name: "XMPPChatApp",
-            targets: ["XMPPChatApp"]),
     ],
     dependencies: [
         .package(url: "https://github.com/daltoniam/Starscream.git", from: "4.0.0"),
@@ -32,9 +28,8 @@ let package = Package(
         .target(
             name: "XMPPChatUI",
             dependencies: ["XMPPChatCore"]),
-        .executableTarget(
-            name: "XMPPChatApp",
+        .testTarget(
+            name: "XMPPChatCoreTests",
             dependencies: ["XMPPChatCore"]),
     ]
 )
-
