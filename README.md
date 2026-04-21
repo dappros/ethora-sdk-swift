@@ -48,7 +48,7 @@ import XMPPChatUI
 
 ## Install Option 3: Manual Source Copy
 
-Use this if you want SDK sources in your app repository.
+Use this when your org cannot fetch remote packages at build time (enterprise/offline/vendor-policy constraints).
 
 ### 1. Copy folders into your project
 
@@ -60,6 +60,12 @@ Copy these folders from this repository:
 ### 2. Add as local package or local targets
 
 Recommended: create a local Swift package in your app workspace and point it to copied sources.
+
+## Install Option Selection
+
+- Use **Option 1 (Xcode SPM)** for most app teams.
+- Use **Option 2 (`Package.swift`)** for package-first or multi-module repositories.
+- Use **Option 3 (manual copy)** for controlled distribution environments.
 
 ## SDK Playground (in-repo example app)
 
@@ -156,9 +162,23 @@ let response = try await AuthAPI.loginWithEmail(
 await UserStore.shared.setUser(from: response)
 ```
 
-## Unread Counter (outside chat component)
+## Host App Unread Hook (drop-in)
 
-Use `RoomStore.shared.$totalUnreadCount` to drive a badge outside chat UI.
+Use these iOS drop-in patterns to propagate unread values into app-level badges:
+
+### Pattern A: wrapper callback (immediate badge propagation)
+
+```swift
+ChatWrapperView(
+    config: appConfig,
+    initialRoomJID: singleRoomJid,
+    onUnreadCountChanged: { totalUnread in
+        appBadgeStore.setChatUnread(totalUnread)
+    }
+)
+```
+
+### Pattern B: reactive store binding (global app-shell badge)
 
 ```swift
 import SwiftUI
@@ -202,5 +222,11 @@ Important behavior:
 ## Build / Validate
 
 ```bash
-swift build
+xcodebuild -scheme XMPPChatSwift-Package -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build
+```
+
+Optional package resolution check:
+
+```bash
+swift package resolve
 ```
