@@ -132,7 +132,9 @@ struct MessageListScrollView: UIViewRepresentable {
                 
                 // Constrain to scroll view's content area (not safe area, as contentInsetAdjustmentBehavior handles that)
                 NSLayoutConstraint.activate([
-                    hostingView.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
+                    // Keep content bottom-aligned when it doesn't fill the viewport,
+                    // and naturally top-aligned once content becomes taller than the screen.
+                    hostingView.topAnchor.constraint(greaterThanOrEqualTo: scrollView.contentLayoutGuide.topAnchor),
                     hostingView.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
                     hostingView.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
                     hostingView.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),

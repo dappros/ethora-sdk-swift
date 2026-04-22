@@ -135,7 +135,7 @@ JWT eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJkYXRhIjp7ImlzVXNlckRhdGFFbmNyeXB0ZWQ
     
     /// Default base URL for API calls
     public static var defaultBaseURL: URL {
-        return URL(string: "https://api.ethoradev.com/v1")!
+        return URL(string: "https://api.chat.ethora.com/v1")!
     }
 
     /// Default base URL for push registration API.
@@ -147,9 +147,9 @@ JWT eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJkYXRhIjp7ImlzVXNlckRhdGFFbmNyeXB0ZWQ
     /// Default XMPP settings (production, not dev)
     public static var defaultXMPPSettings: XMPPSettings {
         return XMPPSettings(
-            devServer: "wss://xmpp.ethoradev.com:5443/ws",
-            host: "xmpp.ethoradev.com",
-            conference: "conference.xmpp.ethoradev.com"
+            devServer: "wss://xmpp.chat.ethora.com/ws",
+            host: "xmpp.chat.ethora.com",
+            conference: "conference.xmpp.chat.ethora.com"
         )
     }
     

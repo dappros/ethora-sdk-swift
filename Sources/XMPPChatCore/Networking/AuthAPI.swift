@@ -84,7 +84,7 @@ public struct AuthAPI {
     public static func loginWithEmail(
         email: String,
         password: String,
-        baseURL: URL = URL(string: "https://api.ethoradev.com/v1")!,
+        baseURL: URL = URL(string: "https://api.chat.ethora.com/v1")!,
         appToken: String = AppConfig.appToken,
         useEthoraJwtWordPrefix: Bool = true
     ) async throws -> LoginResponse {
@@ -233,7 +233,7 @@ public struct AuthAPI {
     /// - Returns: New token and refreshToken
     public static func refreshToken(
         refreshToken: String,
-        baseURL: URL = URL(string: "https://api.ethoradev.com/v1")!,
+        baseURL: URL = URL(string: "https://api.chat.ethora.com/v1")!,
         appToken: String = AppConfig.appToken
     ) async throws -> (token: String, refreshToken: String) {
         let url = baseURL.appendingPathComponent("users/login/refresh")
@@ -351,7 +351,7 @@ public struct AuthAPI {
     /// - Returns: LoginResponse with token, refreshToken, and user data
     public static func loginViaJwt(
         clientToken: String,
-        baseURL: URL = URL(string: "https://api.ethoradev.com/v1")!
+        baseURL: URL = URL(string: "https://api.chat.ethora.com/v1")!
     ) async throws -> LoginResponse {
         let url = baseURL.appendingPathComponent("users/client")
         //print("🌐 AuthAPI.loginViaJwt: URL = \(url.absoluteString)")
@@ -415,7 +415,7 @@ public struct AuthAPI {
     /// - Returns: Boolean indicating if email exists
     public static func checkEmailExist(
         email: String,
-        baseURL: URL = URL(string: "https://api.ethoradev.com/v1")!,
+        baseURL: URL = URL(string: "https://api.chat.ethora.com/v1")!,
         appToken: String = AppConfig.appToken
     ) async throws -> Bool {
         let url = baseURL.appendingPathComponent("users/checkEmail/\(email)")
@@ -468,7 +468,7 @@ public struct AuthAPI {
         fileData: Data,
         fileName: String,
         mimeType: String,
-        baseURL: URL = URL(string: "https://api.ethoradev.com/v1")!,
+        baseURL: URL = URL(string: "https://api.chat.ethora.com/v1")!,
         token: String
     ) async throws -> UploadResponse {
         
