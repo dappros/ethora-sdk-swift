@@ -602,8 +602,8 @@ public class RoomListViewModel: ObservableObject {
         client: XMPPClient,
         currentUserId: String,
         appId: String? = nil,
-        apiBaseURL: URL = URL(string: "https://api.ethoradev.com/v1")!,
-        conferenceDomain: String = "conference.xmpp.ethoradev.com"
+        apiBaseURL: URL = URL(string: "https://api.chat.ethora.com/v1")!,
+        conferenceDomain: String = "conference.xmpp.chat.ethora.com"
     ) {
         self.client = client
         self.currentUserId = currentUserId
@@ -987,7 +987,7 @@ extension RoomListViewModel {
         let resolvedAppId = config.appId ?? AppConfig.defaultAppId
         let conference = config.xmppSettings?.conference
             ?? AppConfig.defaultXMPPSettings.conference
-            ?? "conference.xmpp.ethoradev.com"
+            ?? "conference.xmpp.chat.ethora.com"
         self.init(
             client: client,
             currentUserId: currentUserId,

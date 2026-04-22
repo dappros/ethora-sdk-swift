@@ -27,19 +27,19 @@ struct SetupView: View {
     "password": "secret"
   },
   "api": {
-    "baseUrl": "https://api.ethoradev.com/v1",
+    "baseUrl": "https://api.chat.ethora.com/v1",
     "appToken": "",
     "appId": "",
     "useJwtPrefix": true
   },
   "xmpp": {
-    "webSocketUrl": "wss://xmpp.ethoradev.com:5443/ws",
-    "host": "xmpp.ethoradev.com",
-    "conference": "conference.xmpp.ethoradev.com"
+    "webSocketUrl": "wss://xmpp.chat.ethora.com/ws",
+    "host": "xmpp.chat.ethora.com",
+    "conference": "conference.xmpp.chat.ethora.com"
   },
   "chat": {
     "singleRoomMode": false,
-    "roomJid": "699c6923429c2757ac8ab6a4_playground-room-1@conference.xmpp.ethoradev.com"
+    "roomJid": "699c6923429c2757ac8ab6a4_playground-room-1@conference.xmpp.chat.ethora.com"
   }
 }
 """

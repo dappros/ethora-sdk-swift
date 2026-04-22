@@ -45,7 +45,7 @@ final class PlaygroundSession: ObservableObject {
     @Published var uiPreset: UIPreset = .light
     @Published var appTheme: AppTheme = .system
 
-    @Published var baseURLString: String = "https://api.ethoradev.com/v1"
+    @Published var baseURLString: String = "https://api.chat.ethora.com/v1"
     @Published var appToken: String = ""
     /// When `true`, login uses `Authorization: JWT eyJ…` (Ethora / web). When `false`, only `eyJ…` (no `JWT ` / no added `Bearer`).
     @Published var useEthoraJwtWordPrefixForAppToken: Bool = true
@@ -202,10 +202,10 @@ final class PlaygroundSession: ObservableObject {
     func applyConnectionPreset() {
         switch connectionPreset {
         case .ethoraDev:
-            baseURLString = "https://api.ethoradev.com/v1"
-            xmppWebSocketURL = "wss://xmpp.ethoradev.com:5443/ws"
-            xmppHost = "xmpp.ethoradev.com"
-            xmppConference = "conference.xmpp.ethoradev.com"
+            baseURLString = "https://api.chat.ethora.com/v1"
+            xmppWebSocketURL = "wss://xmpp.chat.ethora.com/ws"
+            xmppHost = "xmpp.chat.ethora.com"
+            xmppConference = "conference.xmpp.chat.ethora.com"
         case .custom:
             break
         }

@@ -1555,6 +1555,22 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
                 }
                 finalFileName = "\(finalFileName).\(fileExtension)"
                 #endif
+
+                // Preprocess images to avoid backend payload limits (HTTP 413).
+                // Keep non-image files untouched.
+                if finalMimeType.hasPrefix("image/") {
+                    let targetMaxBytes = 1_900_000
+                    let optimized = optimizeImagePayload(
+                        data: finalData,
+                        mimeType: finalMimeType,
+                        maxBytes: targetMaxBytes
+                    )
+                    finalData = optimized.data
+                    finalMimeType = optimized.mimeType
+                    if !finalFileName.lowercased().hasSuffix(".jpg") && !finalFileName.lowercased().hasSuffix(".jpeg") {
+                        finalFileName = "\(finalFileName).jpg"
+                    }
+                }
                 
                 print("📤 ChatRoomViewModel.sendMedia: Final filename: \(finalFileName), MIME type: \(finalMimeType), size: \(finalData.count) bytes")
                 
@@ -1565,12 +1581,22 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
                 }
                 
                 print("📤 ChatRoomViewModel.sendMedia: Uploading file \(finalFileName) (\(finalData.count) bytes) to server...")
-                let uploadResponse = try await AuthAPI.uploadFile(
-                    fileData: finalData,
-                    fileName: finalFileName,
-                    mimeType: finalMimeType,
-                    token: token
-                )
+                let uploadResponse: UploadResponse
+                if finalMimeType.hasPrefix("image/") {
+                    uploadResponse = try await uploadImageWith413Fallback(
+                        initialData: finalData,
+                        fileName: finalFileName,
+                        mimeType: finalMimeType,
+                        token: token
+                    )
+                } else {
+                    uploadResponse = try await AuthAPI.uploadFile(
+                        fileData: finalData,
+                        fileName: finalFileName,
+                        mimeType: finalMimeType,
+                        token: token
+                    )
+                }
                 
                 guard let uploadResult = uploadResponse.results.first else {
                     print("❌ ChatRoomViewModel.sendMedia: No upload result in response")
@@ -1632,6 +1658,43 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
                     roomJid: room.jid
                 )
                 
+                // Add optimistic media message immediately (web parity).
+                // This guarantees the user sees the image even if server echo is delayed.
+                let optimisticMediaMessage = Message(
+                    id: messageId,
+                    user: User(
+                        id: currentUserId,
+                        name: "\(user.firstName ?? "") \(user.lastName ?? "")".trimmingCharacters(in: .whitespaces),
+                        firstName: user.firstName,
+                        lastName: user.lastName,
+                        profileImage: user.profileImage,
+                        xmppUsername: user.xmppUsername ?? currentUserId
+                    ),
+                    date: Date(),
+                    body: "media",
+                    roomJid: room.jid,
+                    isSystemMessage: "false",
+                    isMediafile: "true",
+                    locationPreview: uploadResult.locationPreview,
+                    mimetype: resultMimetype,
+                    location: resultLocation,
+                    pending: true,
+                    timestamp: Int64(Date().timeIntervalSince1970 * 1000),
+                    fileName: resultFilename,
+                    originalName: uploadResult.originalname ?? resultFilename,
+                    size: String(resultSize),
+                    xmppId: messageId
+                )
+                
+                if !messages.contains(where: { msg in
+                    msg.id == optimisticMediaMessage.id ||
+                    msg.xmppId == optimisticMediaMessage.xmppId
+                }) {
+                    messages.append(optimisticMediaMessage)
+                    room.messages = messages
+                    MessageCache.shared.saveMessages(messages, forRoomJID: room.jid)
+                }
+                
                 print("📤 ChatRoomViewModel.sendMedia: Sending media message via XMPP to room: \(room.jid)")
                 
                 // Send media message via XMPP
@@ -1642,6 +1705,10 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
                 )
                 
                 print("✅ ChatRoomViewModel.sendMedia: Media message sent via XMPP")
+
+                // In some server paths media echo/ack can be delayed or omitted.
+                // Avoid indefinite "sending..." state for successfully uploaded files.
+                scheduleMediaPendingResolution(messageId: messageId, timeoutSeconds: 8)
                 
             } catch {
                 print("❌ ChatRoomViewModel.sendMedia: Error - \(error.localizedDescription)")
@@ -1649,6 +1716,109 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
             }
         }
     }
+
+    #if os(iOS)
+    private func uploadImageWith413Fallback(
+        initialData: Data,
+        fileName: String,
+        mimeType: String,
+        token: String
+    ) async throws -> UploadResponse {
+        // Try increasingly strict limits; this handles environments with low nginx body limits.
+        let attemptCaps = [1_900_000, 1_200_000, 800_000, 500_000, 320_000, 200_000]
+        var lastError: Error?
+        
+        for (index, cap) in attemptCaps.enumerated() {
+            let candidate = optimizeImagePayload(data: initialData, mimeType: mimeType, maxBytes: cap)
+            print("📤 ChatRoomViewModel.sendMedia: Upload attempt \(index + 1)/\(attemptCaps.count), target<=\(cap)B, actual=\(candidate.data.count)B")
+            
+            do {
+                return try await AuthAPI.uploadFile(
+                    fileData: candidate.data,
+                    fileName: fileName,
+                    mimeType: candidate.mimeType,
+                    token: token
+                )
+            } catch let AuthAPIError.httpError(statusCode, body) where statusCode == 413 {
+                lastError = AuthAPIError.httpError(statusCode, body)
+                print("⚠️ ChatRoomViewModel.sendMedia: 413 on attempt \(index + 1), trying stronger compression")
+                continue
+            } catch {
+                throw error
+            }
+        }
+        
+        throw lastError ?? AuthAPIError.networkError("Image upload failed after compression attempts.")
+    }
+    
+    private func optimizeImagePayload(
+        data: Data,
+        mimeType: String,
+        maxBytes: Int
+    ) -> (data: Data, mimeType: String) {
+        guard let image = UIImage(data: data) else {
+            return (data, mimeType)
+        }
+        
+        // Normalize to JPEG first for predictable compression.
+        var quality: CGFloat = 0.82
+        var currentImage = image
+        var compressedData = currentImage.jpegData(compressionQuality: quality) ?? data
+        
+        if compressedData.count <= maxBytes {
+            return (compressedData, "image/jpeg")
+        }
+        
+        // Step 1: lower JPEG quality.
+        while compressedData.count > maxBytes && quality > 0.20 {
+            quality -= 0.08
+            if let jpeg = currentImage.jpegData(compressionQuality: quality) {
+                compressedData = jpeg
+            } else {
+                break
+            }
+        }
+        
+        if compressedData.count <= maxBytes {
+            return (compressedData, "image/jpeg")
+        }
+        
+        // Step 2: progressively downscale dimensions and recompress.
+        while compressedData.count > maxBytes {
+            let newWidth = max(currentImage.size.width * 0.80, 320)
+            let scale = newWidth / max(currentImage.size.width, 1)
+            let newHeight = max(currentImage.size.height * scale, 240)
+            let newSize = CGSize(width: newWidth, height: newHeight)
+            
+            guard let resized = resizeImage(currentImage, targetSize: newSize) else {
+                break
+            }
+            currentImage = resized
+            
+            if let jpeg = currentImage.jpegData(compressionQuality: max(quality, 0.20)) {
+                compressedData = jpeg
+            } else {
+                break
+            }
+            
+            if currentImage.size.width <= 320 || currentImage.size.height <= 240 {
+                break
+            }
+        }
+        
+        return (compressedData, "image/jpeg")
+    }
+    
+    private func resizeImage(_ image: UIImage, targetSize: CGSize) -> UIImage? {
+        let format = UIGraphicsImageRendererFormat.default()
+        format.opaque = false
+        let renderer = UIGraphicsImageRenderer(size: targetSize, format: format)
+        let rendered = renderer.image { _ in
+            image.draw(in: CGRect(origin: .zero, size: targetSize))
+        }
+        return rendered
+    }
+    #endif
     
     public func editMessage(_ messageId: String, newText: String) {
         print("✏️ ChatRoomViewModel: Editing message \(messageId) with new text: '\(newText)'")
@@ -1921,6 +2091,57 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
                 start: false
             )
             isTypingActive = false
+        }
+    }
+
+    private func scheduleMediaPendingResolution(messageId: String, timeoutSeconds: TimeInterval) {
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: UInt64(timeoutSeconds * 1_000_000_000))
+            
+            guard let index = messages.firstIndex(where: {
+                ($0.id == messageId || $0.xmppId == messageId) && ($0.pending == true)
+            }) else {
+                return
+            }
+            
+            let original = messages[index]
+            let resolved = Message(
+                id: original.id,
+                user: original.user,
+                date: original.date,
+                body: original.body,
+                roomJid: original.roomJid,
+                key: original.key,
+                coinsInMessage: original.coinsInMessage,
+                numberOfReplies: original.numberOfReplies,
+                isSystemMessage: original.isSystemMessage,
+                isMediafile: original.isMediafile,
+                locationPreview: original.locationPreview,
+                mimetype: original.mimetype,
+                location: original.location,
+                pending: false,
+                timestamp: original.timestamp,
+                showInChannel: original.showInChannel,
+                activeMessage: original.activeMessage,
+                isReply: original.isReply,
+                isDeleted: original.isDeleted,
+                mainMessage: original.mainMessage,
+                reply: original.reply,
+                reaction: original.reaction,
+                fileName: original.fileName,
+                translations: original.translations,
+                langSource: original.langSource,
+                originalName: original.originalName,
+                size: original.size,
+                xmppId: original.xmppId,
+                xmppFrom: original.xmppFrom,
+                waveForm: original.waveForm
+            )
+            
+            messages[index] = resolved
+            room.messages = messages
+            MessageCache.shared.saveMessages(messages, forRoomJID: room.jid)
+            print("✅ ChatRoomViewModel: Resolved stale media pending state for message \(messageId)")
         }
     }
 }

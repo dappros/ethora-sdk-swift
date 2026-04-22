@@ -163,10 +163,28 @@ public final class MessageParser {
         // Extract media-related fields from data attributes
         let location = d.dataAttrs["location"]?.isEmpty == false ? d.dataAttrs["location"] : nil
         let locationPreview = d.dataAttrs["locationPreview"]?.isEmpty == false ? d.dataAttrs["locationPreview"] : nil
-        let mimetype = d.dataAttrs["mimetype"]?.isEmpty == false ? d.dataAttrs["mimetype"] : nil
+        var mimetype = d.dataAttrs["mimetype"]?.isEmpty == false ? d.dataAttrs["mimetype"] : nil
         let originalName = d.dataAttrs["originalName"]?.isEmpty == false ? d.dataAttrs["originalName"] : nil
-        let fileName = d.dataAttrs["fileName"]?.isEmpty == false ? d.dataAttrs["fileName"] : nil
+        var fileName = d.dataAttrs["fileName"]?.isEmpty == false ? d.dataAttrs["fileName"] : nil
         let size = d.dataAttrs["size"]?.isEmpty == false ? d.dataAttrs["size"] : nil
+
+        // Fallbacks for media messages: some servers/clients omit `mimetype` or provide an empty string.
+        // UI relies on `mimetype` to decide how to render (image/video/audio/file).
+        if (d.dataAttrs["isMediafile"] == "true" || d.body == "media") {
+            if (mimetype == nil || mimetype?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true) {
+                if let loc = location ?? locationPreview {
+                    mimetype = inferMimeType(from: loc)
+                }
+            }
+            // If filename is missing or looks like a generic blob, build a nicer name from URL + mimetype.
+            if fileName == nil || fileName?.lowercased() == "blob" || fileName?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true {
+                if let loc = location, let ext = URL(string: loc)?.pathExtension, !ext.isEmpty {
+                    fileName = "media.\(ext)"
+                } else if let mt = mimetype, let ext = fileExtension(fromMimeType: mt) {
+                    fileName = "media.\(ext)"
+                }
+            }
+        }
         
         // Debug logging for media messages
         if d.dataAttrs["isMediafile"] == "true" {
@@ -206,6 +224,41 @@ public final class MessageParser {
             xmppId: d.xmppId,
             xmppFrom: d.xmppFrom
         )
+    }
+
+    private static func inferMimeType(from urlString: String) -> String? {
+        guard let url = URL(string: urlString) else { return nil }
+        let ext = url.pathExtension.lowercased()
+        switch ext {
+        case "jpg", "jpeg": return "image/jpeg"
+        case "png": return "image/png"
+        case "gif": return "image/gif"
+        case "webp": return "image/webp"
+        case "heic", "heif": return "image/heic"
+        case "mp4": return "video/mp4"
+        case "mov": return "video/quicktime"
+        case "m4a": return "audio/m4a"
+        case "mp3": return "audio/mpeg"
+        case "wav": return "audio/wav"
+        case "pdf": return "application/pdf"
+        default: return nil
+        }
+    }
+
+    private static func fileExtension(fromMimeType mimeType: String) -> String? {
+        let mt = mimeType.lowercased()
+        if mt == "image/jpeg" { return "jpg" }
+        if mt == "image/png" { return "png" }
+        if mt == "image/gif" { return "gif" }
+        if mt == "image/webp" { return "webp" }
+        if mt == "image/heic" { return "heic" }
+        if mt == "video/mp4" { return "mp4" }
+        if mt == "video/quicktime" { return "mov" }
+        if mt == "audio/m4a" { return "m4a" }
+        if mt == "audio/mpeg" { return "mp3" }
+        if mt == "audio/wav" { return "wav" }
+        if mt.contains("pdf") { return "pdf" }
+        return nil
     }
     
     // Helper to convert [String: String] to [String: MessageTranslation]
