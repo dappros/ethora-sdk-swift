@@ -237,7 +237,18 @@ public struct MessageStats: Codable, Equatable {
 // Convenience initializer from ApiRoom (mirrors createRoomFromApi.ts)
 public extension Room {
     init(apiRoom: ApiRoom, conferenceDomain: String, usersArrayLength: Int = 0) {
-        let jid = "\(apiRoom.name)@\(conferenceDomain)"
+        let normalizedConference: String = {
+            var value = conferenceDomain.trimmingCharacters(in: .whitespacesAndNewlines)
+            if value.isEmpty { return AppConfig.defaultXMPPSettings.conference ?? "conference.xmpp.chat.ethora.com" }
+            value = value.replacingOccurrences(of: "conferenceconference.", with: "conference.")
+            value = value.replacingOccurrences(of: "conferenceconference", with: "conference.")
+            if value.hasPrefix("conference.") { return value }
+            return "conference.\(value)"
+        }()
+        // Always rebuild room JID with the currently resolved conference domain.
+        let bareNameWithNoResource = apiRoom.name.components(separatedBy: "/").first ?? apiRoom.name
+        let bareName = bareNameWithNoResource.components(separatedBy: "@").first ?? bareNameWithNoResource
+        let jid = "\(bareName)@\(normalizedConference)"
         self.init(
             id: apiRoom._id ?? apiRoom.name,
             jid: jid,

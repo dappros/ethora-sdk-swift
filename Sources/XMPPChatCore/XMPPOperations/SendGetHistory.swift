@@ -64,7 +64,7 @@ extension XMPPOperations {
             ? chatJID 
             : "\(chatJID)@\(conferenceDomain)"
         
-        let id = otherId ?? "get-history:\(Int64(Date().timeIntervalSince1970 * 1000))"
+        let id = otherId ?? "get-history:\(UUID().uuidString)"
         
         // Build MAM query stanza
         // xml('max', {}, max.toString())

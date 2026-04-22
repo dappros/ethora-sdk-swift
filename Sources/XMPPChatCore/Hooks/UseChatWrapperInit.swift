@@ -192,14 +192,20 @@ public class ChatWrapperViewModel: ObservableObject {
             return
         }
         
-        let xmppUsername: String
-        if let username = user.xmppUsername, !username.isEmpty {
-            xmppUsername = username
-        } else if let wallet = user.walletAddress, !wallet.isEmpty {
-            xmppUsername = wallet
-        } else {
-            xmppUsername = user.email ?? ""
-        }
+        let xmppHost = (config.xmppSettings?.host ?? ConfigStore.shared.config.xmppSettings?.host ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let xmppUsername: String = {
+            if let username = user.xmppUsername?.trimmingCharacters(in: .whitespacesAndNewlines), !username.isEmpty {
+                let local = username.components(separatedBy: "@").first ?? username
+                return xmppHost.isEmpty ? local : "\(local)@\(xmppHost)"
+            }
+            if let wallet = user.walletAddress, !wallet.isEmpty {
+                let local = walletToUsername(wallet)
+                return xmppHost.isEmpty ? local : "\(local)@\(xmppHost)"
+            }
+            let local = (user.email ?? "").components(separatedBy: "@").first ?? (user.email ?? "")
+            return xmppHost.isEmpty ? local : "\(local)@\(xmppHost)"
+        }()
         
         guard !xmppUsername.isEmpty else {
             await MainActor.run {
@@ -266,6 +272,12 @@ public class ChatWrapperViewModel: ObservableObject {
             self.loadingText = nil
             // Connection might still flap later – `isConnectionLost` is driven by ConnectionManager.
         }
+
+        // FCM backend + MUC push subscriptions need the live XMPP client (RN: after user + client ready).
+        await MainActor.run {
+            PushNotificationManager.shared.attachClient(activeClient)
+        }
+        await PushNotificationManager.shared.refreshRoomPushSubscriptions()
     }
     
     // MARK: - Helpers
@@ -301,8 +313,16 @@ public class ChatWrapperViewModel: ObservableObject {
         }
         
         do {
-            let baseURL = URL(string: config.baseUrl ?? "https://api.ethoradev.com/v1")!
-            let conferenceDomain = config.xmppSettings?.conference ?? "conference.xmpp.ethoradev.com"
+            let baseURLString = (config.baseUrl ?? "https://api.chat.ethora.com/v1")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let baseURL = URL(string: baseURLString), !baseURLString.isEmpty else {
+                await MainActor.run {
+                    self.roomsRetryState = .noRooms
+                    self.loadingText = nil
+                }
+                return
+            }
+            let conferenceDomain = config.xmppSettings?.conference ?? "conference.xmpp.chat.ethora.com"
             let rooms = try await RoomsAPI.getRooms(
                 baseURL: baseURL,
                 appId: config.appId ?? AppConfig.defaultAppId,
@@ -352,7 +372,11 @@ public class ChatWrapperViewModel: ObservableObject {
         }
         
         // If no custom function is provided, fall back to AuthAPI.refreshToken using UserStore.refreshToken.
-        let baseURL = URL(string: config.baseUrl ?? "https://api.ethoradev.com/v1")!
+        let baseURLString = (config.baseUrl ?? "https://api.chat.ethora.com/v1")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let baseURL = URL(string: baseURLString), !baseURLString.isEmpty else {
+            return
+        }
         let currentRefreshToken = UserStore.shared.refreshToken
         
         guard let refreshToken = currentRefreshToken, !refreshToken.isEmpty else {

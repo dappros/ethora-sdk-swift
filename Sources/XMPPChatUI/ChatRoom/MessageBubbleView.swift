@@ -19,6 +19,9 @@ struct MessageBubbleView: View {
     let onDelete: (() -> Void)?
     let onReport: (() -> Void)?
     let onMediaTap: ((Message) -> Void)?
+    @Environment(\.colorScheme) private var colorScheme
+    
+    private var bubbleStyle: MessageBubbleStyle? { ConfigStore.shared.config.bubleMessage }
     
     @State private var showContextMenu = false
     @State private var showReactionPicker = false
@@ -80,7 +83,7 @@ struct MessageBubbleView: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
-            .background(isUser ? Color.blue : chatIncomingBubbleBackground())
+            .background(isUser ? outgoingBubbleBackground() : incomingBubbleBackground())
             .cornerRadius(16)
             .shadow(color: .black.opacity(0.05), radius: 1, x: 0, y: 1)
             .overlay(
@@ -132,7 +135,7 @@ struct MessageBubbleView: View {
                 if message.body.lowercased() != "media" {
                     UniversalMarkdownTextView(
                         text: message.body,
-                        foregroundColor: isUser ? .white : .primary
+                        foregroundColor: messageTextColor
                     )
                     .fixedSize(horizontal: false, vertical: true)
                     .multilineTextAlignment(isUser ? .trailing : .leading)
@@ -218,6 +221,39 @@ struct MessageBubbleView: View {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
         #endif
+    }
+    
+    private func outgoingBubbleBackground() -> Color {
+        if let configured = bubbleStyle?.backgroundMessageUser, !configured.isEmpty {
+            return Color(hex: configured)
+        }
+        if let primary = ConfigStore.shared.config.colors?.primary, !primary.isEmpty {
+            let color = Color(hex: primary)
+            return colorScheme == .dark ? color.opacity(0.82) : color
+        }
+        return colorScheme == .dark
+            ? Color(red: 0.07, green: 0.42, blue: 0.84)
+            : Color.blue
+    }
+    
+    private func incomingBubbleBackground() -> Color {
+        if let configured = bubbleStyle?.backgroundMessage, !configured.isEmpty {
+            return Color(hex: configured)
+        }
+        return chatIncomingBubbleBackground()
+    }
+    
+    private var messageTextColor: Color {
+        if isUser {
+            if let configured = bubbleStyle?.colorUser, !configured.isEmpty {
+                return Color(hex: configured)
+            }
+            return .white
+        }
+        if let configured = bubbleStyle?.color, !configured.isEmpty {
+            return Color(hex: configured)
+        }
+        return .primary
     }
 }
 

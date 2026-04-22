@@ -14,12 +14,11 @@ import WebKit
 import AVKit
 import PhotosUI
 import UniformTypeIdentifiers
-import UIKit
 #endif
 import XMPPChatCore
 import AVFoundation
 
-// Preference key for scroll metrics tracking
+// Preference key for scroll metrics tracking (matches TypeScript getScrollParams)
 struct ScrollMetrics: Equatable {
     let scrollTop: CGFloat
     let scrollHeight: CGFloat
@@ -29,19 +28,11 @@ struct ScrollMetrics: Equatable {
 struct ScrollMetricsKey: PreferenceKey {
     static var defaultValue: ScrollMetrics = ScrollMetrics(scrollTop: 0, scrollHeight: 0, clientHeight: 0)
     static func reduce(value: inout ScrollMetrics, nextValue: () -> ScrollMetrics) {
-        let next = nextValue()
-        // We receive two metric sources:
-        // - inner content: scrollTop + scrollHeight (clientHeight = 0)
-        // - outer viewport: clientHeight only
-        // Keep each field from the source that owns it.
-        value = ScrollMetrics(
-            scrollTop: next.scrollHeight > 0 ? next.scrollTop : value.scrollTop,
-            scrollHeight: next.scrollHeight > 0 ? next.scrollHeight : value.scrollHeight,
-            clientHeight: next.clientHeight > 0 ? next.clientHeight : value.clientHeight
-        )
+        value = nextValue()
     }
 }
 
+// Preference key for content height tracking
 struct ContentHeightKey: PreferenceKey {
     static var defaultValue: CGFloat = 0
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
@@ -52,51 +43,295 @@ struct ContentHeightKey: PreferenceKey {
 public struct ChatRoomView: View {
     @Environment(\.presentationMode) var presentationMode
     @ObservedObject var viewModel: ChatRoomViewModel
-    @State internal var messageText: String = ""
-    @State internal var scrollOffset: CGFloat = 0
-    @State internal var showScrollButton: Bool = false
-    @State internal var newMessagesCount: Int = 0
-    @State internal var lastMessageCount: Int = 0
-    @State internal var scrollHeight: CGFloat = 0
-    @State internal var scrollTop: CGFloat = 0
-    @State internal var clientHeight: CGFloat = 0
-    @State internal var contentHeight: CGFloat = 0
-    @State internal var isUserScrolledUp: Bool = false
-    @State internal var atBottom: Bool = true
-    @State internal var scrollProxy: ScrollViewProxy?
-    @FocusState internal var isInputFocused: Bool
-    @State internal var showConnectionStatus: Bool = true
-    @State internal var dragOffset: CGFloat = 0
-    @State internal var showSearch: Bool = false
-    @State internal var showRoomInfo: Bool = false
-    @State internal var selectedMessageForMenu: Message? = nil
-    @State internal var showThread: Bool = false
-    @State internal var selectedMessageForThread: Message? = nil
-    @State internal var showReportModal: Bool = false
-    @State internal var messageToReport: Message? = nil
-    @State internal var showFullScreenImage: Bool = false
-    @State internal var showFullScreenVideo: Bool = false
-    @State internal var showFullScreenPDF: Bool = false
-    @State internal var selectedMediaMessage: Message? = nil
-    @State internal var needsInitialScroll: Bool = true
-    @State internal var allowLoadMore: Bool = false
-    @State internal var isHistoryPaginationInProgress: Bool = false
-    @ObservedObject internal var connectionManager: ConnectionManager
-    @State internal var lastHistoryCheckAt: Date?
+    @State private var messageText: String = ""
+    @State private var scrollOffset: CGFloat = 0
+    @State private var showScrollButton: Bool = false
+    @State private var newMessagesCount: Int = 0
+    @State private var lastMessageCount: Int = 0
+    @State private var scrollHeight: CGFloat = 0
+    @State private var scrollTop: CGFloat = 0
+    @State private var clientHeight: CGFloat = 0
+    @State private var contentHeight: CGFloat = 0
+    @State private var isUserScrolledUp: Bool = false
+    @State private var atBottom: Bool = true
+    @State private var scrollProxy: ScrollViewProxy?
+    @FocusState private var isInputFocused: Bool
+    @State private var showConnectionStatus: Bool = true
+    @State private var dragOffset: CGFloat = 0
+    @State private var showSearch: Bool = false
+    @State private var showRoomInfo: Bool = false
+    @State private var selectedMessageForMenu: Message? = nil
+    @State private var showThread: Bool = false
+    @State private var selectedMessageForThread: Message? = nil
+    @State private var showReportModal: Bool = false
+    @State private var messageToReport: Message? = nil
+    @State private var showFullScreenImage: Bool = false
+    @State private var showFullScreenVideo: Bool = false
+    @State private var showFullScreenPDF: Bool = false
+    @State private var selectedMediaMessage: Message? = nil
+    @ObservedObject private var connectionManager: ConnectionManager
     
-    internal let historyCheckThrottleInterval: TimeInterval = 0.15
+    private var chatBackgroundColor: Color {
+        let effectiveConfig = viewModel.config ?? ConfigStore.shared.config
+        if let hex = effectiveConfig.backgroundChat?.color, !hex.isEmpty {
+            return Color(hex: hex)
+        }
+        #if os(iOS)
+        return Color(uiColor: .systemGray6)
+        #else
+        return Color(NSColor.windowBackgroundColor)
+        #endif
+    }
     
     public init(viewModel: ChatRoomViewModel) {
         self.viewModel = viewModel
         self._connectionManager = ObservedObject(wrappedValue: ConnectionManager.shared)
     }
     
+    // Helper function to build messages list
+    @ViewBuilder
+    private func buildMessagesList(proxy: ScrollViewProxy) -> some View {
+        LazyVStack(spacing: 8) {
+            // Error message banner at top (if there's an error)
+            if let errorMessage = viewModel.loadError {
+                VStack(spacing: 8) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundColor(.orange)
+                        Text(errorMessage)
+                            .font(.caption)
+                            .foregroundColor(.primary)
+                        Spacer()
+                        Button(action: {
+                            // Retry loading messages
+                            viewModel.loadError = nil
+                            viewModel.loadMessages(forceReload: true)
+                        }) {
+                            Text("Retry")
+                                .font(.caption)
+                                .fontWeight(.semibold)
+                                .foregroundColor(.blue)
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(Color.orange.opacity(0.1))
+                    .cornerRadius(8)
+                }
+                .padding(.horizontal)
+                .padding(.top, 8)
+            }
+            
+                            // Loader at top when loading more (matches TypeScript)
+                            if viewModel.isLoadingMore {
+                                HStack {
+                                    ProgressView()
+                                        .scaleEffect(0.8)
+                                    Text("Loading more messages...")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                                .padding()
+                                .frame(maxWidth: .infinity)
+                                .id("loader-top")
+                            }
+                            
+                            // Filter messages - matches React Native MessageList.tsx logic exactly
+                            // React Native: const nonDeletedMessages = addReplyMessages.filter((item: IMessage) => !item.deleted && !item.isDeleted);
+                            // Then: item.showInChannel === "true" || ((!item.isReply || item.isReply === "false") && !item.mainMessage)
+                            let filteredMessages = viewModel.messages.filter { msg in
+                                // Match TypeScript: if (!message?.body) return;
+                                guard !msg.body.isEmpty else {
+                                    return false
+                                }
+                                
+                                // Match TypeScript: if (message.deleted || message.isDeleted) return;
+                                guard msg.isDeleted != true else {
+                                    return false
+                                }
+                                
+                                // Match React Native MessageList.tsx filter logic:
+                                // item.showInChannel === "true" || ((!item.isReply || item.isReply === "false") && !item.mainMessage)
+                                let showInChannel = msg.showInChannel == "true"
+                                let isNotReply = msg.isReply != true && (msg.isReply == nil || msg.isReply == false)
+                                let hasNoMainMessage = msg.mainMessage == nil || msg.mainMessage?.isEmpty == true
+                                let shouldShow = showInChannel || (isNotReply && hasNoMainMessage)
+                                
+                                guard shouldShow else {
+                                    return false
+                                }
+                                
+                                // For pending messages, check if there's a confirmed version
+                                if let pending = msg.pending, pending {
+                                    // Check if there's a confirmed message with:
+                                    // 1. Same content and user
+                                    // 2. Or matching ID/xmppId
+                                    let hasConfirmedVersion = viewModel.messages.contains { otherMsg in
+                                        guard otherMsg.pending != true else { return false }
+                                        
+                                        // Match by ID/xmppId
+                                        if otherMsg.id == msg.id ||
+                                           (otherMsg.xmppId != nil && otherMsg.xmppId == msg.id) ||
+                                           (msg.xmppId != nil && msg.xmppId == otherMsg.id) ||
+                                           (otherMsg.xmppId != nil && msg.xmppId != nil && otherMsg.xmppId == msg.xmppId) {
+                                            return true
+                                        }
+                                        
+                                        // Match by content and user (fallback)
+                                        if otherMsg.body == msg.body &&
+                                           (otherMsg.user.id == msg.user.id || 
+                                            otherMsg.user.xmppUsername == msg.user.xmppUsername) {
+                                            return true
+                                        }
+                                        
+                                        return false
+                                    }
+                                    // Only show pending if there's NO confirmed version
+                                    return !hasConfirmedVersion
+                                }
+                                
+                                // Keep all non-pending messages
+                                return true
+                            }
+                            
+                            ForEach(Array(filteredMessages.enumerated()), id: \.element.id) { index, message in
+                                let previousMessage = index > 0 ? filteredMessages[index - 1] : nil
+                                let nextMessage = index < filteredMessages.count - 1 ? filteredMessages[index + 1] : nil
+                                
+                                // Check if we need to show date separator
+                                let showDateSeparator = shouldShowDateSeparator(
+                                    currentMessage: message,
+                                    previousMessage: previousMessage
+                                )
+                                
+                                let nextMessageHasDateSeparator = nextMessage != nil ? shouldShowDateSeparator(
+                                    currentMessage: nextMessage!,
+                                    previousMessage: message
+                                ) : false
+                                
+                                let showAvatar = nextMessage == nil || 
+                                                 nextMessage?.user.id != message.user.id || 
+                                                 nextMessageHasDateSeparator
+                                
+                                // Date separator
+                                if showDateSeparator {
+                                    DateSeparatorView(date: message.date)
+                                        .padding(.vertical, 8)
+                                }
+                                
+                                // Determine if message is from current user - break up complex expression
+                                let isCurrentUserById = message.user.id == viewModel.currentUserId
+                                let isCurrentUserByXmpp: Bool = {
+                                    guard let currentUserXmpp = viewModel.currentUserXmppUsername,
+                                          let messageUserXmpp = message.user.xmppUsername else {
+                                    return false
+                                    }
+                                    let normalizedCurrent = currentUserXmpp.lowercased().trimmingCharacters(in: .whitespaces)
+                                    let normalizedMessage = messageUserXmpp.lowercased().trimmingCharacters(in: .whitespaces)
+                                    return normalizedCurrent == normalizedMessage
+                                }()
+                                let isUser = isCurrentUserById || isCurrentUserByXmpp
+                                
+                                MessageBubbleView(
+                                message: message,
+                                    isUser: isUser,
+                                    showAvatar: showAvatar,
+                                    previousMessage: previousMessage,
+                                    onLongPress: {
+                                        // Context menu will be shown via .contextMenu modifier
+                                    },
+                                    onRetry: nil,
+                                    // onRetry: {
+                                    //     // Retry sending failed message
+                                    //     if message.pending == false && message.xmppId == nil {
+                                    //         viewModel.resendMessage(message)
+                                    //     }
+                                    // },
+                                    onReactionTap: { emoji in
+                                        viewModel.addReaction(messageId: message.id, emoji: emoji)
+                                    },
+                                    onReply: {
+                                        selectedMessageForThread = message
+                                        showThread = true
+                                    },
+                                    onEdit: isUser ? {
+                                        viewModel.isEditing = true
+                                        viewModel.editText = message.body
+                                        viewModel.editMessageId = message.id
+                                        messageText = message.body
+                                    } : nil,
+                                    onDelete: isUser ? {
+                                        viewModel.deleteMessage(message.id)
+                                    } : nil,
+                                    onReport: nil,
+                                    onMediaTap: { mediaMessage in
+                                        // Open full screen media preview
+                                        selectedMediaMessage = mediaMessage
+                                        
+                                        let mimeType: String = {
+                                            if let existingMimeType = mediaMessage.mimetype, !existingMimeType.isEmpty {
+                                                return existingMimeType
+                                            } else if let location = mediaMessage.location {
+                                                return inferMimeType(from: location)
+                                            } else {
+                                                return "application/octet-stream"
+                                            }
+                                        }()
+                                        
+                                        if mimeType.hasPrefix("image/") {
+                                            showFullScreenImage = true
+                                        } else if mimeType.hasPrefix("video/") {
+                                            showFullScreenVideo = true
+                                        } else if mimeType.contains("pdf") {
+                                            showFullScreenPDF = true
+                                        } else {
+                                            // For other files, open generic file preview modal (existing UI)
+                                            showFullScreenPDF = false
+                                        }
+                                    }
+//                                    onReport: !isUser ? {
+//                                        messageToReport = message
+//                                        showReportModal = true
+//                                    } : nil
+                            )
+                            .id(message.id)
+                            .onAppear {
+                                // Track when message becomes visible for scroll button
+                                // Use debounce to avoid excessive updates
+                                Task { @MainActor in
+                                    try? await Task.sleep(nanoseconds: 100_000_000) // 100ms debounce
+                                    
+                                    let totalMessages = filteredMessages.count
+                                    // If we see one of the last 5 messages, we're at bottom
+                                    let isNearBottom = index >= totalMessages - 5
+                                    
+                                    if isNearBottom {
+                                        // At bottom - hide button
+                                        showScrollButton = false
+                                        isUserScrolledUp = false
+                                        atBottom = true
+                                        newMessagesCount = 0
+                                    } else {
+                                        // Scrolled up - show button
+                                        showScrollButton = true
+                                        isUserScrolledUp = true
+                                        atBottom = false
+                                    }
+                                }
+                            }
+            }
+        }
+        .padding()
+    }
+    
     public var body: some View {
         VStack(spacing: 0) {
+            // Connection Status
             if showConnectionStatus {
                 ConnectionStatusView(connectionManager: connectionManager)
             }
             
+            // Header
             ChatHeaderView(
                 room: viewModel.room,
                 isTyping: viewModel.isTyping,
@@ -104,198 +339,574 @@ public struct ChatRoomView: View {
                 messages: viewModel.messages,
                 currentUserId: viewModel.currentUserId,
                 currentUserXmppUsername: viewModel.currentUserXmppUsername,
-                config: viewModel.config,
-                onBack: { presentationMode.wrappedValue.dismiss() },
-                onInfo: { showRoomInfo = true }
+                onBack: {
+                    presentationMode.wrappedValue.dismiss()
+                },
+                onInfo: {
+                    showRoomInfo = true
+                }
             )
             
+            // Off-Clinic Hours Banner
             OffClinicHoursBanner()
             
+            // Messages List
             ZStack {
                 ScrollViewReader { proxy in
                     ScrollView {
-                        MessagesListView(
-                            viewModel: viewModel,
-                            messageText: $messageText,
-                            selectedMessageForThread: $selectedMessageForThread,
-                            showThread: $showThread,
-                            selectedMediaMessage: $selectedMediaMessage,
-                            showFullScreenImage: $showFullScreenImage,
-                            showFullScreenVideo: $showFullScreenVideo,
-                            showFullScreenPDF: $showFullScreenPDF,
-                            messageToReport: $messageToReport,
-                            showReportModal: $showReportModal,
-                            proxy: proxy
-                        )
-                        .padding()
-                        .background(
-                            GeometryReader { geometry in
-                                Color.clear
-                                    .preference(key: ContentHeightKey.self, value: geometry.size.height)
-                                    .preference(key: ScrollMetricsKey.self, value: ScrollMetrics(
-                                        scrollTop: max(0, -geometry.frame(in: .named("messageScroll")).minY),
-                                        scrollHeight: geometry.size.height,
-                                        clientHeight: 0
-                                    ))
-                            }
+                        buildMessagesList(proxy: proxy)
+                    }
+                    .coordinateSpace(name: "messageScroll")
+                    .sheet(isPresented: $showThread) {
+                        if let message = selectedMessageForThread,
+                           let currentUser = UserStore.shared.currentUser {
+                            ThreadView(
+                                activeMessage: message,
+                                currentUser: currentUser,
+                                onClose: {
+                                    showThread = false
+                                    selectedMessageForThread = nil
+                                },
+                                onSendMessage: { text, alsoSendToMain in
+                                    viewModel.sendReply(messageId: message.id, text: text, alsoSendToMain: alsoSendToMain)
+                                },
+                                onSendMedia: { data, type in
+                                    viewModel.sendMedia(data: data, type: type)
+                                }
+                            )
+                        }
+                    }
+                    .sheet(isPresented: $showReportModal) {
+                        if let message = messageToReport {
+                            ReportModal(
+                                type: .message,
+                                onReport: { reason, additionalInfo in
+                                    Task {
+                                        do {
+                                            // Extract chat name from room JID
+                                            let chatName = viewModel.room.jid.components(separatedBy: "@").first ?? viewModel.room.jid
+                                            let _ = try await RoomsAPI.postReportMessage(
+                                                chatName: chatName,
+                                                messageId: message.id,
+                                                category: reason,
+                                                text: additionalInfo.isEmpty ? nil : additionalInfo
+                                            )
+                                            //print("✅ Message reported successfully")
+                                        } catch {
+                                            //print("❌ Failed to report message: \(error.localizedDescription)")
+                                        }
+                                    }
+                                },
+                                onClose: {
+                                    showReportModal = false
+                                    messageToReport = nil
+                                }
+                            )
+                        }
+                    }
+                    .sheet(isPresented: $showRoomInfo) {
+                        RoomInfoModal(
+                            room: viewModel.room,
+                            members: viewModel.room.members ?? [],
+                            onClose: { showRoomInfo = false },
+                            onEdit: nil,
+                            onLeave: nil,
+                            onDelete: nil
                         )
                     }
-                    #if os(iOS)
-                    .scrollDismissesKeyboardIfAvailable()
-                    .simultaneousGesture(DragGesture().onChanged { _ in dismissKeyboard() })
-                    .simultaneousGesture(TapGesture().onEnded { dismissKeyboard() })
-                    #endif
-                    .coordinateSpace(name: "messageScroll")
-                    .chatRoomModals(
-                        showThread: $showThread,
-                        selectedMessageForThread: $selectedMessageForThread,
-                        showReportModal: $showReportModal,
-                        messageToReport: $messageToReport,
-                        showRoomInfo: $showRoomInfo,
-                        showFullScreenImage: $showFullScreenImage,
-                        showFullScreenVideo: $showFullScreenVideo,
-                        showFullScreenPDF: $showFullScreenPDF,
-                        selectedMediaMessage: $selectedMediaMessage,
-                        viewModel: viewModel
-                    )
+                    .fullScreenCover(isPresented: $showFullScreenImage) {
+                        if let message = selectedMediaMessage, let urlString = message.location, let url = URL(string: urlString) {
+                            FullScreenImageView(imageURL: url, onClose: {
+                                showFullScreenImage = false
+                                selectedMediaMessage = nil
+                            })
+                        }
+                    }
+                    .fullScreenCover(isPresented: $showFullScreenVideo) {
+                        if let message = selectedMediaMessage, let urlString = message.location, let url = URL(string: urlString) {
+                            FullScreenVideoView(videoURL: url, onClose: {
+                                showFullScreenVideo = false
+                                selectedMediaMessage = nil
+                            })
+                        }
+                    }
+                    .sheet(isPresented: $showFullScreenPDF) {
+                        if let message = selectedMediaMessage, let urlString = message.location, let url = URL(string: urlString) {
+                            FullScreenPDFView(pdfURL: url, fileName: message.fileName ?? message.originalName ?? "Document.pdf", onClose: {
+                                showFullScreenPDF = false
+                                selectedMediaMessage = nil
+                            })
+                        }
+                    }
                     .background(
+                        // Track scroll position and content dimensions
                         GeometryReader { outerGeometry in
                             Color.clear
-                                .preference(key: ScrollMetricsKey.self, value: ScrollMetrics(
-                                    scrollTop: 0, scrollHeight: 0, clientHeight: outerGeometry.size.height
-                                ))
+                                .background(
+                                    GeometryReader { innerGeometry in
+                                        Color.clear
+                                            .preference(
+                                                key: ScrollMetricsKey.self,
+                                                value: ScrollMetrics(
+                                                    scrollTop: max(0, innerGeometry.frame(in: .named("messageScroll")).minY),
+                                                    scrollHeight: innerGeometry.size.height,
+                                                    clientHeight: outerGeometry.size.height
+                                                )
+                                            )
+                                    }
+                                )
                         }
                     )
+                    .refreshable {
+                        // Pull to refresh - load latest messages
+                        // This also retries after errors
+                        //print("🔄 Pull to refresh triggered from UI")
+                        
+                        // Clear any errors when user pulls to refresh
+                        viewModel.loadError = nil
+                        
+                        // Викликаємо refreshMessages для завантаження нових повідомлень
+                        viewModel.refreshMessages()
+                        
+                        // Wait for refresh to complete (isRefreshing becomes false)
+                        // This allows the refreshable spinner to show properly
+                        var attempts = 0
+                        let maxAttempts = 60 // 6 seconds (60 * 100ms) - longer timeout
+                        
+                        while attempts < maxAttempts && viewModel.isRefreshing {
+                            try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
+                            attempts += 1
+                        }
+                        
+                        // Force clear isRefreshing if still set after timeout
+                        if viewModel.isRefreshing {
+                            viewModel.isRefreshing = false
+                            //print("⏱️ Force clearing isRefreshing after timeout")
+                        }
+                        
+                        if !viewModel.isRefreshing {
+                            //print("✅ Pull-to-refresh завершено: нові повідомлення завантажено")
+                        } else {
+                            //print("⏱️ Timeout очікування нових повідомлень після pull-to-refresh")
+                        }
+                    }
                     .onPreferenceChange(ScrollMetricsKey.self) { metrics in
+                        // Debounced scroll handler (combines checkAtBottom and checkIfLoadMoreMessages)
                         handleScroll(metrics: metrics, proxy: proxy)
                     }
                     .onPreferenceChange(ContentHeightKey.self) { height in
                         contentHeight = height
                     }
                     .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("MessagesLoaded"))) { notification in
-                        handleMessagesLoaded(notification, proxy: proxy)
+                        // Messages finished loading - scroll position restoration happens in viewModel
+                        
+                        // Отримуємо фактичну кількість повідомлень з notification
+                        let userInfo = notification.userInfo ?? [:]
+                        let oldCount = userInfo["oldCount"] as? Int ?? 0
+                        let newCount = userInfo["newCount"] as? Int ?? viewModel.messages.count
+                        let loadedCount = userInfo["loadedCount"] as? Int ?? (newCount - oldCount)
+                        
+                        //print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+                        //print("📜 SCROLL: Messages loaded notification received")
+                        //print("   📊 Message count before load: \(oldCount)")
+                        //print("   📊 Message count after load: \(newCount)")
+                        //print("   📊 Messages loaded: \(loadedCount)")
+                        //print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+                        
+                        // Telegram-like: Restore scroll position after loading older messages
+                        if let scrollInfo = viewModel.getScrollPositionInfo() {
+                            // Only restore if we actually loaded new messages (count increased)
+                            if newCount > oldCount {
+                                // Find the message that was at the top before loading
+                                // After loading, it should be at the same visual position
+                                if let messageIndex = viewModel.messages.firstIndex(where: { $0.id == scrollInfo.messageId }) {
+                                    //print("📌 Restoring scroll position: messageId=\(scrollInfo.messageId), oldIndex=\(scrollInfo.messageIndex), newIndex=\(messageIndex), oldCount=\(oldCount), newCount=\(newCount)")
+                                    
+                                    // Small delay to ensure messages are rendered
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                                        // Scroll to the same message, maintaining visual position
+                                        withAnimation(.easeOut(duration: 0.2)) {
+                                            proxy.scrollTo(scrollInfo.messageId, anchor: .top)
+                                        }
+                                        viewModel.clearScrollPositionInfo()
+                                    }
+                                } else {
+                                    // Message not found, clear the saved position
+                                    viewModel.clearScrollPositionInfo()
+                                }
+                            } else {
+                                viewModel.clearScrollPositionInfo()
+                            }
+                        }
                     }
                     .onChange(of: viewModel.messages.count) { newCount in
-                        handleMessageCountChange(newCount, proxy: proxy)
+                        guard newCount > 0 else { return }
+                        
+                        // Track new messages count (matches TypeScript logic)
+                        if newCount > lastMessageCount {
+                            let lastMessage = viewModel.messages.last
+                            let isLastMessageFromUser = lastMessage != nil && {
+                                if lastMessage!.user.id == viewModel.currentUserId {
+                                    return true
+                                }
+                                if let currentUserXmpp = viewModel.currentUserXmppUsername,
+                                   let messageUserXmpp = lastMessage!.user.xmppUsername {
+                                    return currentUserXmpp.lowercased().trimmingCharacters(in: .whitespaces) == 
+                                           messageUserXmpp.lowercased().trimmingCharacters(in: .whitespaces)
+                                }
+                                return false
+                            }()
+                            
+                            // If not from user and user is scrolled up, increment counter
+                            if !isLastMessageFromUser && isUserScrolledUp {
+                                newMessagesCount += 1
+                            }
+                            
+                            // If last message is from user, auto-scroll
+                            if isLastMessageFromUser {
+                                scrollToBottom(proxy: proxy)
+                            }
+                        }
+                        
+                        lastMessageCount = newCount
+                        
+                        // Don't auto-scroll if we're loading more (maintaining position)
+                        // Або якщо це pull-to-refresh (не скролимо автоматично)
+                        if viewModel.isLoadingMore {
+                            return
+                        }
+                        
+                        // Only scroll on initial load or when restoring position
+                        // Don't scroll on every message count change to avoid lag
+                        // Після pull-to-refresh не скролимо автоматично - зберігаємо позицію
+                        if viewModel.shouldScrollToBottom(), let lastMessage = viewModel.messages.last {
+                            // Small delay to ensure messages are rendered
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                                withAnimation(.easeOut(duration: 0.3)) {
+                            proxy.scrollTo(lastMessage.id, anchor: .bottom)
+                        }
+                    }
+                        } else if let savedPosition = viewModel.getScrollPosition(),
+                                  viewModel.messages.contains(where: { $0.id == savedPosition }),
+                                  !viewModel.hasRestoredScrollPosition {
+                            // Restore saved scroll position only once
+                            viewModel.markScrollPositionRestored()
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                                withAnimation(.easeOut(duration: 0.2)) {
+                                    proxy.scrollTo(savedPosition, anchor: .center)
+                                }
+                            }
+                        }
+                    }
+                    .onChange(of: viewModel.isLoading) { isLoading in
+                        // When loading completes, scroll to bottom if it was the first load
+                        if !isLoading && viewModel.shouldScrollToBottom(), let lastMessage = viewModel.messages.last {
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                                withAnimation(.easeOut(duration: 0.3)) {
+                                    proxy.scrollTo(lastMessage.id, anchor: .bottom)
+                                }
+                            }
+                        }
+                    }
+                    .onChange(of: viewModel.composingUsers) { composingList in
+                        // Auto-scroll when typing starts if user is at bottom (matches TypeScript)
+                        if !isUserScrolledUp && !composingList.isEmpty {
+                    if let lastMessage = viewModel.messages.last {
+                                scrollToBottom(proxy: proxy)
+                            }
+                        }
                     }
                     .onAppear {
-                        needsInitialScroll = true
-                        allowLoadMore = false
+                        // Store proxy for button access
                         scrollProxy = proxy
-                        viewModel.onViewAppeared()
                         
-                        // If messages are already cached and count does not change,
-                        // force initial positioning to newest messages.
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                            guard needsInitialScroll, !viewModel.messages.isEmpty else { return }
-                            scrollToBottom(proxy: proxy, animated: false)
-                            // Consume first-load flag in fallback path as well.
-                            _ = viewModel.shouldScrollToBottom()
-                            needsInitialScroll = false
-                            allowLoadMore = true
-                            lastMessageCount = viewModel.messages.count
+                        // When view appears, restore scroll position if available
+                        if let savedPosition = viewModel.getScrollPosition(),
+                           viewModel.messages.contains(where: { $0.id == savedPosition }),
+                           !viewModel.hasRestoredScrollPosition {
+                            viewModel.markScrollPositionRestored()
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                                withAnimation(.easeOut(duration: 0.2)) {
+                                    proxy.scrollTo(savedPosition, anchor: .center)
+                                }
+                            }
+                        } else if viewModel.shouldScrollToBottom(), let lastMessage = viewModel.messages.last {
+                            // First load - scroll to bottom
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                                withAnimation(.easeOut(duration: 0.3)) {
+                            proxy.scrollTo(lastMessage.id, anchor: .bottom)
+                                }
+                            }
                         }
                     }
                 }
                 
-                scrollOverlay()
-            }
-            
-            chatInputSection()
-        }
-    }
-}
-
-// Helper views and sections to reduce body size
-extension ChatRoomView {
-    @ViewBuilder
-    internal func scrollOverlay() -> some View {
-        Group {
-            if showScrollButton {
-                VStack {
-                    Spacer()
-                    HStack {
+                // Loader overlay (matches TypeScript - shows at top of scroll view)
+                if viewModel.isLoading {
+                    VStack {
+                        ProgressView()
+                            .scaleEffect(1.5)
+                            .padding()
                         Spacer()
-                        Button(action: {
-                            if let proxy = scrollProxy { scrollToBottom(proxy: proxy) }
-                        }) {
-                            ScrollToBottomButton(newMessagesCount: newMessagesCount)
-                        }
-                        .padding(.trailing, 16)
-                        .padding(.bottom, 16)
                     }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                    .background(Color.clear)
                 }
+                
             }
             
-            if viewModel.isTyping && !viewModel.composingUsers.isEmpty {
-                VStack {
-                    Spacer()
-                    TypingIndicatorView(users: viewModel.composingUsers)
-                        .padding(.bottom, 8)
+            // Input Area
+            ConfigurableChatInputView(
+                messageText: $messageText,
+                onSendMessage: { text in
+                    viewModel.stopTyping() // Stop typing when sending
+                    if viewModel.isEditing, let messageId = viewModel.editMessageId {
+                        viewModel.editMessage(messageId, newText: text)
+                        viewModel.cancelEdit()
+                    messageText = ""
+                    } else {
+                        viewModel.sendMessage(text)
+                        messageText = ""
+                    }
+                },
+                onSendMedia: { data, type in
+                    viewModel.stopTyping() // Stop typing when sending media
+                    viewModel.sendMedia(data: data, type: type)
+                },
+                isEditing: viewModel.isEditing,
+                editMessageId: viewModel.editMessageId,
+                onCancelEdit: {
+                    viewModel.stopTyping() // Stop typing when canceling edit
+                    viewModel.cancelEdit()
+                    messageText = ""
+                },
+                customComponent: viewModel.config?.customComponents?.customInputComponent
+            )
+            .focused($isInputFocused)
+            .onChange(of: messageText) { _ in
+                // Start typing when user types (debounced in startTyping)
+                if !messageText.isEmpty {
+                    viewModel.startTyping()
+                } else {
+                    viewModel.stopTyping()
                 }
             }
+            .onChange(of: isInputFocused) { focused in
+                // Stop typing when input loses focus
+                if !focused {
+                    viewModel.stopTyping()
+                }
+            }
+        }
+        // Web-like background
+        .background(
+            chatBackgroundColor.ignoresSafeArea()
+        )
+        #if os(iOS)
+        .navigationBarHidden(true)
+        #endif
+        .onAppear {
+            viewModel.onViewAppeared()
+            // Reset scroll button state when room appears (matches React Native useEffect)
+            showScrollButton = false
+            isUserScrolledUp = false
+            atBottom = true
+            newMessagesCount = 0
+        }
+        .onDisappear {
+            // Save scroll position when leaving the chat
+            // Use the last message as a fallback if we don't have a tracked visible message
+            viewModel.saveScrollPosition(messageId: nil)
+        }
+        .onChange(of: viewModel.room.jid) { _ in
+            // Reset scroll button state when room changes (matches React Native useEffect)
+            showScrollButton = false
+            isUserScrolledUp = false
+            atBottom = true
+            newMessagesCount = 0
+        }
+        .overlay(
+            // Scroll to Bottom Button - OVERLAY on top of everything
+            // React Native: position: absolute, bottom: 20, right: 20, width: 40, height: 40
+            // TEMPORARY: Always show for testing
+            Group {
+                if showScrollButton {
+                    VStack {
+                        Spacer()
+                        HStack {
+                            Spacer()
+                            Button(action: {
+                                if let proxy = scrollProxy {
+                                    scrollToBottom(proxy: proxy)
+                                    // Hide button immediately when clicked (matches React Native)
+                                    showScrollButton = false
+                                    isUserScrolledUp = false
+                                    atBottom = true
+                                    newMessagesCount = 0
+                                }
+                            }) {
+                                ZStack {
+                                    // Match React Native: backgroundColor: config?.colors?.secondary || "#007AFF"
+                                    Circle()
+                                        .fill(viewModel.config?.colors?.secondaryColor ?? Color(hex: "#007AFF"))
+                                        .frame(width: 40, height: 40)
+                                        .shadow(color: .black.opacity(0.2), radius: 5, x: 0, y: 2)
+                                    
+                                    // Match React Native: ArowDownIcon
+                                    Image(systemName: "arrow.down")
+                                        .foregroundColor(.white)
+                                        .font(.system(size: 16, weight: .semibold))
+                                    
+                                    // Optional: Show new messages count badge (if needed)
+                                    if newMessagesCount > 0 {
+                                        Text("\(newMessagesCount)")
+                                            .font(.system(size: 12, weight: .bold))
+                                            .foregroundColor(.white)
+                                            .padding(4)
+                                            .background(Color.red)
+                                            .clipShape(Circle())
+                                            .offset(x: 14, y: -14)
+                                    }
+                                }
+                            }
+                            .padding(.trailing, 20)
+                            .padding(.bottom, 80)
+                        }
+                    }
+                    .allowsHitTesting(true)
+                }
+            },
+            alignment: .bottomTrailing
+        )
+    }
+    
+    // MARK: - Helper Functions
+    
+    /// Scroll to bottom function (matches TypeScript scrollToBottom)
+    private func scrollToBottom(proxy: ScrollViewProxy) {
+        if let lastMessage = viewModel.messages.last {
+            withAnimation(.easeOut(duration: 0.3)) {
+                proxy.scrollTo(lastMessage.id, anchor: .bottom)
+            }
+            showScrollButton = false
+            newMessagesCount = 0
         }
     }
     
-    @ViewBuilder
-    internal func chatInputSection() -> some View {
-        ChatInputView(
-            text: $messageText,
-            onSend: {
-                if viewModel.isEditing, let editId = viewModel.editMessageId {
-                    viewModel.editMessage(editId, newText: messageText)
-                } else {
-                    viewModel.sendMessage(messageText)
-                }
-                messageText = ""
-            },
-            onSendMedia: { data, type in
-                viewModel.sendMedia(data: data, type: type)
-            },
-            isEditing: viewModel.isEditing,
-            editText: viewModel.editText,
-            onCancelEdit: {
-                viewModel.isEditing = false
-                viewModel.editText = nil
-                viewModel.editMessageId = nil
-                messageText = ""
-            }
-        )
-    }
-}
+    /// Check if at bottom and handle scroll button (matches React Native MessageList.tsx exactly)
+    /// React Native: if (contentOffset < 150) { setIsUserAtBottom(true); setShowNewMessageIndicator(false); }
+    ///                else { setIsUserAtBottom(false); if (hasUserScrolled) { setShowNewMessageIndicator(true); } }
+    private func checkAtBottom(metrics: ScrollMetrics, proxy: ScrollViewProxy) {
+        // In SwiftUI ScrollView:
+        // - scrollTop: position from top (0 when at top, increases when scrolling down)
+        // - scrollHeight: total content height
+        // - clientHeight: visible viewport height
+        // - distanceFromBottom = scrollHeight - clientHeight - scrollTop
+        
+        // TEMPORARY DEBUG: Always log to see what's happening
+        let distanceFromBottom = metrics.scrollHeight - metrics.clientHeight - metrics.scrollTop
 
-struct ScrollToBottomButton: View {
-    let newMessagesCount: Int
-    var body: some View {
-        ZStack {
-            Circle()
-                .fill(Color.white)
-                .frame(width: 44, height: 44)
-                .shadow(radius: 4)
-            Image(systemName: "chevron.down")
-                .foregroundColor(.blue)
-                .font(.system(size: 18, weight: .bold))
-            if newMessagesCount > 0 {
-                Text("\(newMessagesCount)")
-                    .font(.caption2)
-                    .foregroundColor(.white)
-                    .padding(6)
-                    .background(Color.red)
-                    .clipShape(Circle())
-                    .offset(x: 15, y: -15)
-            }
+        // Guard: If content doesn't need scrolling, hide button
+        guard metrics.scrollHeight > metrics.clientHeight else {
+            showScrollButton = false
+            isUserScrolledUp = false
+            atBottom = true
+            return
         }
-    }
-}
-
-#if os(iOS)
-extension View {
-    func scrollDismissesKeyboardIfAvailable() -> some View {
-        if #available(iOS 16.0, *) {
-            return self.scrollDismissesKeyboard(.interactively)
+        
+        // Match React Native: if (contentOffset < 150) - user is at bottom
+        // In our case: if distanceFromBottom <= 150, user is at bottom (hide button)
+        // If distanceFromBottom > 150, user scrolled up (show button)
+        if distanceFromBottom <= 150 {
+            // User is at bottom - hide button
+            print("   → At bottom (distance=\(Int(distanceFromBottom))), HIDING button")
+            showScrollButton = false
+            isUserScrolledUp = false
+            atBottom = true
+            newMessagesCount = 0
         } else {
-            return self
+            // User scrolled up - show button
+            showScrollButton = true
+            isUserScrolledUp = true
+            atBottom = false
         }
     }
+    
+    /// Single trigger point for loading more messages (matches web version)
+    /// TypeScript: if (params.top >= 150 || isLoadingMore.current) return;
+    private func checkIfLoadMoreMessages(metrics: ScrollMetrics) {
+        // Guard: Don't load if already loading or history complete
+        guard !viewModel.isLoadingMore else { return }
+        guard viewModel.room.historyComplete != true else { return }
+        
+        // Guard: Only trigger when near top (scrollTop < 150px) - matches TypeScript
+        guard metrics.scrollTop < 150 else { return }
+        
+        // Get first message (skip delimiter-new) - matches web version exactly
+        let firstMessage = viewModel.messages.first(where: { $0.id != "delimiter-new" }) 
+                         ?? viewModel.messages.first
+        
+        guard let message = firstMessage else { 
+            //print("⚠️ checkIfLoadMoreMessages: No first message found")
+            return 
+        }
+        
+        // Match web version: Number(firstMessageId) - try to convert message.id to number
+        // This matches TypeScript: loadMoreMessages(firstMessage.roomJid, 30, Number(firstMessageId))
+        let beforeTimestamp: Int64? = {
+            // First, try to convert message.id directly to Int64 (like Number() in TypeScript)
+            if let numericId = Int64(message.id) {
+                //print("📜 Using message.id as numeric: \(numericId)")
+                return numericId
+            }
+            
+            // If message.id is not numeric (e.g., UUID), try timestamp
+            if let timestamp = message.timestamp {
+                //print("📜 Using message.timestamp: \(timestamp)")
+                return timestamp
+            }
+            
+            // Last resort: convert date to timestamp (milliseconds)
+            let dateTimestamp = Int64(message.date.timeIntervalSince1970 * 1000)
+            //print("📜 Using date conversion: \(dateTimestamp)")
+            return dateTimestamp
+        }()
+        
+        guard let before = beforeTimestamp else {
+            //print("❌ checkIfLoadMoreMessages: Could not determine beforeTimestamp for message.id=\(message.id)")
+            return
+        }
+        
+        //print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        //print("📜 Triggering loadMoreMessages:")
+        //print("   scrollTop: \(Int(metrics.scrollTop))")
+        //print("   firstMessage.id: \(message.id)")
+        //print("   firstMessage.timestamp: \(message.timestamp?.description ?? "nil")")
+        //print("   beforeTimestamp (to send): \(before)")
+        //print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        
+        // Save scroll position before loading
+        if let firstMsg = viewModel.messages.first {
+            viewModel.saveScrollPositionBeforeLoad()
+        }
+        
+        // Load more messages - matches web: loadMoreMessages(roomJid, 30, Number(firstMessageId))
+        viewModel.loadMoreMessages(max: 30, beforeTimestamp: before)
+    }
+    
+    /// Debounced scroll handler - combines checkAtBottom and checkIfLoadMoreMessages
+    private func handleScroll(metrics: ScrollMetrics, proxy: ScrollViewProxy) {
+        // Update state immediately (no debounce for button visibility)
+        // Check if at bottom (for scroll button visibility)
+        checkAtBottom(metrics: metrics, proxy: proxy)
+        
+        // Debounce only for loading more messages
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 100_000_000) // 100ms debounce
+            
+            // Check if should load more (single trigger point)
+            checkIfLoadMoreMessages(metrics: metrics)
+        }
+    }
+    
 }
-#endif

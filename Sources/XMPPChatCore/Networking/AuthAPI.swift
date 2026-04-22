@@ -74,13 +74,19 @@ public struct AuthAPI {
     ///   - email: User email
     ///   - password: User password
     ///   - baseURL: API base URL
-    ///   - appToken: App token for Authorization header
+    ///   - appToken: App token for Authorization header (see ``AppConfig/normalizedAppAuthorizationHeader(_:)``).
+    ///     Must be the **Ethora app JWT** (same as web `api.config` `appToken`), not a user token and not only the app ObjectId.
     /// - Returns: LoginResponse with token, refreshToken, and user data
+    ///
+    /// Mirrors web `loginEmail`: body is only `email` + `password`; app comes from `Authorization` (see Ethora `api/swagger.js`).
+    /// - Parameter useEthoraJwtWordPrefix: If `true` (default), uses ``AppConfig/normalizedAppAuthorizationHeader(_:)`` (`JWT eyJ…`).
+    ///   If `false`, sends only the raw three-part JWT (no leading `JWT ` / no `Bearer` added). See ``AppConfig/appAuthorizationHeader(fromPaste:useEthoraJwtWordPrefix:)``.
     public static func loginWithEmail(
         email: String,
         password: String,
-        baseURL: URL = URL(string: "https://api.ethoradev.com/v1")!,
-        appToken: String? = nil
+        baseURL: URL = URL(string: "https://api.chat.ethora.com/v1")!,
+        appToken: String = AppConfig.appToken,
+        useEthoraJwtWordPrefix: Bool = true
     ) async throws -> LoginResponse {
         // FORCE VISIBLE LOGGING - This MUST appear in Xcode console
         //NSlog("🔥🔥🔥 AUTHAPI.LOGINWITHEMAIL CALLED 🔥🔥🔥")
@@ -92,13 +98,13 @@ public struct AuthAPI {
         //print("🌐 AuthAPI.loginWithEmail: URL = \(url.absoluteString)")
         //print("📧 AuthAPI.loginWithEmail: email = \(email)")
         
-        let resolvedAppToken = await MainActor.run {
-            appToken ?? ConfigStore.shared.config.customAppToken ?? AppConfig.appToken
-        }
-
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.setValue(resolvedAppToken, forHTTPHeaderField: "Authorization")
+        let authHeader = AppConfig.appAuthorizationHeader(
+            fromPaste: appToken,
+            useEthoraJwtWordPrefix: useEthoraJwtWordPrefix
+        )
+        request.setValue(authHeader, forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         
@@ -227,18 +233,15 @@ public struct AuthAPI {
     /// - Returns: New token and refreshToken
     public static func refreshToken(
         refreshToken: String,
-        baseURL: URL = URL(string: "https://api.ethoradev.com/v1")!,
-        appToken: String? = nil
+        baseURL: URL = URL(string: "https://api.chat.ethora.com/v1")!,
+        appToken: String = AppConfig.appToken
     ) async throws -> (token: String, refreshToken: String) {
         let url = baseURL.appendingPathComponent("users/login/refresh")
         //print("🌐 AuthAPI.refreshToken: URL = \(url.absoluteString)")
-        let resolvedAppToken = await MainActor.run {
-            appToken ?? ConfigStore.shared.config.customAppToken ?? AppConfig.appToken
-        }
         
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.setValue(resolvedAppToken, forHTTPHeaderField: "Authorization")
+        request.setValue(AppConfig.normalizedAppAuthorizationHeader(appToken), forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         
@@ -348,7 +351,7 @@ public struct AuthAPI {
     /// - Returns: LoginResponse with token, refreshToken, and user data
     public static func loginViaJwt(
         clientToken: String,
-        baseURL: URL = URL(string: "https://api.ethoradev.com/v1")!
+        baseURL: URL = URL(string: "https://api.chat.ethora.com/v1")!
     ) async throws -> LoginResponse {
         let url = baseURL.appendingPathComponent("users/client")
         //print("🌐 AuthAPI.loginViaJwt: URL = \(url.absoluteString)")
@@ -412,18 +415,15 @@ public struct AuthAPI {
     /// - Returns: Boolean indicating if email exists
     public static func checkEmailExist(
         email: String,
-        baseURL: URL = URL(string: "https://api.ethoradev.com/v1")!,
-        appToken: String? = nil
+        baseURL: URL = URL(string: "https://api.chat.ethora.com/v1")!,
+        appToken: String = AppConfig.appToken
     ) async throws -> Bool {
         let url = baseURL.appendingPathComponent("users/checkEmail/\(email)")
         //print("🌐 AuthAPI.checkEmailExist: URL = \(url.absoluteString)")
-        let resolvedAppToken = await MainActor.run {
-            appToken ?? ConfigStore.shared.config.customAppToken ?? AppConfig.appToken
-        }
         
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
-        request.setValue(resolvedAppToken, forHTTPHeaderField: "Authorization")
+        request.setValue(AppConfig.normalizedAppAuthorizationHeader(appToken), forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         
@@ -468,7 +468,7 @@ public struct AuthAPI {
         fileData: Data,
         fileName: String,
         mimeType: String,
-        baseURL: URL = URL(string: "https://api.ethoradev.com/v1")!,
+        baseURL: URL = URL(string: "https://api.chat.ethora.com/v1")!,
         token: String
     ) async throws -> UploadResponse {
         
@@ -579,3 +579,4 @@ public enum AuthAPIError: Error, LocalizedError {
         }
     }
 }
+

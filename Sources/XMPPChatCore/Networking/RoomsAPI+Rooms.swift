@@ -15,9 +15,9 @@ extension RoomsAPI {
     ///   - didRefresh: Internal flag to prevent refresh loops
     /// - Returns: Array of `Room` mapped from `ApiRoom`
     public static func getRooms(
-        baseURL: URL = URL(string: "https://api.ethoradev.com/v1")!,
+        baseURL: URL = URL(string: "https://api.chat.ethora.com/v1")!,
         appId: String? = nil,
-        conferenceDomain: String = "conference.xmpp.ethoradev.com",
+        conferenceDomain: String = "conference.xmpp.chat.ethora.com",
         didRefresh: Bool = false
     ) async throws -> [Room] {
         let url = baseURL.appendingPathComponent("chats/my")
@@ -41,7 +41,7 @@ extension RoomsAPI {
         description: String? = nil,
         picture: String? = nil,
         members: [String]? = nil,
-        baseURL: URL = URL(string: "https://api.ethoradev.com/v1")!,
+        baseURL: URL = URL(string: "https://api.chat.ethora.com/v1")!,
         appId: String? = nil,
         didRefresh: Bool = false
     ) async throws -> ApiRoom {
@@ -85,7 +85,7 @@ extension RoomsAPI {
     public static func postPrivateRoom(
         username: String,
         title: String = "Private chat",
-        baseURL: URL = URL(string: "https://api.ethoradev.com/v1")!,
+        baseURL: URL = URL(string: "https://api.chat.ethora.com/v1")!,
         appId: String? = nil,
         didRefresh: Bool = false
     ) async throws -> ApiRoom {
@@ -118,7 +118,7 @@ extension RoomsAPI {
     /// GET /chats/my/{chatName}
     public static func getRoomByName(
         chatName: String,
-        baseURL: URL = URL(string: "https://api.ethoradev.com/v1")!,
+        baseURL: URL = URL(string: "https://api.chat.ethora.com/v1")!,
         appId: String? = nil,
         didRefresh: Bool = false
     ) async throws -> ApiRoom {

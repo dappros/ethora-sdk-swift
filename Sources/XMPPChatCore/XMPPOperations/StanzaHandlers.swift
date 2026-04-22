@@ -45,112 +45,65 @@ public class StanzaHandlers {
     
     /// Handle real-time messages (onRealtimeMessage from TypeScript)
     public func onRealtimeMessage(_ stanza: XMPPStanza) {
-        guard stanza.name == "message" else {
-            return
-        }
-        
-        // Error stanzas must not be treated as regular incoming messages.
-        if stanza.attributes["type"] == "error" {
-            let roomJID = stanza.attributes["from"]?.components(separatedBy: "/").first ?? ""
-            onMessageError?(roomJID)
-            return
-        }
-        
-        print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        print("🔵 StanzaHandlers.onRealtimeMessage: START")
-        print("   Stanza from: '\(stanza.attributes["from"] ?? "nil")'")
-        print("   Stanza type: '\(stanza.attributes["type"] ?? "nil")'")
-        print("   Stanza name: '\(stanza.name)'")
-        
+        // Match TypeScript: Skip MUC invites first
         let mucX = stanza.getChildren("x").first { x in
             x.attributes["xmlns"] == "http://jabber.org/protocol/muc#user" &&
             x.getChild("invite") != nil
         }
         if mucX != nil {
-            print("❌ StanzaHandlers.onRealtimeMessage: SKIPPED - MUC invite")
-            print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
             return
         }
         
+        // Match TypeScript: try { const { data } = await getDataFromXml(stanza); } catch (error) { handleErrorMessageStanza(stanza); return; }
         guard let messageData = MessageParser.getDataFromStanza(stanza) else {
-            print("❌ StanzaHandlers.onRealtimeMessage: SKIPPED - Failed to parse message data from stanza")
+            // Match TypeScript: handleErrorMessageStanza(stanza)
             if stanza.attributes["type"] == "error" {
-                print("   Stanza is error type - calling onMessageError")
                 onMessageError?(stanza.attributes["from"]?.components(separatedBy: "/").first ?? "")
             }
-            print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
             return
         }
         
-        print("✅ StanzaHandlers.onRealtimeMessage: Message data parsed successfully")
-        print("   messageData.id: '\(messageData.id)'")
-        print("   messageData.body: '\(messageData.body ?? "nil")'")
-        print("   messageData.roomJid: '\(messageData.roomJid)'")
-        print("   messageData.xmppId: '\(messageData.xmppId ?? "nil")'")
-        print("   messageData.xmppFrom: '\(messageData.xmppFrom ?? "nil")'")
-        print("   messageData.dataAttrs.count: \(messageData.dataAttrs.count)")
-        
+        // Match TypeScript: const message = await createMessageFromXml({ data, id, body, ...rest });
         let message = MessageParser.createMessageFromData(messageData)
         
-        print("✅ StanzaHandlers.onRealtimeMessage: Message created from data")
-        print("   Message ID: '\(message.id)'")
-        print("   Message body: '\(message.body)'")
-        print("   Message body.isEmpty: \(message.body.isEmpty)")
-        print("   Message roomJid: '\(message.roomJid)'")
-        print("   Message user.id: '\(message.user.id)'")
-        print("   Message timestamp: \(message.timestamp?.description ?? "nil")")
-        
+        // Match TypeScript: roomJID: stanza.attrs.from.split('/')[0]
         let roomJID = stanza.attributes["from"]?.components(separatedBy: "/").first ?? message.roomJid
         
-        print("✅ StanzaHandlers.onRealtimeMessage: Calling onMessageReceived callback")
-        print("   roomJID: '\(roomJID)'")
-        print("   onMessageReceived is nil: \(onMessageReceived == nil)")
-        
         onMessageReceived?(message, roomJID)
-        
-        print("🟢 StanzaHandlers.onRealtimeMessage: COMPLETE")
-        print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     }
     
     /// Handle message history from MAM (onMessageHistory from TypeScript)
     /// Matches TypeScript EXACTLY:
     /// if (stanza.is('message') && stanza.children[0].attrs.xmlns === 'urn:xmpp:mam:2')
     public func onMessageHistory(_ stanza: XMPPStanza) {
+        // Match TypeScript EXACTLY: stanza.is('message') && stanza.children[0].attrs.xmlns === 'urn:xmpp:mam:2'
         guard stanza.name == "message",
               let firstChild = stanza.children.first,
               firstChild.attributes["xmlns"] == "urn:xmpp:mam:2" else {
             return
         }
         
-        let rawFrom = stanza.attributes["from"] ?? ""
-        print("📚 StanzaHandlers.onMessageHistory: received MAM history stanza")
-        print("   from: \(rawFrom)")
-        print("   id: \(stanza.attributes["id"] ?? "nil")")
-        
         // Check if this is part of an active get-history query
-        let roomJID = rawFrom
+        let roomJID = stanza.attributes["from"] ?? ""
         for (queryId, collector) in getHistoryCollectors {
-            print("   forwarding stanza to getHistoryCollector with queryId=\(queryId)")
             collector(stanza, roomJID)
         }
         
+        // Match TypeScript: const { data, id, body, ...rest } = await getDataFromXml(stanza);
         guard let messageData = MessageParser.getDataFromStanza(stanza) else {
-            print("❌ StanzaHandlers.onMessageHistory: MessageParser.getDataFromStanza returned nil")
             return
         }
         
+        // Match TypeScript: if (!data) { console.log('No data in stanza'); return; }
         guard !messageData.dataAttrs.isEmpty else {
-            print("❌ StanzaHandlers.onMessageHistory: dataAttrs is empty, skipping stanza")
             return
         }
         
+        // Match TypeScript: const message = await createMessageFromXml({ data, id, body, ...rest });
         let message = MessageParser.createMessageFromData(messageData)
         
-        let roomJIDForMessage = rawFrom
-        print("✅ StanzaHandlers.onMessageHistory: parsed history message for roomJID=\(roomJIDForMessage)")
-        print("   message.id: \(message.id)")
-        print("   message.timestamp: \(message.timestamp?.description ?? "nil")")
-        print("   message.body.prefix(50): \(message.body.prefix(50))")
+        // Match TypeScript: store.dispatch(addRoomMessage({ roomJID: stanza.attrs.from, message }))
+        let roomJIDForMessage = stanza.attributes["from"] ?? ""
         onHistoryMessageReceived?(message, roomJIDForMessage)
     }
     
@@ -250,37 +203,15 @@ public class StanzaHandlers {
     
     /// Handle presence in room (onPresenceInRoom from TypeScript)
     public func onPresenceInRoom(_ stanza: XMPPStanza) {
-        guard stanza.name == "presence" else { return }
-        
-        let fromRaw = stanza.attributes["from"] ?? ""
-        let stanzaId = stanza.attributes["id"] ?? "n/a"
-        let hasError = stanza.getChild("error") != nil
-        
-        print("ℹ️ [XMPP] Incoming presence stanza")
-        print("   from: \(fromRaw)")
-        print("   id:   \(stanzaId)")
-        print("   error: \(hasError ? "yes" : "no")")
-        
-        guard hasError == false else {
-            // We still don't join-ack this room.
+        // Match TypeScript: stanza.attrs.id === 'presenceInRoom' && !stanza.getChild('error')
+        guard stanza.attributes["id"] == "presenceInRoom",
+              stanza.getChild("error") == nil else {
             return
         }
         
         let from = stanza.attributes["from"] ?? ""
         let roomJID = from.components(separatedBy: "/").first ?? ""
-        guard !roomJID.isEmpty else { return }
-        
-        // Accept both explicit id-based responses and standard MUC presence echoes.
-        let hasPresenceId = stanza.attributes["id"] == "presenceInRoom"
         let role = stanza.getChild("x")?.getChild("item")?.attributes["role"] ?? ""
-        let looksLikeMucPresence = !role.isEmpty || roomJID.contains("@conference.")
-        guard hasPresenceId || looksLikeMucPresence else { return }
-        
-        print("✅ [XMPP] Room presence ACK")
-        print("   from: \(from)")
-        print("   roomJID: \(roomJID)")
-        print("   role: \(role.isEmpty ? "n/a" : role)")
-        print("   stanza.id: \(stanza.attributes["id"] ?? "n/a")")
         onPresenceInRoom?(roomJID, role)
     }
     
@@ -361,10 +292,6 @@ public class StanzaHandlers {
         if id.hasPrefix("get-history:") {
             let roomJID = from.components(separatedBy: "/").first ?? from
             
-            print("❌ StanzaHandlers.onIQError: get-history error received")
-            print("   iq.id: \(id)")
-            print("   from: \(from)")
-            
             var errorType = "unknown"
             var errorCondition = "unknown"
             var errorText = ""
@@ -381,10 +308,6 @@ public class StanzaHandlers {
                     }
                 }
             }
-            
-            print("   errorType: \(errorType)")
-            print("   errorCondition: \(errorCondition)")
-            print("   errorText: \(errorText)")
             
             NotificationCenter.default.post(
                 name: NSNotification.Name("XMPPHistoryLoadFailed"),

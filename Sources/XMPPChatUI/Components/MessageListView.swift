@@ -67,11 +67,6 @@ public struct MessageListView: View {
     @State private var contentHeight: CGFloat = 0
     @State private var previousContentHeight: CGFloat = 0
     @State private var scrollDebounceTask: Task<Void, Never>?
-    @State private var lastHistoryCheckAt: Date?
-    @State private var isRestoringScrollPosition: Bool = false
-    
-    /// Throttle interval for history load checks (milliseconds)
-    private let historyCheckThrottleInterval: TimeInterval = 0.15 // 150ms
     
     /// Custom message view builder
     public var messageViewBuilder: ((Message, Bool) -> AnyView)?
@@ -140,10 +135,12 @@ public struct MessageListView: View {
                         ForEach(viewModel.messages) { message in
                             messageRow(message: message)
                                 .id(message.id)
+                                .frame(maxWidth: .infinity, alignment: .leading)
                         }
                     }
                     .padding(.horizontal, 16)
                     .padding(.vertical, 8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .background(
                         // Track scroll position and content height
                         GeometryReader { geometry in
@@ -187,6 +184,7 @@ public struct MessageListView: View {
             // Use custom message view builder if provided, otherwise use default
             if let customView = messageViewBuilder {
                 customView(message, isCurrentUser(message))
+                    .frame(maxWidth: .infinity, alignment: .leading)
             } else {
                 // Default message view
                 MessageBubbleView(
@@ -203,6 +201,7 @@ public struct MessageListView: View {
                     onReport: nil,
                     onMediaTap: nil
                 )
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
     }
@@ -226,51 +225,41 @@ public struct MessageListView: View {
     
     // MARK: - Scroll Handling
     
-    /// Handle scroll events (matches Web onScroll with throttling)
+    /// Handle scroll events (matches Web onScroll with debouncing)
     private func handleScroll(metrics: MessageScrollMetrics, proxy: ScrollViewProxy) {
         // Update scroll metrics
         scrollMetrics = metrics
         
-        // Throttle scroll handling using timestamp-based throttling
-        let now = Date()
-        if let lastCheck = lastHistoryCheckAt,
-           now.timeIntervalSince(lastCheck) < historyCheckThrottleInterval {
-            // Too soon since last check - skip
-            return
+        // Debounce scroll handling (matches Web: 50ms timeout)
+        scrollDebounceTask?.cancel()
+        scrollDebounceTask = Task {
+            try? await Task.sleep(nanoseconds: 50_000_000) // 50ms
+            
+            guard !Task.isCancelled else { return }
+            
+            // Check if should load more messages (matches Web: checkIfLoadMoreMessages)
+            checkIfLoadMoreMessages(metrics: metrics)
         }
-        
-        // Update last check timestamp
-        lastHistoryCheckAt = now
-        
-        // Check if should load more messages (matches Web: checkIfLoadMoreMessages)
-        checkIfLoadMoreMessages(metrics: metrics)
     }
     
     /// Check if should load more messages (matches Web checkIfLoadMoreMessages)
     /// TypeScript: if (params.top >= 150 || isLoadingMore.current) return;
     /// Web also checks: !roomsList?.[chatJID]?.historyComplete
     private func checkIfLoadMoreMessages(metrics: MessageScrollMetrics) {
-        // Don't check during scroll restoration
-        guard !isRestoringScrollPosition else { return }
-        
         // CRITICAL: Check both conditions (matches Web: !isLoadingMore && !historyComplete)
         guard !viewModel.isLoadingMore else { return }
         guard !viewModel.isHistoryComplete else { return }
         
         // Guard: Only trigger when near top (scrollTop < 150px) - matches TypeScript
-        guard metrics.scrollTop < 150 else {
-            // User scrolled away from top - reset auto-load tracking
-            viewModel.resetAutoLoadTracking()
-            return
-        }
+        guard metrics.scrollTop < 150 else { return }
         
         // Save scroll position before loading (for scroll anchoring)
         // This matches Web: scrollParams.current = getScrollParams()
         viewModel.saveScrollPosition(top: metrics.scrollTop, height: metrics.scrollHeight)
         previousContentHeight = metrics.scrollHeight
         
-        // Fetch history (load more messages) - mark as manual load (not auto-load)
-        viewModel.fetchHistory(isAutoLoad: false)
+        // Fetch history (load more messages)
+        viewModel.fetchHistory()
     }
     
     /// Handle messages count change (for scroll position restoration)
@@ -305,7 +294,7 @@ public struct MessageListView: View {
     
     /// Restore scroll position after messages are loaded
     /// Matches Web: newScrollTop = currentTop + (content.scrollHeight - previousHeight)
-    /// SwiftUI version: Uses ScrollViewReader to scroll to the message that was at the top
+    /// SwiftUI version: Uses ScrollViewReader to scroll to the message that was at top
     private func restoreScrollPositionAfterLoad(
         proxy: ScrollViewProxy,
         oldHeight: CGFloat,
@@ -320,22 +309,8 @@ public struct MessageListView: View {
             return
         }
         
-        // If oldTop was extremely small (< 5px), skip explicit scroll restoration
-        // User is already pinned at the very top, natural prepend will maintain position
-        if oldTop < 5 {
-            viewModel.clearScrollPositionInfo()
-            // Still check if should continue loading
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                self.checkIfShouldContinueLoading(proxy: proxy)
-            }
-            return
-        }
-        
         // Calculate height difference (matches Web exactly)
         let heightDifference = currentHeight - oldHeight
-        
-        // Set restoration flag to prevent scroll-based triggers during restoration
-        isRestoringScrollPosition = true
         
         // In SwiftUI, we scroll to the message that was at the top before loading
         // This maintains visual continuity (the same message stays visible)
@@ -353,13 +328,11 @@ public struct MessageListView: View {
             // If yes and history is not complete, trigger another load (recursive check)
             // This matches Web behavior: continue loading until historyComplete or user scrolls away
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                self.isRestoringScrollPosition = false
                 // Update scroll metrics before checking
                 // The scroll position should now be at the top after restoration
                 self.checkIfShouldContinueLoading(proxy: proxy)
             }
         } else {
-            isRestoringScrollPosition = false
             viewModel.clearScrollPositionInfo()
         }
     }
@@ -368,14 +341,6 @@ public struct MessageListView: View {
     /// Matches Web: recursive check after scroll restoration
     /// This ensures continuous loading until historyComplete or user scrolls away
     private func checkIfShouldContinueLoading(proxy: ScrollViewProxy) {
-        // CRITICAL: Check auto-load mode and limits
-        guard viewModel.isAutoLoadInProgress else { return }
-        guard viewModel.currentConsecutiveAutoLoads < viewModel.maxAutoLoads else {
-            // Max consecutive loads reached - reset and require user interaction
-            viewModel.resetAutoLoadTracking()
-            return
-        }
-        
         // CRITICAL: Check both conditions (matches Web: !isLoadingMore && !historyComplete)
         guard !viewModel.isLoadingMore else { return }
         guard !viewModel.isHistoryComplete else { return }
@@ -387,16 +352,12 @@ public struct MessageListView: View {
         // This ensures we keep loading until either:
         // 1. History is complete (historyComplete = true)
         // 2. User scrolls away from top (scrollTop >= 150)
-        // 3. Max consecutive auto-loads reached
         if scrollTop < 150 {
             // Save scroll position before loading again
             viewModel.saveScrollPosition(top: scrollTop, height: scrollMetrics.scrollHeight)
             
-            // Trigger another load as auto-load (this will continue until historyComplete or limit reached)
-            viewModel.fetchHistory(isAutoLoad: true)
-        } else {
-            // User scrolled away - reset auto-load tracking
-            viewModel.resetAutoLoadTracking()
+            // Trigger another load (this will continue until historyComplete)
+            viewModel.fetchHistory()
         }
     }
     

@@ -13,22 +13,14 @@ private struct ChatRoomViewWrapper: View {
     @Binding var room: Room
     let client: XMPPClient
     let currentUserId: String
-    let config: ChatConfig?
     let onMessagesUpdated: (Room) -> Void
     
     @StateObject private var viewModel: ChatRoomViewModel
     
-    init(
-        room: Binding<Room>,
-        client: XMPPClient,
-        currentUserId: String,
-        config: ChatConfig? = nil,
-        onMessagesUpdated: @escaping (Room) -> Void
-    ) {
+    init(room: Binding<Room>, client: XMPPClient, currentUserId: String, onMessagesUpdated: @escaping (Room) -> Void) {
         self._room = room
         self.client = client
         self.currentUserId = currentUserId
-        self.config = config
         self.onMessagesUpdated = onMessagesUpdated
         
         // Create the view model with the initial room
@@ -36,179 +28,188 @@ private struct ChatRoomViewWrapper: View {
             room: room.wrappedValue,
             client: client,
             currentUserId: currentUserId,
-            config: config
+            config: ConfigStore.shared.config
         ))
     }
     
     var body: some View {
         ChatRoomView(viewModel: viewModel)
-            .applyChatRoomStyles(ChatRoomStyles(dictionary: config?.chatRoomStyles))
             .onAppear {
                 // Set up callback when view appears
                 viewModel.onMessagesUpdated = onMessagesUpdated
-                viewModel.markRoomActive()
-            }
-            .onDisappear {
-                viewModel.markRoomInactive()
             }
     }
 }
 
 public struct RoomListView: View {
     @ObservedObject var viewModel: RoomListViewModel
+    private let singleRoomJID: String?
+    private let hideRoomList: Bool
     @State private var searchText: String = ""
+    /// Programmatic navigation when opening a room from a push (RN `PENDING_NOTIFICATION_JID_KEY` flow).
+    @State private var pushNavActive: Bool = false
+    @State private var pushNavRoomBareJID: String?
     
-    public init(viewModel: RoomListViewModel) {
+    public init(viewModel: RoomListViewModel, singleRoomJID: String? = nil, hideRoomList: Bool = false) {
         self.viewModel = viewModel
+        self.singleRoomJID = singleRoomJID
+        self.hideRoomList = hideRoomList
     }
     
     public var body: some View {
-        Group {
-            if viewModel.config?.disableRooms == true {
-                singleRoomContent
-            } else {
-                navigationListContent
+        NavigationView {
+            Group {
+                if hideRoomList {
+                    singleRoomContent
+                } else {
+                    roomListContent
+                }
+            }
+            .background(
+                LinearGradient(
+                    gradient: Gradient(colors: [Color.blue.opacity(0.4), Color.black.opacity(0.85)]),
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .ignoresSafeArea()
+            )
+            .modifier(RoomListModeModifier(hideRoomList: hideRoomList, searchText: $searchText, viewModel: viewModel))
+            .background(pushNavigationLink)
+            .onAppear {
+                // Call loadRooms if not already loading
+                if !viewModel.isLoading && viewModel.rooms.isEmpty {
+                    viewModel.loadRooms()
+                }
+                tryOpenRoomFromPendingPushNotification()
+            }
+            .onReceive(viewModel.$rooms) { _ in
+                tryOpenRoomFromPendingPushNotification()
+            }
+            .onChange(of: viewModel.isLoading) { loading in
+                if !loading {
+                    tryOpenRoomFromPendingPushNotification()
+                }
             }
         }
-        .applyRoomListStyles(RoomListStyles(dictionary: viewModel.config?.roomListStyles))
     }
-
+    
+    @ViewBuilder
+    private var roomListContent: some View {
+        List {
+            if filteredRooms.isEmpty {
+                if viewModel.isLoading {
+                    HStack {
+                        ProgressView()
+                        Text("Loading rooms…")
+                    }
+                } else if let error = viewModel.errorMessage {
+                    Text(error)
+                        .foregroundColor(.red)
+                        .multilineTextAlignment(.center)
+                } else {
+                    Text("No rooms loaded")
+                        .foregroundColor(.secondary)
+                }
+            } else {
+                ForEach(filteredRooms) { room in
+                    NavigationLink(destination: destinationView(for: room)) {
+                        RoomListItemView(
+                            room: room,
+                            currentUserId: viewModel.currentUserId,
+                            messages: room.messages
+                        )
+                    }
+                }
+            }
+        }
+    }
+    
     @ViewBuilder
     private var singleRoomContent: some View {
-        if let room = filteredRooms.first {
+        if let room = matchedSingleRoom {
             destinationView(for: room)
         } else if viewModel.isLoading {
             VStack(spacing: 10) {
                 ProgressView()
-                Text("Loading rooms…")
+                Text("Loading selected chat...")
+                    .foregroundColor(.secondary)
             }
-        } else if let error = viewModel.errorMessage {
-            Text(error)
-                .foregroundColor(.red)
-                .multilineTextAlignment(.center)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if let wanted = normalizedSingleRoomBareJID {
+            VStack(spacing: 10) {
+                Text("Selected chat was not found.")
+                    .font(.headline)
+                Text("Room: \(wanted)")
+                    .font(.footnote)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+            .padding()
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
-            Text("No rooms loaded")
-                .foregroundColor(.secondary)
+            VStack(spacing: 10) {
+                Text("Single chat mode is enabled, but Room JID is empty.")
+                    .font(.headline)
+            }
+            .padding()
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 
-    @ViewBuilder
-    private var navigationListContent: some View {
-        NavigationView {
-            List {
-                if filteredRooms.isEmpty {
-                    if viewModel.isLoading {
-                        HStack {
-                            ProgressView()
-                            Text("Loading rooms…")
-                        }
-                    } else if let error = viewModel.errorMessage {
-                        Text(error)
-                            .foregroundColor(.red)
-                            .multilineTextAlignment(.center)
-                    } else {
-                        Text("No rooms loaded")
-                            .foregroundColor(.secondary)
-                    }
-                } else {
-                    ForEach(filteredRooms) { room in
-                        NavigationLink(destination: destinationView(for: room)) {
-                            RoomListItemView(
-                                room: room,
-                                currentUserId: viewModel.currentUserId,
-                                messages: room.messages
-                            )
-                        }
-                    }
-                }
-            }
-            .background(
-                Group {
-                    #if os(iOS)
-                    Color(uiColor: .systemBackground)
-                    #else
-                    Color(NSColor.windowBackgroundColor)
-                    #endif
-                }
-                .ignoresSafeArea()
-            )
-            #if os(iOS)
-            .scrollContentBackgroundIfAvailable(.hidden)
-            #endif
-            .searchable(text: $searchText)
-            .navigationTitle("Chats")
-            .toolbar {
-                #if os(iOS)
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button(action: {
-                        viewModel.showNewChatModal = true
-                    }) {
-                        Image(systemName: "plus")
-                    }
-                }
-                #else
-                ToolbarItem(placement: .automatic) {
-                    Button(action: {
-                        viewModel.showNewChatModal = true
-                    }) {
-                        Image(systemName: "plus")
-                    }
-                }
-                #endif
-            }
-            .sheet(isPresented: $viewModel.showNewChatModal) {
-                NewChatModal(
-                    availableUsers: viewModel.getAvailableUsers(),
-                    onCreateChat: { chatName, description, users in
-                        Task { @MainActor in
-                            do {
-                                if users.count == 1, let user = users.first {
-                                    // Private chat
-                                    try await viewModel.createPrivateRoom(with: user)
-                                } else {
-                                    // Group chat
-                                    try await viewModel.createRoom(
-                                        title: chatName,
-                                        description: description ?? "",
-                                        members: users
-                                    )
-                                }
-                                viewModel.showNewChatModal = false
-                            } catch {
-                                //print("❌ Failed to create chat: \(error.localizedDescription)")
-                                viewModel.errorMessage = error.localizedDescription
-                            }
-                        }
-                    },
-                    onClose: {
-                        viewModel.showNewChatModal = false
-                    }
-                )
-            }
-            .onAppear {
-                // FORCE CALL loadRooms when view appears
-                //NSlog("🔥🔥🔥 ROOMLISTVIEW.ONAPPEAR CALLED 🔥🔥🔥")
-                //print("🔥🔥🔥 ROOMLISTVIEW.ONAPPEAR CALLED 🔥🔥🔥")
-                //print("📋 RoomListView.onAppear: View appeared")
-                //print("   ViewModel has \(viewModel.rooms.count) rooms")
-                //print("   isLoading: \(viewModel.isLoading)")
-                
-                // Call loadRooms if not already loading
-                if !viewModel.isLoading && viewModel.rooms.isEmpty {
-                    //NSlog("🚀 Calling viewModel.loadRooms() from onAppear")
-                    //print("🚀 Calling viewModel.loadRooms() from onAppear")
-                    viewModel.loadRooms()
-                }
-            }
+    private var normalizedSingleRoomBareJID: String? {
+        guard let singleRoomJID else { return nil }
+        let trimmed = singleRoomJID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        return trimmed.components(separatedBy: "/").first
+    }
+    
+    private var matchedSingleRoom: Room? {
+        guard let target = normalizedSingleRoomBareJID?.lowercased() else { return nil }
+        return viewModel.rooms.first { room in
+            let bare = (room.jid.components(separatedBy: "/").first ?? room.jid).lowercased()
+            return bare == target
         }
+    }
+
+    private var pushNavigationLink: some View {
+        NavigationLink(
+            destination: pushNavigationDestination,
+            isActive: Binding(
+                get: { pushNavActive },
+                set: { newValue in
+                    pushNavActive = newValue
+                    if !newValue { pushNavRoomBareJID = nil }
+                }
+            )
+        ) {
+            EmptyView()
+        }
+        .hidden()
+    }
+
+    @ViewBuilder
+    private var pushNavigationDestination: some View {
+        if let bare = pushNavRoomBareJID,
+           let room = viewModel.rooms.first(where: {
+               ($0.jid.components(separatedBy: "/").first ?? $0.jid).caseInsensitiveCompare(bare) == .orderedSame
+           }) {
+            destinationView(for: room)
+        } else {
+            EmptyView()
+        }
+    }
+
+    private func tryOpenRoomFromPendingPushNotification() {
+        guard let bare = viewModel.pendingPushRoomJIDToOpen() else { return }
+        pushNavRoomBareJID = bare
+        pushNavActive = true
     }
     
     private var filteredRooms: [Room] {
-        let rooms: [Room]
-        if searchText.isEmpty {
-            rooms = viewModel.rooms
+        let rooms = if searchText.isEmpty {
+            viewModel.rooms
         } else {
-            rooms = viewModel.rooms.filter { room in
+            viewModel.rooms.filter { room in
                 room.title.localizedCaseInsensitiveContains(searchText) ||
                 room.lastMessage?.body.localizedCaseInsensitiveContains(searchText) ?? false
             }
@@ -258,29 +259,75 @@ public struct RoomListView: View {
             room: binding,
             client: viewModel.client,
             currentUserId: viewModel.currentUserId,
-            config: viewModel.config,
             onMessagesUpdated: { updatedRoom in
                 if let index = viewModel.rooms.firstIndex(where: { $0.jid == updatedRoom.jid }) {
                     viewModel.rooms[index] = updatedRoom
-                    viewModel.refreshUnreadCount(for: updatedRoom.jid)
                 }
             }
         )
     }
 }
 
-#if os(iOS)
-private extension View {
-    @ViewBuilder
-    func scrollContentBackgroundIfAvailable(_ visibility: Visibility) -> some View {
-        if #available(iOS 16.0, *) {
-            self.scrollContentBackground(visibility)
+private struct RoomListModeModifier: ViewModifier {
+    let hideRoomList: Bool
+    @Binding var searchText: String
+    @ObservedObject var viewModel: RoomListViewModel
+
+    func body(content: Content) -> some View {
+        if hideRoomList {
+            content.navigationTitle("Chat")
         } else {
-            self
+            content
+                .searchable(text: $searchText)
+                .navigationTitle("Chats")
+                .toolbar {
+                    #if os(iOS)
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        Button(action: {
+                            viewModel.showNewChatModal = true
+                        }) {
+                            Image(systemName: "plus")
+                        }
+                    }
+                    #else
+                    ToolbarItem(placement: .automatic) {
+                        Button(action: {
+                            viewModel.showNewChatModal = true
+                        }) {
+                            Image(systemName: "plus")
+                        }
+                    }
+                    #endif
+                }
+                .sheet(isPresented: $viewModel.showNewChatModal) {
+                    NewChatModal(
+                        availableUsers: viewModel.getAvailableUsers(),
+                        onCreateChat: { chatName, description, users in
+                            Task { @MainActor in
+                                do {
+                                    if users.count == 1, let user = users.first {
+                                        try await viewModel.createPrivateRoom(with: user)
+                                    } else {
+                                        try await viewModel.createRoom(
+                                            title: chatName,
+                                            description: description ?? "",
+                                            members: users
+                                        )
+                                    }
+                                    viewModel.showNewChatModal = false
+                                } catch {
+                                    viewModel.errorMessage = error.localizedDescription
+                                }
+                            }
+                        },
+                        onClose: {
+                            viewModel.showNewChatModal = false
+                        }
+                    )
+                }
         }
     }
 }
-#endif
 
 // MARK: - Room List Item
 struct RoomListItemView: View {
@@ -539,7 +586,6 @@ public class RoomListViewModel: ObservableObject {
     
     let client: XMPPClient
     let currentUserId: String
-    let config: ChatConfig?
     private let apiBaseURL: URL
     private let appId: String
     private let conferenceDomain: String
@@ -549,25 +595,21 @@ public class RoomListViewModel: ObservableObject {
     
     // Composing timeouts per room
     private var composingTimeouts: [String: Timer] = [:]
-
-    // Track message counts to avoid unnecessary unread recalculation
-    private var previousMessagesCount: [String: Int] = [:]
+    private var notificationObservers: [NSObjectProtocol] = []
     
     // New initializer - token is now managed by UserStore
     public init(
         client: XMPPClient,
         currentUserId: String,
-        config: ChatConfig? = nil,
         appId: String? = nil,
-        apiBaseURL: URL = URL(string: "https://api.ethoradev.com/v1")!,
-        conferenceDomain: String = "conference.xmpp.ethoradev.com"
+        apiBaseURL: URL = URL(string: "https://api.chat.ethora.com/v1")!,
+        conferenceDomain: String = "conference.xmpp.chat.ethora.com"
     ) {
         self.client = client
         self.currentUserId = currentUserId
-        self.config = config
-        self.appId = appId ?? config?.appId ?? AppConfig.defaultAppId
-        self.apiBaseURL = URL(string: config?.baseUrl ?? "") ?? apiBaseURL
-        self.conferenceDomain = config?.xmppSettings?.conference ?? conferenceDomain
+        self.appId = appId ?? AppConfig.defaultAppId
+        self.apiBaseURL = apiBaseURL
+        self.conferenceDomain = conferenceDomain
         
         // Initialize message loader queue
         let queue = MessageLoaderQueue(client: client)
@@ -583,7 +625,7 @@ public class RoomListViewModel: ObservableObject {
         self.messageLoaderQueue = queue
         
         // Listen for room messages updates to continue loading if needed
-        NotificationCenter.default.addObserver(
+        let roomMessagesUpdatedToken = NotificationCenter.default.addObserver(
             forName: NSNotification.Name("RoomMessagesUpdated"),
             object: nil,
             queue: .main
@@ -598,9 +640,10 @@ public class RoomListViewModel: ObservableObject {
                 currentMessageCount: messageCount
             )
         }
+        notificationObservers.append(roomMessagesUpdatedToken)
         
         // Start queue when client comes online
-        NotificationCenter.default.addObserver(
+        let didConnectToken = NotificationCenter.default.addObserver(
             forName: NSNotification.Name("XMPPClientDidConnect"),
             object: nil,
             queue: .main
@@ -611,9 +654,10 @@ public class RoomListViewModel: ObservableObject {
                 //print("🔄 RoomListViewModel: Started auto-load history queue (client connected)")
             }
         }
+        notificationObservers.append(didConnectToken)
         
         // Listen for room messages updates to update the room's messages array
-        NotificationCenter.default.addObserver(
+        let roomMessagesRefreshToken = NotificationCenter.default.addObserver(
             forName: NSNotification.Name("RoomMessagesUpdated"),
             object: nil,
             queue: .main
@@ -626,20 +670,11 @@ public class RoomListViewModel: ObservableObject {
             }
             
             // Find the room and update its messages from cache
-            let normalizedRoomJID = self.normalizeRoomJID(roomJID)
-            if let roomIndex = self.rooms.firstIndex(where: { self.normalizeRoomJID($0.jid) == normalizedRoomJID }) {
+            if let roomIndex = self.rooms.firstIndex(where: { $0.jid == roomJID }) {
                 // Load messages from cache (they were just saved by processIncomingMessage)
                 if let cachedMessages = MessageCache.shared.loadMessages(forRoomJID: roomJID) {
                     // Update room's messages array
                     self.rooms[roomIndex].messages = cachedMessages
-
-                    // Keep RoomStore in sync
-                    var updates = PartialRoomUpdate()
-                    updates.messages = cachedMessages
-                    RoomStore.shared.updateRoom(jid: normalizedRoomJID, updates: updates)
-
-                    // Update unread count for this room
-                    self.updateUnreadCountIfNeeded(for: roomIndex)
                     
                     // Notify MessageLoaderQueue about the update
                     self.messageLoaderQueue?.onRoomMessagesUpdated(
@@ -654,9 +689,10 @@ public class RoomListViewModel: ObservableObject {
                 }
             }
         }
+        notificationObservers.append(roomMessagesRefreshToken)
         
         // Listen for composing (typing) indicator changes
-        NotificationCenter.default.addObserver(
+        let composingChangedToken = NotificationCenter.default.addObserver(
             forName: NSNotification.Name("XMPPComposingChanged"),
             object: nil,
             queue: .main
@@ -730,70 +766,18 @@ public class RoomListViewModel: ObservableObject {
                 //print("⌨️ RoomListViewModel: Updated composing state for room \(roomJID) - isComposing: \(isComposing), users: \(filteredComposingList)")
             }
         }
+        notificationObservers.append(composingChangedToken)
     }
     
     deinit {
+        // Never capture `self` in async work from `deinit`.
+        let queue = messageLoaderQueue
+        let timers = Array(composingTimeouts.values)
+        let observers = notificationObservers
         Task { @MainActor in
-            messageLoaderQueue?.stop()
-            // Invalidate all composing timeouts
-            composingTimeouts.values.forEach { $0.invalidate() }
-            composingTimeouts.removeAll()
-        }
-        NotificationCenter.default.removeObserver(self)
-    }
-
-    private func normalizeRoomJID(_ jid: String) -> String {
-        return jid.components(separatedBy: "/").first ?? jid
-    }
-
-    private func updateUnreadCountIfNeeded(for roomIndex: Int) {
-        let room = rooms[roomIndex]
-        let roomJIDKey = normalizeRoomJID(room.jid)
-        let activeRoomJIDKey = normalizeRoomJID(RoomStore.shared.activeRoomJID ?? "")
-
-        let lastViewed = room.lastViewedTimestamp ?? 0
-        if !activeRoomJIDKey.isEmpty && roomJIDKey == activeRoomJIDKey {
-            if rooms[roomIndex].unreadMessages != 0 {
-                rooms[roomIndex].unreadMessages = 0
-                RoomStore.shared.updateUnreadCount(roomJID: roomJIDKey, count: 0)
-            }
-            return
-        }
-
-        if lastViewed == 0 {
-            if rooms[roomIndex].unreadMessages != 0 {
-                rooms[roomIndex].unreadMessages = 0
-                RoomStore.shared.updateUnreadCount(roomJID: roomJIDKey, count: 0)
-            }
-            return
-        }
-
-        let currentMessagesLength = room.messages.count
-        if previousMessagesCount[roomJIDKey] == currentMessagesLength {
-            return
-        }
-        previousMessagesCount[roomJIDKey] = currentMessagesLength
-
-        let unreadCount = room.messages.filter { message in
-            guard message.id != "delimiter-new" else { return false }
-            return (message.timestamp ?? 0) > lastViewed
-        }.count
-
-        if rooms[roomIndex].unreadMessages != unreadCount {
-            rooms[roomIndex].unreadMessages = unreadCount
-            RoomStore.shared.updateUnreadCount(roomJID: roomJIDKey, count: unreadCount)
-        }
-    }
-
-    public func refreshUnreadCount(for roomJID: String) {
-        if let index = rooms.firstIndex(where: { $0.jid == roomJID }) {
-            updateUnreadCountIfNeeded(for: index)
-        }
-    }
-
-    private func syncUnreadCountsForAllRooms() {
-        for index in rooms.indices {
-            updateUnreadCountIfNeeded(for: index)
+            queue?.stop()
+            timers.forEach { $0.invalidate() }
+            observers.forEach { NotificationCenter.default.removeObserver($0) }
         }
     }
     
@@ -832,33 +816,17 @@ public class RoomListViewModel: ObservableObject {
                         room.messages = cachedMessages
                         //print("📂 RoomListViewModel: Loaded \(cachedMessages.count) cached messages for room: \(room.jid)")
                     }
-
-                    // Merge cached room state (lastViewed/unread) from RoomStore if available
-                    let roomJIDKey = self.normalizeRoomJID(room.jid)
-                    if let storedRoom = RoomStore.shared.rooms[room.jid] ?? RoomStore.shared.rooms[roomJIDKey] {
-                        if let lastViewed = storedRoom.lastViewedTimestamp {
-                            room.lastViewedTimestamp = lastViewed
-                        }
-                        room.unreadMessages = storedRoom.unreadMessages
-                    }
-
-                    // Ensure RoomStore has the latest room state
-                    RoomStore.shared.addRoom(room)
-
                     roomsWithCachedMessages.append(room)
                 }
                 
                 self.rooms = roomsWithCachedMessages
                 self.isLoading = false // Set to false BEFORE starting queue
-
-                // Sync unread counts after initial load
-                self.syncUnreadCountsForAllRooms()
                 
                 // After loading rooms, send presence to each room
                 // This is needed so the user can receive history for each room
                 if !loadedRooms.isEmpty {
                     let roomJIDs = loadedRooms.compactMap { $0.jid }
-                    await client.sendPresenceToAllRooms(roomJIDs: roomJIDs)
+                    _ = await client.joinRoomsAndWait(roomJIDs: roomJIDs, timeout: 3.5)
                     
                     // Start auto-loading history for all rooms when XMPP is idle
                     if client.checkOnline() {
@@ -871,6 +839,11 @@ public class RoomListViewModel: ObservableObject {
                     } else {
                         //print("⚠️ RoomListViewModel: Client is not online, cannot start auto-load queue")
                     }
+                }
+
+                // RN: pushSubscriptionService.subscribeToRooms after rooms + presence (MUC push / MUCSub).
+                Task {
+                    await PushNotificationManager.shared.refreshRoomPushSubscriptions()
                 }
             } catch {
                 let errorMsg = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
@@ -993,4 +966,36 @@ public class RoomListViewModel: ObservableObject {
         // Exclude current user
         return Array(userMap.values).filter { $0.id != currentUserId }
     }
+
+    /// If a push stored a room JID (see `PendingNotificationJidStore`) and that room is loaded, clears storage and returns the bare JID to navigate to.
+    public func pendingPushRoomJIDToOpen() -> String? {
+        guard let bare = PendingNotificationJidStore.peekPendingBareJid() else { return nil }
+        let hasRoom = rooms.contains { room in
+            let rb = room.jid.components(separatedBy: "/").first ?? room.jid
+            return rb.caseInsensitiveCompare(bare) == .orderedSame
+        }
+        guard hasRoom else { return nil }
+        PendingNotificationJidStore.clearPendingJid()
+        return bare
+    }
 }
+
+extension RoomListViewModel {
+    /// Preferred initializer when using `ChatConfig` (e.g. `ChatWrapperView`).
+    public convenience init(client: XMPPClient, currentUserId: String, config: ChatConfig) {
+        let baseURL = URL(string: config.baseUrl ?? AppConfig.defaultBaseURL.absoluteString) ?? AppConfig.defaultBaseURL
+        let resolvedAppId = config.appId ?? AppConfig.defaultAppId
+        let conference = config.xmppSettings?.conference
+            ?? AppConfig.defaultXMPPSettings.conference
+            ?? "conference.xmpp.chat.ethora.com"
+        self.init(
+            client: client,
+            currentUserId: currentUserId,
+            appId: resolvedAppId,
+            apiBaseURL: baseURL,
+            conferenceDomain: conference
+        )
+    }
+}
+
+

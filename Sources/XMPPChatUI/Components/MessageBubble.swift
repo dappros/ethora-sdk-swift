@@ -71,6 +71,7 @@ struct DefaultMessageBubble: View {
     let onMessageTap: (() -> Void)?
     let onLongPress: (() -> Void)?
     let colors: ChatColors?
+    private var bubbleStyle: MessageBubbleStyle? { ConfigStore.shared.config.bubleMessage }
     
     @State private var showReactionPicker = false
     
@@ -101,7 +102,7 @@ struct DefaultMessageBubble: View {
                     VStack(alignment: .leading, spacing: 8) {
                         UniversalMarkdownTextView(
                             text: message.body,
-                            foregroundColor: isUser ? .white : .primary
+                            foregroundColor: messageTextColor
                         )
                         
                         // URL Previews
@@ -115,12 +116,10 @@ struct DefaultMessageBubble: View {
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)
                     .background(
-                        RoundedRectangle(cornerRadius: 16)
-                            .fill(isUser ? 
-                                  (colors?.primary != nil ? hexColor(colors!.primary) : Color(red: 0.0, green: 0.32, blue: 0.80)) : 
-                                  Color(red: 0.95, green: 0.97, blue: 0.99))
+                        RoundedRectangle(cornerRadius: bubbleStyle?.borderRadius.map { CGFloat($0) } ?? 16)
+                            .fill(messageBackgroundColor)
                     )
-                    .foregroundColor(isUser ? .white : .primary)
+                    .foregroundColor(messageTextColor)
                     .shadow(color: Color.black.opacity(0.05), radius: 4, x: 0, y: 2)
                     
                     // Translations
@@ -181,6 +180,35 @@ struct DefaultMessageBubble: View {
         let formatter = DateFormatter()
         formatter.timeStyle = .short
         return formatter.string(from: date)
+    }
+    
+    private var messageBackgroundColor: Color {
+        if isUser {
+            if let outgoing = bubbleStyle?.backgroundMessageUser, !outgoing.isEmpty {
+                return hexColor(outgoing)
+            }
+            if let primary = colors?.primary {
+                return hexColor(primary)
+            }
+            return Color(red: 0.0, green: 0.32, blue: 0.80)
+        }
+        if let incoming = bubbleStyle?.backgroundMessage, !incoming.isEmpty {
+            return hexColor(incoming)
+        }
+        return Color(red: 0.95, green: 0.97, blue: 0.99)
+    }
+    
+    private var messageTextColor: Color {
+        if isUser {
+            if let outgoingText = bubbleStyle?.colorUser, !outgoingText.isEmpty {
+                return hexColor(outgoingText)
+            }
+            return .white
+        }
+        if let incomingText = bubbleStyle?.color, !incomingText.isEmpty {
+            return hexColor(incomingText)
+        }
+        return .primary
     }
     
     private func hexColor(_ hex: String) -> Color {

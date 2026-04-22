@@ -35,7 +35,6 @@ extension XMPPOperations {
         let presenceStanza = XMPPStanza(
             name: "presence",
             attributes: [
-                "from": jid,
                 "to": toJID,
                 "id": "presenceInRoom"
             ],
@@ -64,11 +63,11 @@ extension XMPPOperations {
     /// Send presence to all rooms (allRoomPresences from TypeScript)
     /// Note: This requires access to the rooms list, which should come from RoomListViewModel or similar
     public func allRoomPresences(roomJIDs: [String]) async {
-        await withTaskGroup(of: Void.self) { group in
-            for roomJID in roomJIDs {
-                group.addTask {
-                    await self.presenceInRoom(roomJID: roomJID)
-                }
+        // Send sequentially to avoid server flood/disconnect on large room lists.
+        for (index, roomJID) in roomJIDs.enumerated() {
+            await self.presenceInRoom(roomJID: roomJID)
+            if index < roomJIDs.count - 1 {
+                try? await Task.sleep(nanoseconds: 80_000_000)
             }
         }
         //NSlog("✅ Sent presence to %lu rooms", roomJIDs.count)

@@ -30,7 +30,6 @@ public class RoomStore: ObservableObject {
     
     // Loading text
     @Published public var loadingText: String?
-    @Published public var totalUnreadCount: Int = 0
     
     // MARK: - Initialization
     
@@ -43,7 +42,6 @@ public class RoomStore: ObservableObject {
     /// Add or update a room
     public func addRoom(_ room: Room) {
         rooms[room.jid] = room
-        recalculateTotalUnreadCount()
         saveToCache()
     }
     
@@ -58,7 +56,6 @@ public class RoomStore: ObservableObject {
         if activeRoomJID == jid {
             activeRoomJID = nil
         }
-        recalculateTotalUnreadCount()
         saveToCache()
     }
     
@@ -125,7 +122,6 @@ public class RoomStore: ObservableObject {
         }
         
         rooms[jid] = room
-        recalculateTotalUnreadCount()
         saveToCache()
     }
     
@@ -168,7 +164,6 @@ public class RoomStore: ObservableObject {
         room.lastMessageTimestamp = message.timestamp
         
         rooms[roomJID] = room
-        recalculateTotalUnreadCount()
         saveToCache()
     }
     
@@ -177,7 +172,6 @@ public class RoomStore: ObservableObject {
         guard var room = rooms[roomJID] else { return }
         room.messages = messages.sorted { ($0.timestamp ?? 0) < ($1.timestamp ?? 0) }
         rooms[roomJID] = room
-        recalculateTotalUnreadCount()
         saveToCache()
     }
     
@@ -186,7 +180,6 @@ public class RoomStore: ObservableObject {
         guard var room = rooms[roomJID] else { return }
         room.messages.removeAll { $0.id == messageId }
         rooms[roomJID] = room
-        recalculateTotalUnreadCount()
         saveToCache()
     }
     
@@ -234,7 +227,6 @@ public class RoomStore: ObservableObject {
         
         room.messages[index] = updatedMessage
         rooms[roomJID] = room
-        recalculateTotalUnreadCount()
         saveToCache()
     }
     
@@ -269,7 +261,6 @@ public class RoomStore: ObservableObject {
         
         room.messages[index] = message
         rooms[roomJID] = room
-        recalculateTotalUnreadCount()
         saveToCache()
     }
     
@@ -292,7 +283,6 @@ public class RoomStore: ObservableObject {
         guard var room = rooms[roomJID] else { return }
         room.lastViewedTimestamp = timestamp
         rooms[roomJID] = room
-        recalculateTotalUnreadCount()
         saveToCache()
     }
     
@@ -355,7 +345,6 @@ public class RoomStore: ObservableObject {
         if let data = UserDefaults.standard.data(forKey: "ethora_room_store"),
            let decoded = try? JSONDecoder().decode([String: Room].self, from: data) {
             rooms = decoded
-            recalculateTotalUnreadCount()
         }
     }
     
@@ -366,18 +355,7 @@ public class RoomStore: ObservableObject {
         editAction = nil
         usersSet.removeAll()
         reportRoom = ReportRoomState()
-        totalUnreadCount = 0
         UserDefaults.standard.removeObject(forKey: "ethora_room_store")
-    }
-
-    public func getTotalUnreadCount() -> Int {
-        totalUnreadCount
-    }
-
-    private func recalculateTotalUnreadCount() {
-        totalUnreadCount = rooms.values.reduce(0) { partial, room in
-            partial + max(0, room.unreadMessages)
-        }
     }
 }
 

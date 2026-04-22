@@ -41,9 +41,9 @@ Task {
             username: xmppUsername,
             password: xmppPassword,
             settings: XMPPSettings(
-                devServer: "wss://xmpp.ethoradev.com:5443/ws",
-                host: "xmpp.ethoradev.com",
-                conference: "conference.xmpp.ethoradev.com"
+                devServer: "wss://xmpp.chat.ethora.com/ws",
+                host: "xmpp.chat.ethora.com",
+                conference: "conference.xmpp.chat.ethora.com"
             )
         )
 
