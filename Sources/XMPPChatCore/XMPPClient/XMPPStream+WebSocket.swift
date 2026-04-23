@@ -50,12 +50,9 @@ extension XMPPStream_WebSocket: WebSocketDelegate {
             delegate?.xmppStreamDidDisconnect(self, error: disconnectError)
             
         case .text(let string):
-            // Log raw XML from server (matching TypeScript behavior)
-            // //NSlog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-            // //NSlog("📥 RECEIVED XML FROM SERVER:")
-            // //NSlog("   %@", string)
-            // //NSlog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-            //print("📥 RECEIVED XML FROM SERVER: \(string)")
+            // Raw WebSocket trace — every byte received from server, for wire-level
+            // diagnostics of the XMPP handshake (open/features/SASL/bind/session).
+            print("📥 WS IN: \(string)")
             
             // First handle at stream level (auth flow, features, etc.)
             handleServerResponse(string)

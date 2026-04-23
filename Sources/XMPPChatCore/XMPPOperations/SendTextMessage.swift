@@ -30,7 +30,7 @@ public class XMPPOperations {
         
         guard let stream = client?.xmppStream else { return }
         
-        let devServer = client?.devServer ?? "wss://xmpp.chat.ethora.com/ws"
+        let devServer = client?.devServer ?? "wss://xmpp.messenger-dev2.vitall.com/ws"
         
         let dataStanza = XMPPStanza(
             name: "data",

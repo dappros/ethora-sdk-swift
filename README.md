@@ -113,13 +113,13 @@ private func makeChatConfig() -> ChatConfig {
     var config = ChatConfig()
 
     // API/XMPP
-    config.baseUrl = "https://api.ethoradev.com/v1"
+    config.baseUrl = "https://api.messenger-dev2.com/v1"
     config.appId = "YOUR_APP_ID"
     config.customAppToken = "YOUR_ETHORA_APP_TOKEN"
     config.xmppSettings = XMPPSettings(
-        xmppServerUrl: "wss://xmpp.ethoradev.com:5443/ws",
-        host: "xmpp.ethoradev.com",
-        conference: "conference.xmpp.ethoradev.com"
+        xmppServerUrl: "wss://xmpp.messenger-dev2.com:5443/ws",
+        host: "xmpp.messenger-dev2.com",
+        conference: "conference.xmpp.messenger-dev2.com"
     )
 
     // Auth (JWT autologin via /users/client)
@@ -136,7 +136,7 @@ private func makeChatConfig() -> ChatConfig {
 
 ```swift
 struct ChatScreen: View {
-    private let roomJID = "my-room@conference.xmpp.ethoradev.com"
+    private let roomJID = "my-room@conference.xmpp.messenger-dev2.com"
 
     var body: some View {
         let config = makeChatConfig()
@@ -170,7 +170,7 @@ struct ChatScreen: View {
 let response = try await AuthAPI.loginWithEmail(
     email: email,
     password: password,
-    baseURL: URL(string: "https://api.ethoradev.com/v1")!,
+    baseURL: URL(string: "https://api.messenger-dev2.com/v1")!,
     appToken: "YOUR_ETHORA_APP_TOKEN"
 )
 await UserStore.shared.setUser(from: response)
@@ -191,13 +191,13 @@ Use this when you need a custom UI while reusing transport + operations.
 import XMPPChatCore
 
 let settings = XMPPSettings(
-    xmppServerUrl: "wss://xmpp.ethoradev.com:5443/ws",
-    host: "xmpp.ethoradev.com",
-    conference: "conference.xmpp.ethoradev.com"
+    xmppServerUrl: "wss://xmpp.messenger-dev2.com:5443/ws",
+    host: "xmpp.messenger-dev2.com",
+    conference: "conference.xmpp.messenger-dev2.com"
 )
 
 let client = XMPPClient(
-    username: "user@xmpp.ethoradev.com",
+    username: "user@xmpp.messenger-dev2.com",
     password: "xmppPassword",
     settings: settings
 )
@@ -209,10 +209,10 @@ while !client.isFullyConnected() {
     try? await Task.sleep(nanoseconds: 300_000_000)
 }
 
-await client.sendPresenceToRoom(roomJID: "room@conference.xmpp.ethoradev.com")
+await client.sendPresenceToRoom(roomJID: "room@conference.xmpp.messenger-dev2.com")
 
 client.operations.sendTextMessage(
-    roomJID: "room@conference.xmpp.ethoradev.com",
+    roomJID: "room@conference.xmpp.messenger-dev2.com",
     firstName: "John",
     lastName: "Doe",
     photo: "",
@@ -221,7 +221,7 @@ client.operations.sendTextMessage(
 )
 
 client.operations.sendGetHistory(
-    chatJID: "room@conference.xmpp.ethoradev.com",
+    chatJID: "room@conference.xmpp.messenger-dev2.com",
     max: 20,
     before: nil
 )
@@ -360,7 +360,7 @@ Optional config:
 config.push = PushNotificationConfig(
     enabled: true,
     appId: "YOUR_APP_ID",
-    pushBaseURL: "https://api.ethoradev.com/v1"
+    pushBaseURL: "https://api.messenger-dev2.com/v1"
 )
 ```
 

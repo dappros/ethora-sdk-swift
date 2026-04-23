@@ -65,10 +65,7 @@ public struct ChatRoomView: View {
     @State private var selectedMessageForThread: Message? = nil
     @State private var showReportModal: Bool = false
     @State private var messageToReport: Message? = nil
-    @State private var showFullScreenImage: Bool = false
-    @State private var showFullScreenVideo: Bool = false
-    @State private var showFullScreenPDF: Bool = false
-    @State private var selectedMediaMessage: Message? = nil
+    @State private var mediaPreview: MediaPreviewTarget? = nil
     @ObservedObject private var connectionManager: ConnectionManager
     
     private var chatBackgroundColor: Color {
@@ -265,29 +262,7 @@ public struct ChatRoomView: View {
                                     } : nil,
                                     onReport: nil,
                                     onMediaTap: { mediaMessage in
-                                        // Open full screen media preview
-                                        selectedMediaMessage = mediaMessage
-                                        
-                                        let mimeType: String = {
-                                            if let existingMimeType = mediaMessage.mimetype, !existingMimeType.isEmpty {
-                                                return existingMimeType
-                                            } else if let location = mediaMessage.location {
-                                                return inferMimeType(from: location)
-                                            } else {
-                                                return "application/octet-stream"
-                                            }
-                                        }()
-                                        
-                                        if mimeType.hasPrefix("image/") {
-                                            showFullScreenImage = true
-                                        } else if mimeType.hasPrefix("video/") {
-                                            showFullScreenVideo = true
-                                        } else if mimeType.contains("pdf") {
-                                            showFullScreenPDF = true
-                                        } else {
-                                            // For other files, open generic file preview modal (existing UI)
-                                            showFullScreenPDF = false
-                                        }
+                                        mediaPreview = MediaPreviewTarget(message: mediaMessage)
                                     }
 //                                    onReport: !isUser ? {
 //                                        messageToReport = message
@@ -414,29 +389,8 @@ public struct ChatRoomView: View {
                             onDelete: nil
                         )
                     }
-                    .fullScreenCover(isPresented: $showFullScreenImage) {
-                        if let message = selectedMediaMessage, let urlString = message.location, let url = URL(string: urlString) {
-                            FullScreenImageView(imageURL: url, onClose: {
-                                showFullScreenImage = false
-                                selectedMediaMessage = nil
-                            })
-                        }
-                    }
-                    .fullScreenCover(isPresented: $showFullScreenVideo) {
-                        if let message = selectedMediaMessage, let urlString = message.location, let url = URL(string: urlString) {
-                            FullScreenVideoView(videoURL: url, onClose: {
-                                showFullScreenVideo = false
-                                selectedMediaMessage = nil
-                            })
-                        }
-                    }
-                    .sheet(isPresented: $showFullScreenPDF) {
-                        if let message = selectedMediaMessage, let urlString = message.location, let url = URL(string: urlString) {
-                            FullScreenPDFView(pdfURL: url, fileName: message.fileName ?? message.originalName ?? "Document.pdf", onClose: {
-                                showFullScreenPDF = false
-                                selectedMediaMessage = nil
-                            })
-                        }
+                    .fullScreenCover(item: $mediaPreview) { target in
+                        MediaPreviewHost(target: target, onClose: { mediaPreview = nil })
                     }
                     .background(
                         // Track scroll position and content dimensions

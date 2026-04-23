@@ -313,7 +313,7 @@ public class ChatWrapperViewModel: ObservableObject {
         }
         
         do {
-            let baseURLString = (config.baseUrl ?? "https://api.chat.ethora.com/v1")
+            let baseURLString = (config.baseUrl ?? "https://api.messenger-dev2.vitall.com/v1")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             guard let baseURL = URL(string: baseURLString), !baseURLString.isEmpty else {
                 await MainActor.run {
@@ -322,7 +322,7 @@ public class ChatWrapperViewModel: ObservableObject {
                 }
                 return
             }
-            let conferenceDomain = config.xmppSettings?.conference ?? "conference.xmpp.chat.ethora.com"
+            let conferenceDomain = config.xmppSettings?.conference ?? "conference.xmpp.messenger-dev2.vitall.com"
             let rooms = try await RoomsAPI.getRooms(
                 baseURL: baseURL,
                 appId: config.appId ?? AppConfig.defaultAppId,
@@ -372,7 +372,7 @@ public class ChatWrapperViewModel: ObservableObject {
         }
         
         // If no custom function is provided, fall back to AuthAPI.refreshToken using UserStore.refreshToken.
-        let baseURLString = (config.baseUrl ?? "https://api.chat.ethora.com/v1")
+        let baseURLString = (config.baseUrl ?? "https://api.messenger-dev2.vitall.com/v1")
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard let baseURL = URL(string: baseURLString), !baseURLString.isEmpty else {
             return

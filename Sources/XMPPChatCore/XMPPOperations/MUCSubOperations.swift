@@ -26,7 +26,7 @@ extension XMPPOperations {
             return nil
         }
 
-        let conferenceDomain = client?.conference ?? "conference.xmpp.chat.ethora.com"
+        let conferenceDomain = client?.conference ?? "conference.xmpp.messenger-dev2.vitall.com"
         let fixedRoomJID = roomJID.contains("@") ? roomJID : "\(roomJID)@\(conferenceDomain)"
 
         let stanzaId = id ?? "mucsub:\(Int64(Date().timeIntervalSince1970 * 1000))"

@@ -14,7 +14,7 @@ extension RoomsAPI {
         chatName: String,
         category: String,
         text: String? = nil,
-        baseURL: URL = URL(string: "https://api.chat.ethora.com/v1")!,
+        baseURL: URL = URL(string: "https://api.messenger-dev2.vitall.com/v1")!,
         appId: String? = nil,
         didRefresh: Bool = false
     ) async throws -> Bool {
@@ -46,7 +46,7 @@ extension RoomsAPI {
         messageId: String,
         category: String,
         text: String? = nil,
-        baseURL: URL = URL(string: "https://api.chat.ethora.com/v1")!,
+        baseURL: URL = URL(string: "https://api.messenger-dev2.vitall.com/v1")!,
         appId: String? = nil,
         didRefresh: Bool = false
     ) async throws -> Bool {
@@ -76,7 +76,7 @@ extension RoomsAPI {
     public static func postAddRoomMember(
         chatName: String,
         members: [String],
-        baseURL: URL = URL(string: "https://api.chat.ethora.com/v1")!,
+        baseURL: URL = URL(string: "https://api.messenger-dev2.vitall.com/v1")!,
         appId: String? = nil,
         didRefresh: Bool = false
     ) async throws -> [RoomMember] {
@@ -111,7 +111,7 @@ extension RoomsAPI {
     public static func deleteRoomMember(
         chatName: String,
         members: [String],
-        baseURL: URL = URL(string: "https://api.chat.ethora.com/v1")!,
+        baseURL: URL = URL(string: "https://api.messenger-dev2.vitall.com/v1")!,
         appId: String? = nil,
         didRefresh: Bool = false
     ) async throws -> Bool {
@@ -140,7 +140,7 @@ extension RoomsAPI {
     /// DELETE /chats
     public static func deleteRoom(
         name: String,
-        baseURL: URL = URL(string: "https://api.chat.ethora.com/v1")!,
+        baseURL: URL = URL(string: "https://api.messenger-dev2.vitall.com/v1")!,
         appId: String? = nil,
         didRefresh: Bool = false
     ) async throws -> Bool {

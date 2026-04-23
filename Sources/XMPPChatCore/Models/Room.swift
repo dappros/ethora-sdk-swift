@@ -239,7 +239,7 @@ public extension Room {
     init(apiRoom: ApiRoom, conferenceDomain: String, usersArrayLength: Int = 0) {
         let normalizedConference: String = {
             var value = conferenceDomain.trimmingCharacters(in: .whitespacesAndNewlines)
-            if value.isEmpty { return AppConfig.defaultXMPPSettings.conference ?? "conference.xmpp.chat.ethora.com" }
+            if value.isEmpty { return AppConfig.defaultXMPPSettings.conference ?? "conference.xmpp.messenger-dev2.vitall.com" }
             value = value.replacingOccurrences(of: "conferenceconference.", with: "conference.")
             value = value.replacingOccurrences(of: "conferenceconference", with: "conference.")
             if value.hasPrefix("conference.") { return value }

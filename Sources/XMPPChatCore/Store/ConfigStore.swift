@@ -26,7 +26,7 @@ public class ConfigStore: ObservableObject {
         } else {
             self.config = ChatConfig()
         }
-        forceEthoraDev()
+        forceethoradev()
     }
     
     /// Update configuration
@@ -211,8 +211,8 @@ public class ConfigStore: ObservableObject {
         userDefaults.removeObject(forKey: configKey)
     }
 
-    /// Force single environment to ethoradev to avoid mixed API/XMPP runtime state.
-    public func forceEthoraDev() {
+    /// Force single environment to messenger-dev2 to avoid mixed API/XMPP runtime state.
+    public func forceethoradev() {
         config.baseUrl = AppConfig.defaultBaseURL.absoluteString
         config.appId = AppConfig.defaultAppId
         config.xmppSettings = AppConfig.defaultXMPPSettings

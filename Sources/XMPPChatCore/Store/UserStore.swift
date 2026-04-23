@@ -118,7 +118,7 @@ public class UserStore: ObservableObject {
         
         do {
             // Get base URL from config or use default
-            let baseURL = URL(string: config.baseUrl ?? "https://api.chat.ethora.com/v1")!
+            let baseURL = URL(string: config.baseUrl ?? "https://api.messenger-dev2.vitall.com/v1")!
             
             // Perform JWT login
             let loginResponse = try await AuthAPI.loginViaJwt(

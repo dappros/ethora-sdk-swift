@@ -87,9 +87,9 @@ public class XMPPClient {
         self.username = username
         self.password = password
         
-        self.devServer = settings?.devServer ?? "wss://xmpp.chat.ethora.com/ws"
-        self.host = settings?.host ?? "xmpp.chat.ethora.com"
-        self.service = settings?.conference ?? "conference.xmpp.chat.ethora.com"
+        self.devServer = settings?.devServer ?? "wss://xmpp.messenger-dev2.vitall.com/ws"
+        self.host = settings?.host ?? "xmpp.messenger-dev2.vitall.com"
+        self.service = settings?.conference ?? "conference.xmpp.messenger-dev2.vitall.com"
         self.conference = "conference.\(self.host)"
         
         initializeClient()
@@ -173,8 +173,8 @@ public class XMPPClient {
                 // Note: We don't wait for disconnect to complete - the new connection will handle it
             }
             
-            // Match TypeScript: const url = this.devServer || `wss://xmpp.chat.ethora.com/ws`;
-            let url = devServer.isEmpty ? "wss://xmpp.chat.ethora.com/ws" : devServer
+            // Match TypeScript: const url = this.devServer || `wss://xmpp.messenger-dev2.vitall.com/ws`;
+            let url = devServer.isEmpty ? "wss://xmpp.messenger-dev2.vitall.com/ws" : devServer
             
             // Match TypeScript: this.host = url.match(/wss:\/\/([^:/]+)/)?.[1] || '';
             if let urlObj = URL(string: url),
