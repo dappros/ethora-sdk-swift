@@ -785,12 +785,12 @@ public class RoomListViewModel: ObservableObject {
         // FORCE VISIBLE LOGGING
         errorMessage = nil
 
-        // Stale-while-revalidate: сначала показываем закэшированный список
-        // комнат из `RoomStore` (+ кэш сообщений через `MessageCache`), чтобы
-        // UI не сидел на ProgressView пока REST не ответит. Если кэш есть —
-        // сразу `isLoading = false`, и REST работает в фоне, бесшовно
-        // заменяя список свежими данными. Если REST упадёт (нет сети) —
-        // кэш остаётся на экране.
+        // Stale-while-revalidate: first show the cached list of rooms from
+        // `RoomStore` (+ cached messages via `MessageCache`) so the UI
+        // doesn't sit on a ProgressView while REST is in flight. If the
+        // cache is present, set `isLoading = false` immediately and run
+        // REST in the background, seamlessly replacing the list with fresh
+        // data. If REST fails (no network), the cache stays on screen.
         let cachedRooms = Array(RoomStore.shared.rooms.values)
         if !cachedRooms.isEmpty {
             self.rooms = cachedRooms.map { room in
@@ -813,9 +813,9 @@ public class RoomListViewModel: ObservableObject {
 
             guard isAuth, hasToken else {
                 let msg = "User not authenticated. Please login first."
-                // Не затираем закэшированный список — если юзер разлогинился
-                // из-за истёкшего токена, хотя бы показываем последний known
-                // state. Полный сброс делает `LogoutManager`.
+                // Don't wipe the cached list — if the user got signed out
+                // because of an expired token, we still show the last known
+                // state. A full reset is the job of `LogoutManager`.
                 if self.rooms.isEmpty {
                     self.errorMessage = msg
                 }
@@ -845,10 +845,10 @@ public class RoomListViewModel: ObservableObject {
                 self.rooms = roomsWithCachedMessages
                 self.isLoading = false // Set to false BEFORE starting queue
 
-                // Сохраняем fresh список в `RoomStore`, чтобы следующий
-                // запуск приложения стартовал уже с актуальным кэшем.
-                // Удаляем из стора те JID'ы, которых нет в свежем списке,
-                // чтобы кэш не рос вечно после удалённых комнат.
+                // Save the fresh list to `RoomStore` so the next app launch
+                // starts with an up-to-date cache. Remove JIDs from the
+                // store that are no longer in the fresh list so the cache
+                // doesn't keep growing after rooms get deleted.
                 let freshJIDs = Set(roomsWithCachedMessages.map { $0.jid })
                 for existing in RoomStore.shared.rooms.keys where !freshJIDs.contains(existing) {
                     RoomStore.shared.deleteRoom(jid: existing)
@@ -882,9 +882,9 @@ public class RoomListViewModel: ObservableObject {
                 }
             } catch {
                 let errorMsg = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-                // Если кэш уже показан — не перекрываем его error-state;
-                // оффлайн-режим: юзер видит последние комнаты и сообщения,
-                // без красного баннера поверх работающего UI.
+                // If the cache is already on screen, don't overlay it with
+                // an error state; offline mode: the user sees last rooms
+                // and messages without a red banner on top of working UI.
                 if self.rooms.isEmpty {
                     self.errorMessage = "Failed to load rooms: \(errorMsg)"
                 }

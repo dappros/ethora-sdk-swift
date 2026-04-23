@@ -77,16 +77,16 @@ public class XMPPStream_WebSocket {
     }
     
     public func send(_ stanza: XMPPStanza) {
-        // В логах React Web / RN / Android все top-level stanzas (iq,
-        // message, presence) идут на wire с `xmlns="jabber:client"` — это то,
-        // что делают @xmpp/client (JS) и XMPPWebSocketConnection (Kotlin).
-        // iOS до этого момента отправлял их без xmlns. Для большинства
-        // сервисов ejabberd это прозрачно, но некоторые правила (в т.ч.
-        // MUC-join) обрабатывают stanza разными путями в зависимости от
-        // того, виден ли ей client-stream namespace. Добавляем его здесь
-        // только для top-level stanzas, не затрагивая stream-level элементы
-        // (<open>, <auth>, <bind>, <iq><session/>), которые идут мимо этого
-        // метода через socket.write напрямую.
+        // In React Web / RN / Android wire logs every top-level stanza (iq,
+        // message, presence) goes out with `xmlns="jabber:client"` — that's
+        // what @xmpp/client (JS) and XMPPWebSocketConnection (Kotlin) emit.
+        // iOS previously sent them without xmlns. For most ejabberd services
+        // this is transparent, but some rules (including MUC-join) process
+        // stanzas differently depending on whether the client-stream
+        // namespace is visible on them. We add it here only for top-level
+        // stanzas, leaving stream-level elements (<open>, <auth>, <bind>,
+        // <iq><session/>) untouched — they go around this method via
+        // socket.write directly.
         let stanzaToSend: XMPPStanza = {
             let isTopLevel = stanza.name == "iq" || stanza.name == "message" || stanza.name == "presence"
             guard isTopLevel, stanza.attributes["xmlns"] == nil else { return stanza }

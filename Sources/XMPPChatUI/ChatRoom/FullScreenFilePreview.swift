@@ -2,9 +2,9 @@
 //  FullScreenFilePreview.swift
 //  XMPPChatUI
 //
-//  Универсальный превьюер для файлов, которые не являются image/video/pdf:
-//  аудио, документы, архивы и т.п. Использует QuickLook — нативный системный
-//  просмотрщик iOS, который сам умеет рендерить всё что поддерживает Files.
+//  Universal previewer for files that are neither image nor video nor PDF:
+//  audio, documents, archives, etc. Uses QuickLook — the native iOS system
+//  previewer, which natively renders everything supported by Files.
 //
 
 import SwiftUI
@@ -62,9 +62,9 @@ struct FullScreenFilePreview: View {
 
     #if os(iOS)
     private func downloadFile() async {
-        // QuickLook умеет только с локальными URL. Скачиваем в temp и передаём.
-        // Имя файла сохраняем как в исходнике, чтобы Quick Look корректно
-        // определил UTI по расширению.
+        // QuickLook only works with local URLs. Download to temp and hand it
+        // over. Preserve the original file name so Quick Look can resolve the
+        // UTI from the extension correctly.
         do {
             let (data, _) = try await URLSession.shared.data(from: fileURL)
             let safeName = fileName.isEmpty ? "file" : fileName
