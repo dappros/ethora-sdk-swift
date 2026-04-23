@@ -1029,6 +1029,16 @@ extension XMPPClient: XMPPStreamDelegate {
             )
         }
         
+        // Set up presence-in-room handler. Without this, `joinRoomsAndWait`
+        // never sees the server's `<presence id="presenceInRoom">` ack —
+        // `waitForRoomPresenceResponses` loops until timeout and reports
+        // every room as unresolved, which in turn breaks room-bound flows
+        // that rely on `markPresenceResponseReceived` / `hasPresenceResponseForRoom`
+        // (MUC join, `presenceInRoom` idempotency check, push subscriptions).
+        handlers.onPresenceInRoom = { [weak self] (roomJID: String, _: String) in
+            self?.markPresenceResponseReceived(for: roomJID)
+        }
+
         // Set up composing (typing) indicator handler
         handlers.onComposingChanged = { [weak self] (roomJID: String, composingList: [String], isComposing: Bool) in
             //print("⌨️ XMPPClient: Composing changed in room \(roomJID) - isComposing: \(isComposing), users: \(composingList)")
