@@ -783,24 +783,47 @@ public class RoomListViewModel: ObservableObject {
     
     public func loadRooms() {
         // FORCE VISIBLE LOGGING
-        
-        isLoading = true
         errorMessage = nil
-        
+
+        // Stale-while-revalidate: сначала показываем закэшированный список
+        // комнат из `RoomStore` (+ кэш сообщений через `MessageCache`), чтобы
+        // UI не сидел на ProgressView пока REST не ответит. Если кэш есть —
+        // сразу `isLoading = false`, и REST работает в фоне, бесшовно
+        // заменяя список свежими данными. Если REST упадёт (нет сети) —
+        // кэш остаётся на экране.
+        let cachedRooms = Array(RoomStore.shared.rooms.values)
+        if !cachedRooms.isEmpty {
+            self.rooms = cachedRooms.map { room in
+                var r = room
+                if let cachedMessages = MessageCache.shared.loadMessages(forRoomJID: r.jid) {
+                    r.messages = cachedMessages
+                }
+                return r
+            }
+            self.isLoading = false
+        } else {
+            isLoading = true
+        }
+
         // Check UserStore state before loading
         Task { @MainActor in
             let isAuth = UserStore.shared.isAuthenticated
             let hasToken = UserStore.shared.token != nil
             let userEmail = UserStore.shared.currentUser?.email ?? "nil"
-            
+
             guard isAuth, hasToken else {
                 let msg = "User not authenticated. Please login first."
-                self.errorMessage = msg
+                // Не затираем закэшированный список — если юзер разлогинился
+                // из-за истёкшего токена, хотя бы показываем последний known
+                // state. Полный сброс делает `LogoutManager`.
+                if self.rooms.isEmpty {
+                    self.errorMessage = msg
+                }
                 self.isLoading = false
                 return
             }
-            
-            
+
+
             do {
                 // RoomsAPI now uses UserStore automatically
                 let loadedRooms = try await RoomsAPI.getRooms(
@@ -808,7 +831,7 @@ public class RoomListViewModel: ObservableObject {
                     appId: appId,
                     conferenceDomain: conferenceDomain
                 )
-                
+
                 // Load cached messages for each room
                 var roomsWithCachedMessages: [Room] = []
                 for var room in loadedRooms {
@@ -818,9 +841,21 @@ public class RoomListViewModel: ObservableObject {
                     }
                     roomsWithCachedMessages.append(room)
                 }
-                
+
                 self.rooms = roomsWithCachedMessages
                 self.isLoading = false // Set to false BEFORE starting queue
+
+                // Сохраняем fresh список в `RoomStore`, чтобы следующий
+                // запуск приложения стартовал уже с актуальным кэшем.
+                // Удаляем из стора те JID'ы, которых нет в свежем списке,
+                // чтобы кэш не рос вечно после удалённых комнат.
+                let freshJIDs = Set(roomsWithCachedMessages.map { $0.jid })
+                for existing in RoomStore.shared.rooms.keys where !freshJIDs.contains(existing) {
+                    RoomStore.shared.deleteRoom(jid: existing)
+                }
+                for room in roomsWithCachedMessages {
+                    RoomStore.shared.addRoom(room)
+                }
                 
                 // After loading rooms, send presence to each room
                 // This is needed so the user can receive history for each room
@@ -847,12 +882,14 @@ public class RoomListViewModel: ObservableObject {
                 }
             } catch {
                 let errorMsg = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-                self.errorMessage = "Failed to load rooms: \(errorMsg)"
+                // Если кэш уже показан — не перекрываем его error-state;
+                // оффлайн-режим: юзер видит последние комнаты и сообщения,
+                // без красного баннера поверх работающего UI.
+                if self.rooms.isEmpty {
+                    self.errorMessage = "Failed to load rooms: \(errorMsg)"
+                }
                 self.isLoading = false
-                //NSlog("❌ RoomListViewModel.loadRooms error: %@", errorMsg)
-                //NSlog("   Full error: %@", error.localizedDescription)
-                //print("❌ RoomListViewModel.loadRooms error: \(errorMsg)")
-                //print("   Full error: \(error)")
+                print("❌ RoomListViewModel.loadRooms error: \(errorMsg) (cache \(self.rooms.isEmpty ? "empty" : "served"))")
             }
         }
     }
