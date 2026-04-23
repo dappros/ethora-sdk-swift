@@ -2,9 +2,9 @@
 //  UseLogout.swift
 //  XMPPChatCore
 //
-//  Единый Logout-флоу: разрыв XMPP, отписка от push/mucsub,
-//  очистка кэшей и токенов. Идемпотентен — безопасно дёргать
-//  даже когда юзер уже разлогинен.
+//  Unified logout flow: disconnect XMPP, unsubscribe from push/mucsub,
+//  clear caches and tokens. Idempotent — safe to call even when the
+//  user is already logged out.
 //
 
 import Foundation
@@ -14,20 +14,21 @@ public final class LogoutManager {
     public static let shared = LogoutManager()
     private init() {}
 
-    /// Опции logout. Дефолт — полный logout с сохранением `ChatConfig`
-    /// (baseUrl, appId, стилинг и т.п.) — обычно хостинг-приложение хочет
-    /// сохранить свои настройки после logout.
+    /// Logout options. Default is a full logout that keeps `ChatConfig`
+    /// (baseUrl, appId, styling, etc.) — the hosting app usually wants to
+    /// reuse its own settings after logout.
     public struct Options: Sendable {
-        /// Разорвать XMPP-соединение.
+        /// Tear down the XMPP connection.
         public var disconnectXMPP: Bool
-        /// Сбросить push (FCM-токен, mucsub room subscriptions, список подписанных комнат в UserDefaults).
+        /// Reset push (FCM token, mucsub room subscriptions, the list of
+        /// subscribed rooms in UserDefaults).
         public var resetPush: Bool
-        /// Обнулить токены и текущего юзера (UserStore + кэш сообщений).
+        /// Wipe tokens and the current user (UserStore + message cache).
         public var clearUser: Bool
-        /// Очистить комнаты, pending-heap, unread-счётчики, pending push JID.
+        /// Clear rooms, pending heap, unread counters, pending push JID.
         public var clearCaches: Bool
-        /// Сбросить `ChatConfig` к дефолту. Обычно НЕ нужно — хостинг-приложение
-        /// при следующем логине переиспользует те же API/XMPP настройки.
+        /// Reset `ChatConfig` to defaults. Usually NOT needed — the hosting
+        /// app typically reuses the same API/XMPP settings on next login.
         public var resetConfig: Bool
 
         public init(
@@ -47,13 +48,14 @@ public final class LogoutManager {
         public static let `default` = Options()
     }
 
-    /// Полный logout.
+    /// Full logout.
     ///
-    /// Порядок важен: push/mucsub сбрасываются до разрыва XMPP (пока ещё есть
-    /// живой stream), затем отключаем XMPP, затем чистим stores и persistence.
+    /// Order matters: push/mucsub are reset before tearing down XMPP (while
+    /// the stream is still alive), then XMPP is disconnected, then stores
+    /// and persistence are cleared.
     /// - Parameters:
-    ///   - client: конкретный `XMPPClient`. Если nil — берём из `ClientRegistry`.
-    ///   - options: тонкая настройка, что именно чистить.
+    ///   - client: a specific `XMPPClient`. If nil, taken from `ClientRegistry`.
+    ///   - options: fine-grained control over what to clear.
     public func logout(
         client: XMPPClient? = nil,
         options: Options = .default
@@ -61,45 +63,45 @@ public final class LogoutManager {
         let target = client ?? ClientRegistry.shared.getGlobalXMPPClient()
         print("[Logout] start — disconnectXMPP=\(options.disconnectXMPP) resetPush=\(options.resetPush) clearUser=\(options.clearUser) clearCaches=\(options.clearCaches) resetConfig=\(options.resetConfig)")
 
-        // 1. Push: обнулить FCM-token, ссылки и выбросить кэш подписок
-        //    mucsub в PushSubscriptionService. Делается до disconnect, чтобы
-        //    при необходимости можно было дослать stop-subscribe через stream.
+        // 1. Push: clear FCM token, handles and drop the mucsub subscription
+        //    cache in PushSubscriptionService. Done before disconnect so that
+        //    any stop-subscribe can still flow through the live stream.
         if options.resetPush {
             await PushNotificationManager.shared.reset()
         }
 
-        // 2. XMPP disconnect — graceful close стрима.
+        // 2. XMPP disconnect — graceful stream close.
         if options.disconnectXMPP, let target {
             await target.disconnect()
         }
 
-        // 3. Отпустить глобальную ссылку на клиент — следующий login
-        //    создаст новый экземпляр `XMPPClient` и зарегистрирует его заново.
+        // 3. Release the global client reference — the next login will
+        //    create a fresh `XMPPClient` and register it anew.
         ClientRegistry.shared.setGlobalXMPPClient(nil)
 
-        // 4. Кэши комнат / сообщений / pending / notifications.
-        //    `MessageHeapState` — это ObservableObject, который хостинг-код
-        //    создаёт сам; у нас нет global handle на него. Экземпляр умрёт
-        //    вместе с его view-model'ю при ререндере после смены isAuthenticated.
+        // 4. Caches for rooms / messages / pending / notifications.
+        //    `MessageHeapState` is an ObservableObject created by the
+        //    hosting code; we don't have a global handle to it. Its
+        //    instance dies together with its view-model during re-render
+        //    after `isAuthenticated` flips.
         if options.clearCaches {
             RoomStore.shared.clearAll()
             MessageCache.shared.clearAll()
-            // Unread/last-read ключи ведутся в UseUnreadMessagesCounter напрямую
-            // через UserDefaults — очищаем здесь, чтобы не висели между сессиями
-            // двух разных юзеров.
+            // Unread/last-read keys are maintained by UseUnreadMessagesCounter
+            // directly through UserDefaults — clear them here so they don't
+            // leak between sessions of two different users.
             UserDefaults.standard.removeObject(forKey: "ethora_unread_counts")
             UserDefaults.standard.removeObject(forKey: "ethora_last_read")
             PendingNotificationJidStore.clearPendingJid()
         }
 
-        // 5. Токены и user data. UserStore.clearUser() сам вызывает
-        //    MessageCache.clearAll() — не страшно, что в шаге 4 мы его
-        //    уже очистили.
+        // 5. Tokens and user data. UserStore.clearUser() itself calls
+        //    MessageCache.clearAll() — harmless that step 4 already did it.
         if options.clearUser {
             UserStore.shared.clearUser()
         }
 
-        // 6. Optional: сброс конфига. По умолчанию выключено.
+        // 6. Optional: reset config. Off by default.
         if options.resetConfig {
             ConfigStore.shared.reset()
         }
@@ -109,8 +111,8 @@ public final class LogoutManager {
 
     // MARK: - Legacy completion-based API
 
-    /// Callback-обёртка над `logout(client:options:)` — для хостинг-кода,
-    /// который не хочет async/await.
+    /// Callback wrapper around `logout(client:options:)` — for hosting code
+    /// that doesn't want async/await.
     public func logout(
         client: XMPPClient?,
         onCompletion: @escaping () -> Void
@@ -121,7 +123,7 @@ public final class LogoutManager {
         }
     }
 
-    /// Спрашивает подтверждение и, если confirmed, выполняет полный logout.
+    /// Asks for confirmation and, if confirmed, performs a full logout.
     public func logoutWithConfirmation(
         client: XMPPClient?,
         showConfirmation: @escaping (@escaping (Bool) -> Void) -> Void,

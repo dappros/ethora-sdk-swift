@@ -2,12 +2,12 @@
 //  MediaPreviewHost.swift
 //  XMPPChatUI
 //
-//  Единая точка входа для fullscreen-превью медиа в чате. Раньше в
-//  ChatRoomView жили три отдельных `.fullScreenCover`/`.sheet` с пустыми
-//  ветками `if let url = URL(string:)`, из-за чего при невалидной ссылке
-//  показывался чёрный экран без кнопки закрытия. Теперь превью выбирается
-//  ровно один раз (по mime-type/расширению файла) и всегда рендерит
-//  закрываемый контейнер — либо нужный просмотрщик, либо понятный fallback.
+//  Single entry point for fullscreen media previews in chat. Previously
+//  `ChatRoomView` had three separate `.fullScreenCover`/`.sheet` blocks with
+//  empty `if let url = URL(string:)` branches, which rendered a black screen
+//  with no close button when the URL was invalid. Now the previewer is
+//  picked exactly once (by mime-type / file extension) and always renders
+//  a closable container — either the right viewer or a clear fallback.
 //
 
 import SwiftUI
@@ -58,7 +58,7 @@ struct MediaPreviewHost: View {
         if mimeType.hasPrefix("image/") { return .image }
         if mimeType.hasPrefix("video/") { return .video }
         if mimeType.contains("pdf") { return .pdf }
-        // Fallback по расширению, если mimeType не информативный.
+        // Fall back to file extension when mimeType isn't informative.
         let ext = url.pathExtension.lowercased()
         if ["jpg", "jpeg", "png", "gif", "webp", "heic", "heif"].contains(ext) { return .image }
         if ["mp4", "mov", "m4v"].contains(ext) { return .video }

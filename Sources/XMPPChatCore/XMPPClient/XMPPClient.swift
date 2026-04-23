@@ -512,7 +512,7 @@ public class XMPPClient {
         // will be sent later when rooms are loaded
     }
     
-    // `sendPresenceToAllRooms` — см. `XMPPClient+Operations.swift` (retry + wait for MUC presence ack).
+    // `sendPresenceToAllRooms` — see `XMPPClient+Operations.swift` (retry + wait for MUC presence ack).
 
     // MARK: - Adaptive Ping
     // Match TypeScript: private startAdaptivePing()

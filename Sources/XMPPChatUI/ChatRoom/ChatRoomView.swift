@@ -419,7 +419,7 @@ public struct ChatRoomView: View {
                         // Clear any errors when user pulls to refresh
                         viewModel.loadError = nil
                         
-                        // Викликаємо refreshMessages для завантаження нових повідомлень
+                        // Call refreshMessages to load new messages
                         viewModel.refreshMessages()
                         
                         // Wait for refresh to complete (isRefreshing becomes false)
@@ -439,9 +439,9 @@ public struct ChatRoomView: View {
                         }
                         
                         if !viewModel.isRefreshing {
-                            //print("✅ Pull-to-refresh завершено: нові повідомлення завантажено")
+                            //print("✅ Pull-to-refresh complete: new messages loaded")
                         } else {
-                            //print("⏱️ Timeout очікування нових повідомлень після pull-to-refresh")
+                            //print("⏱️ Timeout waiting for new messages after pull-to-refresh")
                         }
                     }
                     .onPreferenceChange(ScrollMetricsKey.self) { metrics in
@@ -454,7 +454,7 @@ public struct ChatRoomView: View {
                     .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("MessagesLoaded"))) { notification in
                         // Messages finished loading - scroll position restoration happens in viewModel
                         
-                        // Отримуємо фактичну кількість повідомлень з notification
+                        // Read the actual message count from the notification
                         let userInfo = notification.userInfo ?? [:]
                         let oldCount = userInfo["oldCount"] as? Int ?? 0
                         let newCount = userInfo["newCount"] as? Int ?? viewModel.messages.count
@@ -525,14 +525,14 @@ public struct ChatRoomView: View {
                         lastMessageCount = newCount
                         
                         // Don't auto-scroll if we're loading more (maintaining position)
-                        // Або якщо це pull-to-refresh (не скролимо автоматично)
+                        // Or if this is pull-to-refresh (don't auto-scroll)
                         if viewModel.isLoadingMore {
                             return
                         }
                         
                         // Only scroll on initial load or when restoring position
                         // Don't scroll on every message count change to avoid lag
-                        // Після pull-to-refresh не скролимо автоматично - зберігаємо позицію
+                        // After pull-to-refresh don't auto-scroll — preserve the position
                         if viewModel.shouldScrollToBottom(), let lastMessage = viewModel.messages.last {
                             // Small delay to ensure messages are rendered
                             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
