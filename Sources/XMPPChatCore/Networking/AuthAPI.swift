@@ -353,8 +353,8 @@ public struct AuthAPI {
         clientToken: String,
         baseURL: URL = URL(string: "https://api.chat.ethora.com/v1")!
     ) async throws -> LoginResponse {
-        let url = baseURL.appendingPathComponent("users/client")
-        //print("🌐 AuthAPI.loginViaJwt: URL = \(url.absoluteString)")
+        let url = baseURL.appendingPathComponent("/users/client")
+        print("🌐 AuthAPI.loginViaJwt: URL = \(url)")
         
         var request = URLRequest(url: url)
         request.httpMethod = "POST"

@@ -32,9 +32,18 @@ extension XMPPOperations {
         let nick = bareJid.components(separatedBy: "@").first ?? bareJid
         let toJID = "\(bareRoomJID)/\(nick)"
         
+        // Match Android SDK (XMPPWebSocketConnection.kt:1699 / XMPPClient.kt) verbatim:
+        // include `from` with the full connected JID (localpart@host/resource).
+        // ethora's ejabberd MUC rejects joins without an explicit non-anonymous
+        // `from` with `<forbidden/>` "anonymous not allowed" — omitting it is
+        // the last wire-level divergence observed against the working Android
+        // path. The wire diagnostic log shows handshake + SASL PLAIN succeed
+        // cleanly and a real user JID is bound, so the issue is at MUC-join
+        // level, not auth level.
         let presenceStanza = XMPPStanza(
             name: "presence",
             attributes: [
+                "from": jid,
                 "to": toJID,
                 "id": "presenceInRoom"
             ],

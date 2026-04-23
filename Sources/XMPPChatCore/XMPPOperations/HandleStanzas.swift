@@ -22,56 +22,63 @@ public class HandleStanzas {
         if stanza.attributes["type"] == "headline" {
             return
         }
-        
-        switch stanza.name {
-        case "message":
-            // onMessageError(stanza, xmppWs);
-            stanzaHandlers.onMessageError(stanza, client: client)
-            // onReactionMessage(stanza);
-            stanzaHandlers.onReactionMessage(stanza)
-            // onReactionHistory(stanza);
-            stanzaHandlers.onReactionHistory(stanza)
-            // onDeleteMessage(stanza);
-            stanzaHandlers.onDeleteMessage(stanza)
-            // onEditMessage(stanza);
-            stanzaHandlers.onEditMessage(stanza)
-            // onChatInvite(stanza, xmppWs);
-            stanzaHandlers.onChatInvite(stanza, client: client)
-            // onRealtimeMessage(stanza);
-            stanzaHandlers.onRealtimeMessage(stanza)
-            // onMessageHistory(stanza);
-            stanzaHandlers.onMessageHistory(stanza)
-            // handleComposing(stanza, xmppWs.username);
-            if let username = client?.username {
-                stanzaHandlers.handleComposing(stanza, currentUser: username)
+
+        // MUC-Sub (XEP-0296 via ejabberd `mod_mucsub`) delivers every room-scoped
+        // stanza — real-time messages, typing indicators, deletions, edits,
+        // reactions — wrapped as a pubsub event:
+        //   <message from="room@conference" id="...">
+        //     <event xmlns="http://jabber.org/protocol/pubsub#event">
+        //       <items node="urn:xmpp:mucsub:nodes:messages">
+        //         <item id="..."><message ...>...(the real stanza)...</message></item>
+        //       </items>
+        //     </event>
+        //   </message>
+        // Every downstream handler (onRealtimeMessage, handleComposing,
+        // onReactionMessage, onDeleteMessage, onEditMessage, …) expects the
+        // plain inner stanza. Unwrap once here so the rest of the pipeline
+        // stays unchanged. Observed live with ethora ejabberd — see wire log
+        // from 2026-04-23 where diag_test_123 arrived only via mucsub wrapper.
+        let dispatchStanza: XMPPStanza = {
+            guard stanza.name == "message" else { return stanza }
+            guard let event = stanza.getChild("event", xmlns: "http://jabber.org/protocol/pubsub#event"),
+                  let items = event.getChild("items"),
+                  let item = items.getChild("item"),
+                  let inner = item.getChild("message") else {
+                return stanza
             }
-            // onPresenceInRoom(stanza);
-            stanzaHandlers.onPresenceInRoom(stanza)
-            
+            return inner
+        }()
+
+        switch dispatchStanza.name {
+        case "message":
+            stanzaHandlers.onMessageError(dispatchStanza, client: client)
+            stanzaHandlers.onReactionMessage(dispatchStanza)
+            stanzaHandlers.onReactionHistory(dispatchStanza)
+            stanzaHandlers.onDeleteMessage(dispatchStanza)
+            stanzaHandlers.onEditMessage(dispatchStanza)
+            stanzaHandlers.onChatInvite(dispatchStanza, client: client)
+            stanzaHandlers.onRealtimeMessage(dispatchStanza)
+            stanzaHandlers.onMessageHistory(dispatchStanza)
+            if let username = client?.username {
+                stanzaHandlers.handleComposing(dispatchStanza, currentUser: username)
+            }
+            stanzaHandlers.onPresenceInRoom(dispatchStanza)
+
         case "presence":
-            // onRoomKicked(stanza);
-            stanzaHandlers.onRoomKicked(stanza)
-            // onPresenceInRoom(stanza);
-            stanzaHandlers.onPresenceInRoom(stanza)
-            
+            stanzaHandlers.onRoomKicked(dispatchStanza)
+            stanzaHandlers.onPresenceInRoom(dispatchStanza)
+
         case "iq":
-            // Handle IQ errors first (including get-history errors)
-            stanzaHandlers.onIQError(stanza)
-            // onGetChatRooms(stanza, xmppWs);
-            stanzaHandlers.onGetChatRooms(stanza, client: client)
-            // onPresenceInRoom(stanza);
-            stanzaHandlers.onPresenceInRoom(stanza)
-            // onGetRoomInfo(stanza);
-            stanzaHandlers.onGetRoomInfo(stanza)
-            // onGetLastMessageArchive(stanza);
-            stanzaHandlers.onGetLastMessageArchive(stanza)
-            
+            stanzaHandlers.onIQError(dispatchStanza)
+            stanzaHandlers.onGetChatRooms(dispatchStanza, client: client)
+            stanzaHandlers.onPresenceInRoom(dispatchStanza)
+            stanzaHandlers.onGetRoomInfo(dispatchStanza)
+            stanzaHandlers.onGetLastMessageArchive(dispatchStanza)
+
         case "room-config":
-            // onNewRoomCreated(stanza, xmppWs);
-            stanzaHandlers.onNewRoomCreated(stanza, client: client)
-            
+            stanzaHandlers.onNewRoomCreated(dispatchStanza, client: client)
+
         default:
-            //print("Unhandled stanza type: \(stanza.name)")
             break
         }
     }
