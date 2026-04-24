@@ -237,20 +237,27 @@ public struct AuthAPI {
         appToken: String = AppConfig.appToken
     ) async throws -> (token: String, refreshToken: String) {
         let url = baseURL.appendingPathComponent("users/login/refresh")
-        //print("🌐 AuthAPI.refreshToken: URL = \(url.absoluteString)")
-        
+        print("🌐 AuthAPI.refreshToken: POST \(url.absoluteString)")
+
+        // Match React exactly (see ethora-chat-component/src/networking/
+        // apiClient.ts `refresh()`):
+        //   http.post('/users/login/refresh', {}, {
+        //     headers: { Authorization: user.refreshToken }
+        //   })
+        // The Authorization header carries the *refresh token itself* — NOT
+        // the app token, NOT the access token, and NOT wrapped in
+        // "Bearer "/"JWT ". The request body is an empty JSON object.
+        // Getting any of this wrong (e.g. putting appToken in Authorization
+        // or refreshToken in the body) causes the server to silently 401 —
+        // which is why previously the SessionRecoveryManager always ended
+        // up dropping the user on the login screen.
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.setValue(AppConfig.normalizedAppAuthorizationHeader(appToken), forHTTPHeaderField: "Authorization")
+        request.setValue(refreshToken, forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
-        
-        // Send refreshToken in body
-        struct RefreshBody: Codable {
-            let refreshToken: String
-        }
-        let body = RefreshBody(refreshToken: refreshToken)
-        request.httpBody = try JSONEncoder().encode(body)
+        request.httpBody = "{}".data(using: .utf8)
+        _ = appToken // parameter kept for source compatibility; not used anymore
         
         let (data, response) = try await URLSession.shared.data(for: request)
         
