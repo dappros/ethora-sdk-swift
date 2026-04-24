@@ -651,6 +651,13 @@ public class RoomListViewModel: ObservableObject {
             if let self = self, !self.rooms.isEmpty {
                 self.messageLoaderQueue?.reset()
                 self.messageLoaderQueue?.start()
+                // After reconnect (or fresh connect after app relaunch) fetch
+                // the latest slice of history for every known room, so any
+                // messages that arrived while the app was offline show up
+                // immediately — without the user having to open each chat.
+                Task { @MainActor [weak self] in
+                    await self?.refreshLatestForAllRooms()
+                }
                 //print("🔄 RoomListViewModel: Started auto-load history queue (client connected)")
             }
         }
@@ -862,7 +869,7 @@ public class RoomListViewModel: ObservableObject {
                 if !loadedRooms.isEmpty {
                     let roomJIDs = loadedRooms.compactMap { $0.jid }
                     _ = await client.joinRoomsAndWait(roomJIDs: roomJIDs, timeout: 3.5)
-                    
+
                     // Start auto-loading history for all rooms when XMPP is idle
                     if client.checkOnline() {
                         //print("🔄 RoomListViewModel: Client is online, starting auto-load queue")
@@ -871,6 +878,13 @@ public class RoomListViewModel: ObservableObject {
                         messageLoaderQueue?.reset() // Reset to process all rooms
                         messageLoaderQueue?.start()
                         //print("✅ RoomListViewModel: Started auto-load history queue")
+
+                        // Pull the latest slice of history for every room so
+                        // new incoming messages (that arrived while the app
+                        // was closed) appear in the list and unread badges
+                        // immediately, without waiting for the user to open
+                        // each chat one by one.
+                        await refreshLatestForAllRooms()
                     } else {
                         //print("⚠️ RoomListViewModel: Client is not online, cannot start auto-load queue")
                     }
@@ -890,6 +904,64 @@ public class RoomListViewModel: ObservableObject {
                 }
                 self.isLoading = false
                 print("❌ RoomListViewModel.loadRooms error: \(errorMsg) (cache \(self.rooms.isEmpty ? "empty" : "served"))")
+            }
+        }
+    }
+
+    /// Fetches the last slice of MAM history for every known room so any
+    /// messages that arrived while the app was offline land in the cache and
+    /// unread badges right after connect. Results are handled through the
+    /// normal stanza pipeline (`onMessageHistory` → `processIncomingMessage`
+    /// → `RoomMessagesUpdated` notification), and the `id`-based
+    /// deduplication downstream takes care of already-cached messages.
+    private func refreshLatestForAllRooms() async {
+        guard client.checkOnline() else { return }
+        let jids = rooms.compactMap { $0.jid }
+        guard !jids.isEmpty else { return }
+
+        for jid in jids {
+            client.operations.sendGetHistory(chatJID: jid, max: 10, before: nil)
+            // Small pause so we don't slam ejabberd's MAM with parallel
+            // get-histories on login / reconnect.
+            try? await Task.sleep(nanoseconds: 150_000_000)
+        }
+
+        // Give MAM results a moment to flow through the stanza pipeline and
+        // land in MessageCache / RoomStore, then recompute unread badges
+        // from scratch so rooms that got new messages while the app was
+        // offline show the correct count. Real-time bumping in
+        // `XMPPClient.onMessageReceived` takes care of further increments.
+        try? await Task.sleep(nanoseconds: 1_200_000_000) // 1.2s
+        recountUnreadFromCache()
+    }
+
+    /// Recomputes `Room.unreadMessages` for every room by counting messages
+    /// in the cache newer than `lastViewedTimestamp`, excluding the active
+    /// room (user is looking at it) and the user's own messages. Mirrors the
+    /// React Native `unreadMiddleware` approach but runs on demand instead
+    /// of on every Redux action.
+    private func recountUnreadFromCache() {
+        let activeJID = RoomStore.shared.activeRoomJID
+        let myLocal = UserStore.shared.currentUser?.xmppUsername?
+            .components(separatedBy: "@").first ?? ""
+
+        for (jid, room) in RoomStore.shared.rooms {
+            if jid == activeJID {
+                RoomStore.shared.updateUnreadCount(roomJID: jid, count: 0)
+                continue
+            }
+            let cached = MessageCache.shared.loadMessages(forRoomJID: jid) ?? room.messages
+            let lastViewed = room.lastViewedTimestamp ?? 0
+            let unread = cached.reduce(0) { acc, msg in
+                guard msg.isDeleted != true else { return acc }
+                guard (msg.timestamp ?? 0) > lastViewed else { return acc }
+                let senderLocal = msg.user.xmppUsername?
+                    .components(separatedBy: "@").first ?? ""
+                guard senderLocal != myLocal else { return acc }
+                return acc + 1
+            }
+            if unread != room.unreadMessages {
+                RoomStore.shared.updateUnreadCount(roomJID: jid, count: unread)
             }
         }
     }
