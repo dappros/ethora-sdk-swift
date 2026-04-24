@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import Combine
 import XMPPChatCore
 
 // Helper wrapper to create ChatRoomViewModel with callback
@@ -268,6 +269,26 @@ public struct RoomListView: View {
     }
 }
 
+/// Explicitly restores navigation bar visibility when returning from a
+/// pushed `ChatRoomView` (which hides its nav bar via
+/// `.navigationBarHidden(true)`). On iOS 16+ that legacy modifier leaks
+/// into the parent stack on pop, killing the "Chats" title, search bar,
+/// and the "+" toolbar button. The modern `.toolbar(.visible, for:
+/// .navigationBar)` reliably resets it.
+private struct RestoreNavBarVisibilityModifier: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 16.0, macOS 13.0, *) {
+            content.toolbar(.visible, for: .navigationBar)
+        } else {
+            #if os(iOS)
+            content.navigationBarHidden(false)
+            #else
+            content
+            #endif
+        }
+    }
+}
+
 private struct RoomListModeModifier: ViewModifier {
     let hideRoomList: Bool
     @Binding var searchText: String
@@ -278,6 +299,7 @@ private struct RoomListModeModifier: ViewModifier {
             content.navigationTitle("Chat")
         } else {
             content
+                .modifier(RestoreNavBarVisibilityModifier())
                 .searchable(text: $searchText)
                 .navigationTitle("Chats")
                 .toolbar {
@@ -443,8 +465,16 @@ struct RoomListItemView: View {
     
     /// Get the last message from room's messages array or lastMessage property
     private func getLastMessage(from room: Room) -> Message? {
-        // First check if room has messages in the messages array
-        if let lastMessage = room.messages.last {
+        // Take the last message with non-empty visible body that isn't a
+        // deleted stub or a typing/composing stanza that slipped in.
+        // Without this filter the preview shows "Test User:" with no body
+        // text, because the tail of `messages` may end on a chat-state
+        // stanza right after the user typed.
+        if let lastMessage = room.messages.reversed().first(where: { msg in
+            guard msg.isDeleted != true else { return false }
+            let trimmed = msg.body.trimmingCharacters(in: .whitespacesAndNewlines)
+            return !trimmed.isEmpty
+        }) {
             return lastMessage
         }
         // Fallback to lastMessage property if available
@@ -596,6 +626,7 @@ public class RoomListViewModel: ObservableObject {
     // Composing timeouts per room
     private var composingTimeouts: [String: Timer] = [:]
     private var notificationObservers: [NSObjectProtocol] = []
+    private var unreadSyncCancellable: AnyCancellable?
     
     // New initializer - token is now managed by UserStore
     public init(
@@ -648,13 +679,55 @@ public class RoomListViewModel: ObservableObject {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            if let self = self, !self.rooms.isEmpty {
-                self.messageLoaderQueue?.reset()
-                self.messageLoaderQueue?.start()
-                //print("🔄 RoomListViewModel: Started auto-load history queue (client connected)")
+            guard let self = self else { return }
+
+            if self.rooms.isEmpty {
+                // After a long background → XMPP reconnect we sometimes get
+                // here with an empty room list (REST 401'd earlier, cache
+                // got cleared, or this VM was just created). Re-trigger the
+                // full `loadRooms` path so the user doesn't have to toggle
+                // tabs to repopulate the list. It's a no-op when already
+                // loading.
+                if !self.isLoading {
+                    self.loadRooms()
+                }
+                return
             }
+
+            self.messageLoaderQueue?.reset()
+            self.messageLoaderQueue?.start()
+            // After reconnect (or fresh connect after app relaunch) fetch
+            // the latest slice of history for every known room, so any
+            // messages that arrived while the app was offline show up
+            // immediately — without the user having to open each chat.
+            Task { @MainActor [weak self] in
+                await self?.refreshLatestForAllRooms()
+            }
+            //print("🔄 RoomListViewModel: Started auto-load history queue (client connected)")
         }
         notificationObservers.append(didConnectToken)
+
+        // Session was restored by `SessionRecoveryManager` (either direct
+        // XMPP reconnect or a refresh-then-reconnect). Repopulate the room
+        // list if it got wiped and re-pull the latest messages in each
+        // chat, so the user who sat in a specific chat during background
+        // still sees the newest messages on return — without having to
+        // exit and re-enter the room.
+        let recoveryToken = NotificationCenter.default.addObserver(
+            forName: SessionRecoveryManager.sessionRecoveredNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self = self else { return }
+            if self.rooms.isEmpty {
+                if !self.isLoading { self.loadRooms() }
+            } else {
+                Task { @MainActor [weak self] in
+                    await self?.refreshLatestForAllRooms()
+                }
+            }
+        }
+        notificationObservers.append(recoveryToken)
         
         // Listen for room messages updates to update the room's messages array
         let roomMessagesRefreshToken = NotificationCenter.default.addObserver(
@@ -675,21 +748,63 @@ public class RoomListViewModel: ObservableObject {
                 if let cachedMessages = MessageCache.shared.loadMessages(forRoomJID: roomJID) {
                     // Update room's messages array
                     self.rooms[roomIndex].messages = cachedMessages
-                    
+
+                    // Keep RoomStore in sync for unread recomputation.
+                    if var storeRoom = RoomStore.shared.rooms[roomJID] {
+                        storeRoom.messages = cachedMessages
+                        RoomStore.shared.rooms[roomJID] = storeRoom
+                    }
+
+                    // Recompute unread from messages + lastViewedTimestamp
+                    // (mirrors React's unreadMiddleware).
+                    let myLocal = UserStore.shared.currentUser?.xmppUsername?
+                        .components(separatedBy: "@").first ?? ""
+                    RoomStore.shared.recomputeUnreadForRoom(
+                        jid: roomJID,
+                        currentUserLocal: myLocal
+                    )
+
+                    // Reflect the freshly computed badge back into the view
+                    // model's own `rooms` array (ChatRoomItem binds to
+                    // `viewModel.rooms`, not `RoomStore.shared.rooms`).
+                    if let storeRoom = RoomStore.shared.rooms[roomJID] {
+                        self.rooms[roomIndex].unreadMessages = storeRoom.unreadMessages
+                    }
+
                     // Notify MessageLoaderQueue about the update
                     self.messageLoaderQueue?.onRoomMessagesUpdated(
                         roomJID: roomJID,
                         currentMessageCount: cachedMessages.count
                     )
-                    
+
                     // Trigger UI update
                     self.objectWillChange.send()
-                    
+
                     //print("✅ RoomListViewModel: Updated room \(roomJID) with \(cachedMessages.count) messages from cache")
                 }
             }
         }
         notificationObservers.append(roomMessagesRefreshToken)
+
+        // Mirror `unreadMessages` changes from RoomStore back into
+        // `self.rooms` so the badge in the row refreshes even when the
+        // recompute is triggered from elsewhere (e.g. `ChatRoomViewModel`
+        // setting `lastViewedTimestamp`, MAM history refresh).
+        let unreadSyncToken = RoomStore.shared.$rooms
+            .receive(on: RunLoop.main)
+            .sink { [weak self] storeRooms in
+                guard let self = self else { return }
+                var didChange = false
+                for (jid, storeRoom) in storeRooms {
+                    if let idx = self.rooms.firstIndex(where: { $0.jid == jid }),
+                       self.rooms[idx].unreadMessages != storeRoom.unreadMessages {
+                        self.rooms[idx].unreadMessages = storeRoom.unreadMessages
+                        didChange = true
+                    }
+                }
+                if didChange { self.objectWillChange.send() }
+            }
+        self.unreadSyncCancellable = unreadSyncToken
         
         // Listen for composing (typing) indicator changes
         let composingChangedToken = NotificationCenter.default.addObserver(
@@ -783,24 +898,47 @@ public class RoomListViewModel: ObservableObject {
     
     public func loadRooms() {
         // FORCE VISIBLE LOGGING
-        
-        isLoading = true
         errorMessage = nil
-        
+
+        // Stale-while-revalidate: first show the cached list of rooms from
+        // `RoomStore` (+ cached messages via `MessageCache`) so the UI
+        // doesn't sit on a ProgressView while REST is in flight. If the
+        // cache is present, set `isLoading = false` immediately and run
+        // REST in the background, seamlessly replacing the list with fresh
+        // data. If REST fails (no network), the cache stays on screen.
+        let cachedRooms = Array(RoomStore.shared.rooms.values)
+        if !cachedRooms.isEmpty {
+            self.rooms = cachedRooms.map { room in
+                var r = room
+                if let cachedMessages = MessageCache.shared.loadMessages(forRoomJID: r.jid) {
+                    r.messages = cachedMessages
+                }
+                return r
+            }
+            self.isLoading = false
+        } else {
+            isLoading = true
+        }
+
         // Check UserStore state before loading
         Task { @MainActor in
             let isAuth = UserStore.shared.isAuthenticated
             let hasToken = UserStore.shared.token != nil
             let userEmail = UserStore.shared.currentUser?.email ?? "nil"
-            
+
             guard isAuth, hasToken else {
                 let msg = "User not authenticated. Please login first."
-                self.errorMessage = msg
+                // Don't wipe the cached list — if the user got signed out
+                // because of an expired token, we still show the last known
+                // state. A full reset is the job of `LogoutManager`.
+                if self.rooms.isEmpty {
+                    self.errorMessage = msg
+                }
                 self.isLoading = false
                 return
             }
-            
-            
+
+
             do {
                 // RoomsAPI now uses UserStore automatically
                 let loadedRooms = try await RoomsAPI.getRooms(
@@ -808,7 +946,7 @@ public class RoomListViewModel: ObservableObject {
                     appId: appId,
                     conferenceDomain: conferenceDomain
                 )
-                
+
                 // Load cached messages for each room
                 var roomsWithCachedMessages: [Room] = []
                 for var room in loadedRooms {
@@ -818,16 +956,28 @@ public class RoomListViewModel: ObservableObject {
                     }
                     roomsWithCachedMessages.append(room)
                 }
-                
+
                 self.rooms = roomsWithCachedMessages
                 self.isLoading = false // Set to false BEFORE starting queue
+
+                // Save the fresh list to `RoomStore` so the next app launch
+                // starts with an up-to-date cache. Remove JIDs from the
+                // store that are no longer in the fresh list so the cache
+                // doesn't keep growing after rooms get deleted.
+                let freshJIDs = Set(roomsWithCachedMessages.map { $0.jid })
+                for existing in RoomStore.shared.rooms.keys where !freshJIDs.contains(existing) {
+                    RoomStore.shared.deleteRoom(jid: existing)
+                }
+                for room in roomsWithCachedMessages {
+                    RoomStore.shared.addRoom(room)
+                }
                 
                 // After loading rooms, send presence to each room
                 // This is needed so the user can receive history for each room
                 if !loadedRooms.isEmpty {
                     let roomJIDs = loadedRooms.compactMap { $0.jid }
                     _ = await client.joinRoomsAndWait(roomJIDs: roomJIDs, timeout: 3.5)
-                    
+
                     // Start auto-loading history for all rooms when XMPP is idle
                     if client.checkOnline() {
                         //print("🔄 RoomListViewModel: Client is online, starting auto-load queue")
@@ -836,6 +986,13 @@ public class RoomListViewModel: ObservableObject {
                         messageLoaderQueue?.reset() // Reset to process all rooms
                         messageLoaderQueue?.start()
                         //print("✅ RoomListViewModel: Started auto-load history queue")
+
+                        // Pull the latest slice of history for every room so
+                        // new incoming messages (that arrived while the app
+                        // was closed) appear in the list and unread badges
+                        // immediately, without waiting for the user to open
+                        // each chat one by one.
+                        await refreshLatestForAllRooms()
                     } else {
                         //print("⚠️ RoomListViewModel: Client is not online, cannot start auto-load queue")
                     }
@@ -847,12 +1004,72 @@ public class RoomListViewModel: ObservableObject {
                 }
             } catch {
                 let errorMsg = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-                self.errorMessage = "Failed to load rooms: \(errorMsg)"
+                // If the cache is already on screen, don't overlay it with
+                // an error state; offline mode: the user sees last rooms
+                // and messages without a red banner on top of working UI.
+                if self.rooms.isEmpty {
+                    self.errorMessage = "Failed to load rooms: \(errorMsg)"
+                }
                 self.isLoading = false
-                //NSlog("❌ RoomListViewModel.loadRooms error: %@", errorMsg)
-                //NSlog("   Full error: %@", error.localizedDescription)
-                //print("❌ RoomListViewModel.loadRooms error: \(errorMsg)")
-                //print("   Full error: \(error)")
+                print("❌ RoomListViewModel.loadRooms error: \(errorMsg) (cache \(self.rooms.isEmpty ? "empty" : "served"))")
+            }
+        }
+    }
+
+    /// Fetches the last slice of MAM history for every known room so any
+    /// messages that arrived while the app was offline land in the cache and
+    /// unread badges right after connect. Results are handled through the
+    /// normal stanza pipeline (`onMessageHistory` → `processIncomingMessage`
+    /// → `RoomMessagesUpdated` notification), and the `id`-based
+    /// deduplication downstream takes care of already-cached messages.
+    private func refreshLatestForAllRooms() async {
+        guard client.checkOnline() else { return }
+        let jids = rooms.compactMap { $0.jid }
+        guard !jids.isEmpty else { return }
+
+        for jid in jids {
+            client.operations.sendGetHistory(chatJID: jid, max: 10, before: nil)
+            // Small pause so we don't slam ejabberd's MAM with parallel
+            // get-histories on login / reconnect.
+            try? await Task.sleep(nanoseconds: 150_000_000)
+        }
+
+        // Give MAM results a moment to flow through the stanza pipeline and
+        // land in MessageCache / RoomStore, then recompute unread badges
+        // from scratch so rooms that got new messages while the app was
+        // offline show the correct count. Real-time bumping in
+        // `XMPPClient.onMessageReceived` takes care of further increments.
+        try? await Task.sleep(nanoseconds: 1_200_000_000) // 1.2s
+        recountUnreadFromCache()
+    }
+
+    /// Recomputes `Room.unreadMessages` for every room by counting messages
+    /// in the cache newer than `lastViewedTimestamp`, excluding the active
+    /// room (user is looking at it) and the user's own messages. Mirrors the
+    /// React Native `unreadMiddleware` approach but runs on demand instead
+    /// of on every Redux action.
+    private func recountUnreadFromCache() {
+        let activeJID = RoomStore.shared.activeRoomJID
+        let myLocal = UserStore.shared.currentUser?.xmppUsername?
+            .components(separatedBy: "@").first ?? ""
+
+        for (jid, room) in RoomStore.shared.rooms {
+            if jid == activeJID {
+                RoomStore.shared.updateUnreadCount(roomJID: jid, count: 0)
+                continue
+            }
+            let cached = MessageCache.shared.loadMessages(forRoomJID: jid) ?? room.messages
+            let lastViewed = room.lastViewedTimestamp ?? 0
+            let unread = cached.reduce(0) { acc, msg in
+                guard msg.isDeleted != true else { return acc }
+                guard (msg.timestamp ?? 0) > lastViewed else { return acc }
+                let senderLocal = msg.user.xmppUsername?
+                    .components(separatedBy: "@").first ?? ""
+                guard senderLocal != myLocal else { return acc }
+                return acc + 1
+            }
+            if unread != room.unreadMessages {
+                RoomStore.shared.updateUnreadCount(roomJID: jid, count: unread)
             }
         }
     }

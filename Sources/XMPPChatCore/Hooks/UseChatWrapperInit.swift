@@ -133,6 +133,12 @@ public class ChatWrapperViewModel: ObservableObject {
         }
         
         observeConnectionManager()
+
+        // Instantiate the lazily-initialised `SessionRecoveryManager` so its
+        // `didBecomeActive` / `willEnterForeground` observers are registered
+        // before the user backgrounds the app for the first time. The
+        // singleton is otherwise never referenced from outside this SDK.
+        _ = SessionRecoveryManager.shared
         
         // Kick off async initialization.
         self.initializationTask = Task { [weak self] in

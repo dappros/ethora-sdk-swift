@@ -129,8 +129,14 @@ struct MessagesListView: View {
                 .id(message.id)
             }
             
+            // Visual padding below the last message so it never sits flush
+            // against the input bar. `ScrollViewReader.scrollTo(bottomAnchorID,
+            // anchor: .bottom)` aligns this sentinel with the visible bottom,
+            // giving the bubble above a comfortable breathing room and
+            // absorbing any off-by-one that LazyVStack can introduce while
+            // it incrementally measures the final row.
             Color.clear
-                .frame(height: 1)
+                .frame(height: 16)
                 .id("bottom-anchor")
         }
     }

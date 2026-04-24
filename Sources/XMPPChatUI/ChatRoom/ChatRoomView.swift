@@ -55,6 +55,25 @@ public struct ChatRoomView: View {
     @State private var isUserScrolledUp: Bool = false
     @State private var atBottom: Bool = true
     @State private var scrollProxy: ScrollViewProxy?
+    /// `true` once we've pinned the initial scroll to the newest message.
+    /// Until then we suppress `checkIfLoadMoreMessages`, because at layout
+    /// time `scrollTop == 0` trips the "near-top" guard and would fire an
+    /// unwanted older-history load right as the chat opens.
+    @State private var hasPerformedInitialScroll: Bool = false
+    /// While `true`, every `messages.count` / `isLoading` flip re-pins the
+    /// scroll view to `bottom-anchor`. Flipped off the moment the user
+    /// manually scrolls upward, re-armed on `onAppear`. Guarantees the chat
+    /// opens at the bottom every time — including repeat opens and the
+    /// race where MAM sends the last batch of messages a second or two
+    /// after `onAppear` fires.
+    @State private var pinToBottom: Bool = true
+    /// iOS 17+ `scrollPosition(id:)` binding. SwiftUI re-anchors the
+    /// ScrollView to whatever id this holds whenever content or viewport
+    /// size changes — which is exactly what we need for the chat-on-open
+    /// + keyboard-appears edge cases. Keep pointed at `bottom-anchor`
+    /// until the user scrolls manually (we clear it in
+    /// `updateScrollButton` when `distanceFromBottom > 150`).
+    @State private var scrollPinAnchorID: String? = "bottom-anchor"
     @FocusState private var isInputFocused: Bool
     @State private var showConnectionStatus: Bool = true
     @State private var dragOffset: CGFloat = 0
@@ -65,10 +84,7 @@ public struct ChatRoomView: View {
     @State private var selectedMessageForThread: Message? = nil
     @State private var showReportModal: Bool = false
     @State private var messageToReport: Message? = nil
-    @State private var showFullScreenImage: Bool = false
-    @State private var showFullScreenVideo: Bool = false
-    @State private var showFullScreenPDF: Bool = false
-    @State private var selectedMediaMessage: Message? = nil
+    @State private var mediaPreview: MediaPreviewTarget? = nil
     @ObservedObject private var connectionManager: ConnectionManager
     
     private var chatBackgroundColor: Color {
@@ -265,29 +281,7 @@ public struct ChatRoomView: View {
                                     } : nil,
                                     onReport: nil,
                                     onMediaTap: { mediaMessage in
-                                        // Open full screen media preview
-                                        selectedMediaMessage = mediaMessage
-                                        
-                                        let mimeType: String = {
-                                            if let existingMimeType = mediaMessage.mimetype, !existingMimeType.isEmpty {
-                                                return existingMimeType
-                                            } else if let location = mediaMessage.location {
-                                                return inferMimeType(from: location)
-                                            } else {
-                                                return "application/octet-stream"
-                                            }
-                                        }()
-                                        
-                                        if mimeType.hasPrefix("image/") {
-                                            showFullScreenImage = true
-                                        } else if mimeType.hasPrefix("video/") {
-                                            showFullScreenVideo = true
-                                        } else if mimeType.contains("pdf") {
-                                            showFullScreenPDF = true
-                                        } else {
-                                            // For other files, open generic file preview modal (existing UI)
-                                            showFullScreenPDF = false
-                                        }
+                                        mediaPreview = MediaPreviewTarget(message: mediaMessage)
                                     }
 //                                    onReport: !isUser ? {
 //                                        messageToReport = message
@@ -353,7 +347,7 @@ public struct ChatRoomView: View {
             // Messages List
             ZStack {
                 ScrollViewReader { proxy in
-                    ScrollView {
+                    scrollViewAnchoredToBottom {
                         buildMessagesList(proxy: proxy)
                     }
                     .coordinateSpace(name: "messageScroll")
@@ -414,29 +408,8 @@ public struct ChatRoomView: View {
                             onDelete: nil
                         )
                     }
-                    .fullScreenCover(isPresented: $showFullScreenImage) {
-                        if let message = selectedMediaMessage, let urlString = message.location, let url = URL(string: urlString) {
-                            FullScreenImageView(imageURL: url, onClose: {
-                                showFullScreenImage = false
-                                selectedMediaMessage = nil
-                            })
-                        }
-                    }
-                    .fullScreenCover(isPresented: $showFullScreenVideo) {
-                        if let message = selectedMediaMessage, let urlString = message.location, let url = URL(string: urlString) {
-                            FullScreenVideoView(videoURL: url, onClose: {
-                                showFullScreenVideo = false
-                                selectedMediaMessage = nil
-                            })
-                        }
-                    }
-                    .sheet(isPresented: $showFullScreenPDF) {
-                        if let message = selectedMediaMessage, let urlString = message.location, let url = URL(string: urlString) {
-                            FullScreenPDFView(pdfURL: url, fileName: message.fileName ?? message.originalName ?? "Document.pdf", onClose: {
-                                showFullScreenPDF = false
-                                selectedMediaMessage = nil
-                            })
-                        }
+                    .fullScreenCover(item: $mediaPreview) { target in
+                        MediaPreviewHost(target: target, onClose: { mediaPreview = nil })
                     }
                     .background(
                         // Track scroll position and content dimensions
@@ -465,7 +438,7 @@ public struct ChatRoomView: View {
                         // Clear any errors when user pulls to refresh
                         viewModel.loadError = nil
                         
-                        // Викликаємо refreshMessages для завантаження нових повідомлень
+                        // Call refreshMessages to load new messages
                         viewModel.refreshMessages()
                         
                         // Wait for refresh to complete (isRefreshing becomes false)
@@ -485,9 +458,9 @@ public struct ChatRoomView: View {
                         }
                         
                         if !viewModel.isRefreshing {
-                            //print("✅ Pull-to-refresh завершено: нові повідомлення завантажено")
+                            //print("✅ Pull-to-refresh complete: new messages loaded")
                         } else {
-                            //print("⏱️ Timeout очікування нових повідомлень після pull-to-refresh")
+                            //print("⏱️ Timeout waiting for new messages after pull-to-refresh")
                         }
                     }
                     .onPreferenceChange(ScrollMetricsKey.self) { metrics in
@@ -500,7 +473,7 @@ public struct ChatRoomView: View {
                     .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("MessagesLoaded"))) { notification in
                         // Messages finished loading - scroll position restoration happens in viewModel
                         
-                        // Отримуємо фактичну кількість повідомлень з notification
+                        // Read the actual message count from the notification
                         let userInfo = notification.userInfo ?? [:]
                         let oldCount = userInfo["oldCount"] as? Int ?? 0
                         let newCount = userInfo["newCount"] as? Int ?? viewModel.messages.count
@@ -571,21 +544,30 @@ public struct ChatRoomView: View {
                         lastMessageCount = newCount
                         
                         // Don't auto-scroll if we're loading more (maintaining position)
-                        // Або якщо це pull-to-refresh (не скролимо автоматично)
+                        // Or if this is pull-to-refresh (don't auto-scroll)
                         if viewModel.isLoadingMore {
                             return
                         }
                         
                         // Only scroll on initial load or when restoring position
                         // Don't scroll on every message count change to avoid lag
-                        // Після pull-to-refresh не скролимо автоматично - зберігаємо позицію
-                        if viewModel.shouldScrollToBottom(), let lastMessage = viewModel.messages.last {
-                            // Small delay to ensure messages are rendered
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                                withAnimation(.easeOut(duration: 0.3)) {
-                            proxy.scrollTo(lastMessage.id, anchor: .bottom)
-                        }
-                    }
+                        // After pull-to-refresh don't auto-scroll — preserve the position
+                        if pinToBottom, viewModel.messages.last != nil {
+                            // Keep pinning bottom until the user scrolls
+                            // manually. Same multi-hop loop as in `onAppear`
+                            // — a single `scrollTo` can land slightly above
+                            // the true bottom because LazyVStack lays rows
+                            // out on demand. Repeating for ~300ms catches
+                            // settlement. Stops immediately if the user
+                            // flips `pinToBottom` off by scrolling up.
+                            Task { @MainActor in
+                                for _ in 0..<6 {
+                                    if !pinToBottom { return }
+                                    proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
+                                    try? await Task.sleep(nanoseconds: 50_000_000)
+                                }
+                                hasPerformedInitialScroll = true
+                            }
                         } else if let savedPosition = viewModel.getScrollPosition(),
                                   viewModel.messages.contains(where: { $0.id == savedPosition }),
                                   !viewModel.hasRestoredScrollPosition {
@@ -599,12 +581,18 @@ public struct ChatRoomView: View {
                         }
                     }
                     .onChange(of: viewModel.isLoading) { isLoading in
-                        // When loading completes, scroll to bottom if it was the first load
-                        if !isLoading && viewModel.shouldScrollToBottom(), let lastMessage = viewModel.messages.last {
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                                withAnimation(.easeOut(duration: 0.3)) {
-                                    proxy.scrollTo(lastMessage.id, anchor: .bottom)
+                        // When loading finishes, re-pin to the bottom while
+                        // `pinToBottom` is still armed. This catches the
+                        // case where the chat opened on an empty state and
+                        // the first cache/MAM batch arrived after `onAppear`.
+                        if !isLoading && pinToBottom, viewModel.messages.last != nil {
+                            Task { @MainActor in
+                                for _ in 0..<6 {
+                                    if !pinToBottom { return }
+                                    proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
+                                    try? await Task.sleep(nanoseconds: 50_000_000)
                                 }
+                                hasPerformedInitialScroll = true
                             }
                         }
                     }
@@ -619,24 +607,39 @@ public struct ChatRoomView: View {
                     .onAppear {
                         // Store proxy for button access
                         scrollProxy = proxy
-                        
-                        // When view appears, restore scroll position if available
-                        if let savedPosition = viewModel.getScrollPosition(),
-                           viewModel.messages.contains(where: { $0.id == savedPosition }),
-                           !viewModel.hasRestoredScrollPosition {
-                            viewModel.markScrollPositionRestored()
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                                withAnimation(.easeOut(duration: 0.2)) {
-                                    proxy.scrollTo(savedPosition, anchor: .center)
-                                }
+
+                        // Re-arm bottom-pin on every open: we want the chat
+                        // to always land at the newest message, including
+                        // repeat opens and cases where `messages` arrive a
+                        // second or two after `onAppear`. The pin is
+                        // dropped the moment the user manually scrolls up.
+                        pinToBottom = true
+                        hasPerformedInitialScroll = false
+                        isUserScrolledUp = false
+                        // iOS 17+ scroll-position binding: re-pointing at
+                        // `bottom-anchor` tells SwiftUI to anchor the
+                        // ScrollView's visual bottom to this id and keep
+                        // it stable through content / viewport changes
+                        // (new messages arriving, keyboard appearing).
+                        scrollPinAnchorID = "bottom-anchor"
+
+                        // `LazyVStack` inside `ScrollView` lays out rows
+                        // incrementally, so a single `scrollTo(bottom)` at
+                        // `onAppear` can land slightly above the true
+                        // bottom (last row's intrinsic height is computed
+                        // only after it's rendered). We pin for a short
+                        // window: repeated scrollTo calls every 50ms for
+                        // ~1s — this soaks up LazyVStack settlement and
+                        // any MAM/cache batch that lands shortly after
+                        // `onAppear`. Stops as soon as the user scrolls
+                        // up manually (which flips `pinToBottom` off).
+                        Task { @MainActor in
+                            for _ in 0..<20 {
+                                if !pinToBottom { return }
+                                proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
+                                try? await Task.sleep(nanoseconds: 50_000_000)
                             }
-                        } else if viewModel.shouldScrollToBottom(), let lastMessage = viewModel.messages.last {
-                            // First load - scroll to bottom
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                                withAnimation(.easeOut(duration: 0.3)) {
-                            proxy.scrollTo(lastMessage.id, anchor: .bottom)
-                                }
-                            }
+                            hasPerformedInitialScroll = true
                         }
                     }
                 }
@@ -703,7 +706,7 @@ public struct ChatRoomView: View {
             chatBackgroundColor.ignoresSafeArea()
         )
         #if os(iOS)
-        .navigationBarHidden(true)
+        .modifier(HideNavigationBarModifier())
         #endif
         .onAppear {
             viewModel.onViewAppeared()
@@ -717,6 +720,32 @@ public struct ChatRoomView: View {
             // Save scroll position when leaving the chat
             // Use the last message as a fallback if we don't have a tracked visible message
             viewModel.saveScrollPosition(messageId: nil)
+
+            // Release the "active room" pointer immediately so that any
+            // message arriving after the user swipes back starts bumping the
+            // unread badge again. `deinit` of the view model eventually does
+            // the same, but SwiftUI sometimes keeps the ViewModel around
+            // briefly for @StateObject reuse, which would otherwise suppress
+            // the next incoming-message badge.
+            if RoomStore.shared.activeRoomJID == viewModel.room.jid {
+                RoomStore.shared.activeRoomJID = nil
+            }
+            // Stamp the moment we left as the new "last viewed" so anything
+            // that arrives after this moment counts as unread (matches how
+            // Telegram resets its unread baseline on leaving a chat).
+            RoomStore.shared.setLastViewedTimestamp(
+                roomJID: viewModel.room.jid,
+                timestamp: Int64(Date().timeIntervalSince1970 * 1000)
+            )
+            // Force a recompute so the badge in the room list immediately
+            // reflects the correct count (0 right after close; new messages
+            // that land later will bump it).
+            let myLocal = UserStore.shared.currentUser?.xmppUsername?
+                .components(separatedBy: "@").first ?? ""
+            RoomStore.shared.recomputeUnreadForRoom(
+                jid: viewModel.room.jid,
+                currentUserLocal: myLocal
+            )
         }
         .onChange(of: viewModel.room.jid) { _ in
             // Reset scroll button state when room changes (matches React Native useEffect)
@@ -782,11 +811,62 @@ public struct ChatRoomView: View {
     
     // MARK: - Helper Functions
     
+    /// Anchors the `ScrollView` to the bottom on first layout (iOS 17+),
+    /// so the chat opens showing the newest message — no perceived "scroll
+    /// from top" animation. On iOS < 17 the view simply starts at the top;
+    /// our `.onAppear` fallback then jumps to the last message without
+    /// animation to approximate the same UX.
+    ///
+    /// Also dismisses the keyboard as soon as the user starts scrolling
+    /// (iOS 16+), and on any tap that lands on the scroll view's empty
+    /// area — matches Telegram/Messages behaviour.
+    @ViewBuilder
+    private func scrollViewAnchoredToBottom<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        let baseScroll = ScrollView { content() }
+            .simultaneousGesture(
+                // Use `simultaneousGesture` so taps on message bubbles still
+                // fire their own handlers — this just adds an extra observer
+                // for the tap and uses it to drop the keyboard.
+                TapGesture().onEnded { dismissKeyboard() }
+            )
+
+        if #available(iOS 17.0, macOS 14.0, *) {
+            baseScroll
+                .defaultScrollAnchor(.bottom)
+                .scrollPosition(id: $scrollPinAnchorID, anchor: .bottom)
+                .scrollDismissesKeyboard(.immediately)
+        } else if #available(iOS 16.0, macOS 13.0, *) {
+            baseScroll
+                .scrollDismissesKeyboard(.immediately)
+        } else {
+            baseScroll
+        }
+    }
+
+    private func dismissKeyboard() {
+        #if canImport(UIKit)
+        UIApplication.shared.sendAction(
+            #selector(UIResponder.resignFirstResponder),
+            to: nil,
+            from: nil,
+            for: nil
+        )
+        #endif
+    }
+
+    /// Sentinel ID that sits at the very end of the messages LazyVStack
+    /// (`Color.clear.frame(height: 1).id("bottom-anchor")`). Scrolling to
+    /// this anchor lands past the bubble+padding of the last message, so the
+    /// last bubble is always fully visible — unlike scrolling to
+    /// `lastMessage.id` with anchor `.bottom`, which only aligns the bubble
+    /// body and can leave its bottom padding clipped by the input bar.
+    private static let bottomAnchorID = "bottom-anchor"
+
     /// Scroll to bottom function (matches TypeScript scrollToBottom)
     private func scrollToBottom(proxy: ScrollViewProxy) {
-        if let lastMessage = viewModel.messages.last {
+        if viewModel.messages.last != nil {
             withAnimation(.easeOut(duration: 0.3)) {
-                proxy.scrollTo(lastMessage.id, anchor: .bottom)
+                proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
             }
             showScrollButton = false
             newMessagesCount = 0
@@ -829,6 +909,15 @@ public struct ChatRoomView: View {
             showScrollButton = true
             isUserScrolledUp = true
             atBottom = false
+            // User took scroll control — stop auto-pinning to the bottom.
+            // Re-armed on next `onAppear`.
+            pinToBottom = false
+            // Release the iOS 17 scroll-position binding so SwiftUI doesn't
+            // keep yanking the view back to the bottom while the user is
+            // reading history. Re-pointed at `bottom-anchor` in onAppear.
+            if scrollPinAnchorID != nil {
+                scrollPinAnchorID = nil
+            }
         }
     }
     
@@ -838,7 +927,13 @@ public struct ChatRoomView: View {
         // Guard: Don't load if already loading or history complete
         guard !viewModel.isLoadingMore else { return }
         guard viewModel.room.historyComplete != true else { return }
-        
+
+        // Guard: wait until the chat has performed its initial pin-to-bottom.
+        // Before that, SwiftUI reports `scrollTop == 0` at layout time, which
+        // would incorrectly trigger a "load more older messages" request the
+        // moment the user opens a room.
+        guard hasPerformedInitialScroll else { return }
+
         // Guard: Only trigger when near top (scrollTop < 150px) - matches TypeScript
         guard metrics.scrollTop < 150 else { return }
         
@@ -908,5 +1003,21 @@ public struct ChatRoomView: View {
             checkIfLoadMoreMessages(metrics: metrics)
         }
     }
-    
+
 }
+
+#if os(iOS)
+/// Hides the navigation bar on iOS using the modern toolbar API (iOS 16+)
+/// when available, falling back to `.navigationBarHidden` on iOS 15. The
+/// legacy `.navigationBarHidden(true)` is known to leak into the parent
+/// view on pop, breaking `RoomListView`'s title/search/toolbar on return.
+private struct HideNavigationBarModifier: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 16.0, *) {
+            content.toolbar(.hidden, for: .navigationBar)
+        } else {
+            content.navigationBarHidden(true)
+        }
+    }
+}
+#endif

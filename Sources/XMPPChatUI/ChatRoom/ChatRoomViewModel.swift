@@ -55,16 +55,33 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
     // Callback to notify when room messages are updated
     public var onMessagesUpdated: ((Room) -> Void)?
     
+    /// Captured at init time so `deinit` (non-isolated) can read the JID
+    /// without touching the actor-isolated `room` property.
+    private let ownedRoomJID: String
+
     public init(room: Room, client: XMPPClient, currentUserId: String, config: ChatConfig? = nil) {
         self.room = room
         self.client = client
         self.currentUserId = currentUserId
         self.config = config
-        
+        self.ownedRoomJID = room.jid
+
         // Load cached messages immediately
         loadCachedMessages()
-        
+
         setupObservers()
+    }
+
+    deinit {
+        // Clear the "active room" pointer so that when the user leaves the
+        // chat screen, incoming messages start bumping its unread badge
+        // instead of being silently counted as "read".
+        let jid = ownedRoomJID
+        Task { @MainActor in
+            if RoomStore.shared.activeRoomJID == jid {
+                RoomStore.shared.activeRoomJID = nil
+            }
+        }
     }
     
     private func setupObservers() {
@@ -505,7 +522,7 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
     /// Similar to TypeScript loadMoreMessages function
     /// According to documentation: uses timestamp (Int64) for 'before' parameter
     public func loadMoreMessages(max: Int = 30, beforeTimestamp: Int64? = nil) {
-        // Зберігаємо фактичну кількість повідомлень ПЕРЕД початком завантаження
+        // Capture the actual message count BEFORE the load starts
         let actualMessageCountBeforeLoad = messages.count
         
         //print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
@@ -517,7 +534,7 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
         //print("   📊 CURRENT MESSAGE COUNT: \(actualMessageCountBeforeLoad)")
         //print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
         
-        // Логуємо перше і останнє повідомлення в масиві
+        // Log the first and the last message in the array
         if let firstMessage = messages.first {
             //print("📋 FIRST MESSAGE IN ARRAY:")
             //print("   id: \(firstMessage.id)")
@@ -653,8 +670,8 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
     }
     
     /// Pull to refresh - reload latest messages
-    /// Завантажує останні повідомлення (без параметра before)
-    /// Also clears errors and retries loading if there was an error
+    /// Loads the latest messages (without a `before` parameter).
+    /// Also clears errors and retries loading if there was an error.
     public func refreshMessages() {
         //print("🔄 Pull to refresh triggered")
         
@@ -665,7 +682,7 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
         isRefreshing = true
         loadingMoreTask?.cancel()
         
-        // Зберігаємо ID останнього повідомлення перед оновленням
+        // Capture the last message ID before refresh
         lastMessageIdBeforeRefresh = messages.last?.id
         let messageCountBeforeRefresh = messages.count
         
@@ -683,9 +700,9 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
         
         //print("📥 Refresh: loadMessages called with forceReload=true")
         
-        // Автоматично скидаємо прапорець через 5 секунд, якщо повідомлення не прийшли
+        // Auto-reset the refreshing flag after 5 seconds if no messages arrived
         Task {
-            try? await Task.sleep(nanoseconds: 5_000_000_000) // 5 секунд
+            try? await Task.sleep(nanoseconds: 5_000_000_000) // 5 seconds
             if isRefreshing {
                 isRefreshing = false
                 // Set error if still refreshing after timeout and no new messages
@@ -694,7 +711,7 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
                     loadError = "Failed to load new messages. Pull down to retry."
                     //print("❌ Refresh failed: no new messages received")
                 }
-                //print("⏱️ Refresh timeout - скидаємо прапорець")
+                //print("⏱️ Refresh timeout - resetting the flag")
             }
         }
     }
@@ -820,6 +837,18 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
     
     /// Called when view appears - ensures messages are displayed
     public func onViewAppeared() {
+        // Mark this room as the active one so `XMPPClient.onMessageReceived`
+        // knows not to bump its unread counter while the user is looking at
+        // it. Also zero out the badge + stamp the current time as the last
+        // viewed timestamp, so messages that arrived before the user opened
+        // the room are counted "read" immediately.
+        RoomStore.shared.activeRoomJID = room.jid
+        RoomStore.shared.updateUnreadCount(roomJID: room.jid, count: 0)
+        RoomStore.shared.setLastViewedTimestamp(
+            roomJID: room.jid,
+            timestamp: Int64(Date().timeIntervalSince1970 * 1000)
+        )
+
         // Guard: Don't load if already loading to prevent multiple simultaneous requests
         guard !isLoading && !isLoadingMore else {
             //print("📋 ChatRoomViewModel: Already loading, skipping onViewAppeared load")
@@ -1398,7 +1427,7 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
         // Save messages to cache
         MessageCache.shared.saveMessages(messages, forRoomJID: room.jid)
         
-        // Якщо це pull-to-refresh і з'явилося нове повідомлення, скидаємо прапорець
+        // If this is pull-to-refresh and a new message arrived, reset the flag.
         // This is handled in the message append logic above, so we don't need duplicate logic here
         
         //print("✅ Message with body '\(message.body.prefix(30))...' added to room with id '\(room.jid)'")

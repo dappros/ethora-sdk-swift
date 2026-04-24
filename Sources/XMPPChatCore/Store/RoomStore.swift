@@ -39,9 +39,33 @@ public class RoomStore: ObservableObject {
     
     // MARK: - Room Management
     
-    /// Add or update a room
+    /// Add or update a room.
+    ///
+    /// Behaviour matches what chat apps like Telegram expect:
+    /// - If we already have this room in the store, **preserve** the
+    ///   client-tracked unread state (`unreadMessages`,
+    ///   `lastViewedTimestamp`). REST responses usually don't carry those
+    ///   fields, so a naive overwrite would wipe every user's badge on every
+    ///   `/chats/my` refresh.
+    /// - If it's the first time we see this room, seed `lastViewedTimestamp`
+    ///   with "now". That way the cold-start MAM refresh won't instantly
+    ///   mark 50 historical messages as "unread" — everything that existed
+    ///   before the user even opened the app is treated as already read.
+    ///   Only messages that arrive **after** the app started will bump the
+    ///   badge, which is the behaviour Telegram ships with.
     public func addRoom(_ room: Room) {
-        rooms[room.jid] = room
+        var toStore = room
+        if let existing = rooms[room.jid] {
+            if toStore.lastViewedTimestamp == nil || (toStore.lastViewedTimestamp ?? 0) <= 0 {
+                toStore.lastViewedTimestamp = existing.lastViewedTimestamp
+            }
+            if toStore.unreadMessages == 0 {
+                toStore.unreadMessages = existing.unreadMessages
+            }
+        } else if (toStore.lastViewedTimestamp ?? 0) <= 0 {
+            toStore.lastViewedTimestamp = Int64(Date().timeIntervalSince1970 * 1000)
+        }
+        rooms[room.jid] = toStore
         saveToCache()
     }
     
@@ -287,7 +311,7 @@ public class RoomStore: ObservableObject {
     }
     
     // MARK: - Unread Count
-    
+
     /// Update unread count for a room
     public func updateUnreadCount(roomJID: String, count: Int) {
         guard var room = rooms[roomJID] else { return }
@@ -295,21 +319,90 @@ public class RoomStore: ObservableObject {
         rooms[roomJID] = room
         saveToCache()
     }
+
+    /// Recomputes `unreadMessages` for a single room from its own
+    /// `messages` array vs `lastViewedTimestamp`. Mirrors the React
+    /// `unreadMiddleware.computeUnreadForRoom` logic:
+    /// - not counted: own messages, pending, system, delimiter, no-timestamp
+    /// - if room is active → 0
+    /// - if `lastViewedTimestamp == 0` (never opened) → all countable
+    /// - otherwise → count of messages with `timestamp > lastViewed`
+    ///
+    /// Falls back to `MessageCache` when `room.messages` is empty — room-
+    /// list view models don't always eagerly hydrate `room.messages` from
+    /// cache, but the cache itself is always up to date.
+    public func recomputeUnreadForRoom(jid: String, currentUserLocal: String) {
+        guard var room = rooms[jid] else { return }
+
+        // Active room → 0, like React.
+        if activeRoomJID == jid {
+            if room.unreadMessages != 0 {
+                room.unreadMessages = 0
+                rooms[jid] = room
+                saveToCache()
+            }
+            return
+        }
+
+        var pool = room.messages
+        if pool.isEmpty, let cached = MessageCache.shared.loadMessages(forRoomJID: jid) {
+            pool = cached
+        }
+
+        let lastViewed = room.lastViewedTimestamp ?? 0
+        let unread = pool.reduce(0) { acc, msg in
+            guard msg.id != "delimiter-new" else { return acc }
+            guard msg.isDeleted != true else { return acc }
+            guard msg.pending != true else { return acc }
+            guard msg.isSystemMessage != "true" else { return acc }
+            let trimmed = msg.body.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty || msg.isMediafile == "true" else { return acc }
+
+            let senderLocal = msg.user.xmppUsername?
+                .components(separatedBy: "@").first ?? ""
+            if !senderLocal.isEmpty, !currentUserLocal.isEmpty,
+               senderLocal == currentUserLocal {
+                return acc
+            }
+            let ts = msg.timestamp ?? 0
+            guard ts > 0 else { return acc }
+            if lastViewed <= 0 { return acc + 1 }
+            return ts > lastViewed ? acc + 1 : acc
+        }
+
+        if room.unreadMessages != unread {
+            room.unreadMessages = unread
+            rooms[jid] = room
+            saveToCache()
+        }
+    }
+
+    /// Convenience — recompute unread for every known room.
+    public func recomputeAllUnread(currentUserLocal: String) {
+        for jid in rooms.keys {
+            recomputeUnreadForRoom(jid: jid, currentUserLocal: currentUserLocal)
+        }
+    }
+
+    /// Total unread across all rooms — for host app badge / tests.
+    public var totalUnreadCount: Int {
+        rooms.values.reduce(0) { $0 + max(0, $1.unreadMessages) }
+    }
     
     // MARK: - Cache Management
     
     private func saveToCache() {
-        // Limit messages per room to 50 (like web)
+        // Limit messages per room to 100 (matches `MessageCache.maxCachedMessagesPerRoom`)
         var roomsToSave = rooms
         for (jid, room) in roomsToSave {
-            if room.messages.count > 50 {
+            if room.messages.count > 100 {
                 roomsToSave[jid] = Room(
                     id: room.id,
                     jid: room.jid,
                     name: room.name,
                     title: room.title,
                     usersCnt: room.usersCnt,
-                    messages: Array(room.messages.suffix(50)),
+                    messages: Array(room.messages.suffix(100)),
                     isLoading: room.isLoading,
                     roomBg: room.roomBg,
                     members: room.members,

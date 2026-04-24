@@ -512,7 +512,7 @@ public class XMPPClient {
         // will be sent later when rooms are loaded
     }
     
-    // `sendPresenceToAllRooms` — см. `XMPPClient+Operations.swift` (retry + wait for MUC presence ack).
+    // `sendPresenceToAllRooms` — see `XMPPClient+Operations.swift` (retry + wait for MUC presence ack).
 
     // MARK: - Adaptive Ping
     // Match TypeScript: private startAdaptivePing()
@@ -909,28 +909,47 @@ extension XMPPClient: XMPPStreamDelegate {
     /// This ensures messages are available even if no ChatRoomViewModel is active
     private func processIncomingMessage(_ message: Message) {
         let roomJID = message.roomJid.components(separatedBy: "/").first ?? message.roomJid
-        
+        let selfLocal = self.username.components(separatedBy: "@").first ?? ""
+
         // MessageCache is @MainActor, so we need to call it from main actor context
         Task { @MainActor in
             // Load existing messages from cache
             var cachedMessages = MessageCache.shared.loadMessages(forRoomJID: roomJID) ?? []
-            
+
             // Check if message already exists (avoid duplicates)
             if !cachedMessages.contains(where: { $0.id == message.id || ($0.xmppId != nil && $0.xmppId == message.id) || (message.xmppId != nil && $0.id == message.xmppId) }) {
                 // Add message to cache
                 cachedMessages.append(message)
-                
+
                 // Sort by timestamp
                 cachedMessages.sort { msg1, msg2 in
                     let ts1 = msg1.timestamp ?? 0
                     let ts2 = msg2.timestamp ?? 0
                     return ts1 < ts2
                 }
-                
+
                 // Save to cache (limit to 100 messages per room)
                 let messagesToSave = Array(cachedMessages.suffix(100))
                 MessageCache.shared.saveMessages(messagesToSave, forRoomJID: roomJID)
-                
+
+                // Mirror the new cache into `RoomStore.rooms[jid].messages`
+                // so that `recomputeUnreadForRoom` below sees the freshly
+                // appended message — without this step the recompute would
+                // run against the stale in-memory copy and always land on 0.
+                if var storeRoom = RoomStore.shared.rooms[roomJID] {
+                    storeRoom.messages = messagesToSave
+                    RoomStore.shared.rooms[roomJID] = storeRoom
+                }
+
+                // Recompute unread in the same MainActor tick, right after
+                // the cache + RoomStore are in sync. This is the single
+                // source of truth for the badge — mirrors React's
+                // `unreadMiddleware.computeUnreadForRoom`.
+                RoomStore.shared.recomputeUnreadForRoom(
+                    jid: roomJID,
+                    currentUserLocal: selfLocal
+                )
+
                 // Post notification for RoomListViewModel to update room.messages
                 NotificationCenter.default.post(
                     name: NSNotification.Name("RoomMessagesUpdated"),
@@ -941,7 +960,7 @@ extension XMPPClient: XMPPStreamDelegate {
                         "message": message
                     ]
                 )
-                
+
                 //print("✅ XMPPClient: Processed history message - saved to cache, posted notification")
             } else {
                 //print("⚠️ XMPPClient: Message already exists in cache, skipping")
@@ -957,10 +976,27 @@ extension XMPPClient: XMPPStreamDelegate {
             //NSlog("📨 XMPPClient: Real-time message in room %@", roomJID)
             //print("📨 XMPPClient: Real-time message in room \(roomJID)")
             guard let self = self else { return }
-            
+
+            // Persist real-time messages into the cache even when there is
+            // no active ChatRoomViewModel. Without this, messages that
+            // arrive while the user is on the room list (or has no chat
+            // open) are handed off only to the live delegate / notification,
+            // and if no one is listening they disappear: MessageCache keeps
+            // the previous snapshot, the room list's "last message" preview
+            // doesn't move forward, and when the user finally opens the
+            // chat, the message is missing from history. `processIncomingMessage`
+            // is idempotent (dedupe by id / xmppId), so calling it here is
+            // safe for ChatRoomViewModel's own reconciliation as well.
+            self.processIncomingMessage(message)
+
+            // Unread recompute is handled inside `processIncomingMessage`
+            // (above) once the cache + RoomStore are in sync. Doing it here
+            // in parallel would race against the async cache save and
+            // always see stale messages.
+
             // Notify delegate (for backward compatibility)
             self.delegate?.xmppClient(self, didReceiveMessage: message)
-            
+
             // Also post notification so multiple ChatRoomViewModels can receive it
             // This prevents conflicts when multiple chat rooms are open
             NotificationCenter.default.post(
@@ -992,11 +1028,28 @@ extension XMPPClient: XMPPStreamDelegate {
             // Process incoming message (save to cache, update room, etc.)
             // This ensures messages are available even if no ChatRoomViewModel is active
             self.processIncomingMessage(message)
-            
+
             // Notify delegate (for ChatRoomViewModel if active)
             //print("📤 XMPPClient: Notifying delegate about history message")
             self.delegate?.xmppClient(self, didReceiveMessage: message)
             //print("✅ XMPPClient: Delegate notified")
+
+            // Also post `XMPPMessageReceived` so any live `ChatRoomViewModel`
+            // picks up MAM-delivered messages too. Without this, the user
+            // who was already sitting inside a room when the app went
+            // background wouldn't see the messages that arrived during
+            // offline until they leave and re-enter the chat — because the
+            // VM only subscribes to `XMPPMessageReceived`, not to
+            // `RoomMessagesUpdated`. Reconciliation inside
+            // `handleIncomingMessage` is already dedupe-safe by id.
+            NotificationCenter.default.post(
+                name: NSNotification.Name("XMPPMessageReceived"),
+                object: self,
+                userInfo: [
+                    "message": message,
+                    "roomJID": roomJID
+                ]
+            )
         }
         
         // Set up reaction handler
@@ -1029,6 +1082,16 @@ extension XMPPClient: XMPPStreamDelegate {
             )
         }
         
+        // Set up presence-in-room handler. Without this, `joinRoomsAndWait`
+        // never sees the server's `<presence id="presenceInRoom">` ack —
+        // `waitForRoomPresenceResponses` loops until timeout and reports
+        // every room as unresolved, which in turn breaks room-bound flows
+        // that rely on `markPresenceResponseReceived` / `hasPresenceResponseForRoom`
+        // (MUC join, `presenceInRoom` idempotency check, push subscriptions).
+        handlers.onPresenceInRoom = { [weak self] (roomJID: String, _: String) in
+            self?.markPresenceResponseReceived(for: roomJID)
+        }
+
         // Set up composing (typing) indicator handler
         handlers.onComposingChanged = { [weak self] (roomJID: String, composingList: [String], isComposing: Bool) in
             //print("⌨️ XMPPClient: Composing changed in room \(roomJID) - isComposing: \(isComposing), users: \(composingList)")

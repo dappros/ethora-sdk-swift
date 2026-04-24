@@ -77,8 +77,30 @@ public class XMPPStream_WebSocket {
     }
     
     public func send(_ stanza: XMPPStanza) {
-        let xml = stanza.toXML()
-        
+        // In React Web / RN / Android wire logs every top-level stanza (iq,
+        // message, presence) goes out with `xmlns="jabber:client"` — that's
+        // what @xmpp/client (JS) and XMPPWebSocketConnection (Kotlin) emit.
+        // iOS previously sent them without xmlns. For most ejabberd services
+        // this is transparent, but some rules (including MUC-join) process
+        // stanzas differently depending on whether the client-stream
+        // namespace is visible on them. We add it here only for top-level
+        // stanzas, leaving stream-level elements (<open>, <auth>, <bind>,
+        // <iq><session/>) untouched — they go around this method via
+        // socket.write directly.
+        let stanzaToSend: XMPPStanza = {
+            let isTopLevel = stanza.name == "iq" || stanza.name == "message" || stanza.name == "presence"
+            guard isTopLevel, stanza.attributes["xmlns"] == nil else { return stanza }
+            var attrs = stanza.attributes
+            attrs["xmlns"] = "jabber:client"
+            return XMPPStanza(
+                name: stanza.name,
+                attributes: attrs,
+                children: stanza.children,
+                text: stanza.text
+            )
+        }()
+        let xml = stanzaToSend.toXML()
+
         guard let socket = socket else {
             //print("❌ XMPPStream.send: Cannot send stanza - socket is nil")
             let error = NSError(
@@ -101,21 +123,23 @@ public class XMPPStream_WebSocket {
             return
         }
         
+        print("📤 WS OUT: \(xml)")
         socket.write(string: xml)
         delegate?.xmppStream(self, didSendStanza: stanza)
     }
-    
+
     public func send(_ xml: String) {
         guard let socket = socket else {
             //print("❌ XMPPStream.send: Cannot send XML - socket is nil")
             return
         }
-        
+
         guard isConnected else {
             //print("❌ XMPPStream.send: Cannot send XML - not connected")
             return
         }
-        
+
+        print("📤 WS OUT: \(xml)")
         socket.write(string: xml)
     }
     
