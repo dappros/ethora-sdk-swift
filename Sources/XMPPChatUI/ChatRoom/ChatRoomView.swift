@@ -55,6 +55,11 @@ public struct ChatRoomView: View {
     @State private var isUserScrolledUp: Bool = false
     @State private var atBottom: Bool = true
     @State private var scrollProxy: ScrollViewProxy?
+    /// `true` once we've pinned the initial scroll to the newest message.
+    /// Until then we suppress `checkIfLoadMoreMessages`, because at layout
+    /// time `scrollTop == 0` trips the "near-top" guard and would fire an
+    /// unwanted older-history load right as the chat opens.
+    @State private var hasPerformedInitialScroll: Bool = false
     @FocusState private var isInputFocused: Bool
     @State private var showConnectionStatus: Bool = true
     @State private var dragOffset: CGFloat = 0
@@ -328,7 +333,7 @@ public struct ChatRoomView: View {
             // Messages List
             ZStack {
                 ScrollViewReader { proxy in
-                    ScrollView {
+                    scrollViewAnchoredToBottom {
                         buildMessagesList(proxy: proxy)
                     }
                     .coordinateSpace(name: "messageScroll")
@@ -533,13 +538,22 @@ public struct ChatRoomView: View {
                         // Only scroll on initial load or when restoring position
                         // Don't scroll on every message count change to avoid lag
                         // After pull-to-refresh don't auto-scroll — preserve the position
-                        if viewModel.shouldScrollToBottom(), let lastMessage = viewModel.messages.last {
-                            // Small delay to ensure messages are rendered
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                                withAnimation(.easeOut(duration: 0.3)) {
-                            proxy.scrollTo(lastMessage.id, anchor: .bottom)
-                        }
-                    }
+                        if viewModel.shouldScrollToBottom(), viewModel.messages.last != nil {
+                            // Initial open: snap to bottom instantly. Later
+                            // message bumps (new incoming / typing) keep the
+                            // animated `scrollToBottom(proxy:)` path.
+                            if !hasPerformedInitialScroll {
+                                DispatchQueue.main.async {
+                                    proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
+                                    hasPerformedInitialScroll = true
+                                }
+                            } else {
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                                    withAnimation(.easeOut(duration: 0.3)) {
+                                        proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
+                                    }
+                                }
+                            }
                         } else if let savedPosition = viewModel.getScrollPosition(),
                                   viewModel.messages.contains(where: { $0.id == savedPosition }),
                                   !viewModel.hasRestoredScrollPosition {
@@ -553,12 +567,14 @@ public struct ChatRoomView: View {
                         }
                     }
                     .onChange(of: viewModel.isLoading) { isLoading in
-                        // When loading completes, scroll to bottom if it was the first load
-                        if !isLoading && viewModel.shouldScrollToBottom(), let lastMessage = viewModel.messages.last {
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                                withAnimation(.easeOut(duration: 0.3)) {
-                                    proxy.scrollTo(lastMessage.id, anchor: .bottom)
-                                }
+                        // When loading completes, snap to bottom instantly if
+                        // this is still the first load — otherwise the user
+                        // perceives a "scrolled from top" animation when the
+                        // room has no cached messages at first paint.
+                        if !isLoading && viewModel.shouldScrollToBottom(), viewModel.messages.last != nil {
+                            DispatchQueue.main.async {
+                                proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
+                                hasPerformedInitialScroll = true
                             }
                         }
                     }
@@ -573,24 +589,31 @@ public struct ChatRoomView: View {
                     .onAppear {
                         // Store proxy for button access
                         scrollProxy = proxy
-                        
+
                         // When view appears, restore scroll position if available
                         if let savedPosition = viewModel.getScrollPosition(),
                            viewModel.messages.contains(where: { $0.id == savedPosition }),
                            !viewModel.hasRestoredScrollPosition {
                             viewModel.markScrollPositionRestored()
                             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                                withAnimation(.easeOut(duration: 0.2)) {
-                                    proxy.scrollTo(savedPosition, anchor: .center)
-                                }
+                                proxy.scrollTo(savedPosition, anchor: .center)
+                                hasPerformedInitialScroll = true
                             }
-                        } else if viewModel.shouldScrollToBottom(), let lastMessage = viewModel.messages.last {
-                            // First load - scroll to bottom
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                                withAnimation(.easeOut(duration: 0.3)) {
-                            proxy.scrollTo(lastMessage.id, anchor: .bottom)
-                                }
+                        } else if viewModel.shouldScrollToBottom(), viewModel.messages.last != nil {
+                            // First load — snap to bottom instantly, no scroll
+                            // animation. `defaultScrollAnchor(.bottom)` on
+                            // iOS 17+ already lands us here at layout time;
+                            // this branch covers the iOS 15/16 fallback and
+                            // the case where messages arrive right after
+                            // onAppear.
+                            DispatchQueue.main.async {
+                                proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
+                                hasPerformedInitialScroll = true
                             }
+                        } else {
+                            // No messages yet; flag will flip on the first
+                            // non-empty load via `onChange(isLoading)` or
+                            // `onChange(messages)` below.
                         }
                     }
                 }
@@ -657,7 +680,7 @@ public struct ChatRoomView: View {
             chatBackgroundColor.ignoresSafeArea()
         )
         #if os(iOS)
-        .navigationBarHidden(true)
+        .modifier(HideNavigationBarModifier())
         #endif
         .onAppear {
             viewModel.onViewAppeared()
@@ -671,6 +694,32 @@ public struct ChatRoomView: View {
             // Save scroll position when leaving the chat
             // Use the last message as a fallback if we don't have a tracked visible message
             viewModel.saveScrollPosition(messageId: nil)
+
+            // Release the "active room" pointer immediately so that any
+            // message arriving after the user swipes back starts bumping the
+            // unread badge again. `deinit` of the view model eventually does
+            // the same, but SwiftUI sometimes keeps the ViewModel around
+            // briefly for @StateObject reuse, which would otherwise suppress
+            // the next incoming-message badge.
+            if RoomStore.shared.activeRoomJID == viewModel.room.jid {
+                RoomStore.shared.activeRoomJID = nil
+            }
+            // Stamp the moment we left as the new "last viewed" so anything
+            // that arrives after this moment counts as unread (matches how
+            // Telegram resets its unread baseline on leaving a chat).
+            RoomStore.shared.setLastViewedTimestamp(
+                roomJID: viewModel.room.jid,
+                timestamp: Int64(Date().timeIntervalSince1970 * 1000)
+            )
+            // Force a recompute so the badge in the room list immediately
+            // reflects the correct count (0 right after close; new messages
+            // that land later will bump it).
+            let myLocal = UserStore.shared.currentUser?.xmppUsername?
+                .components(separatedBy: "@").first ?? ""
+            RoomStore.shared.recomputeUnreadForRoom(
+                jid: viewModel.room.jid,
+                currentUserLocal: myLocal
+            )
         }
         .onChange(of: viewModel.room.jid) { _ in
             // Reset scroll button state when room changes (matches React Native useEffect)
@@ -736,11 +785,34 @@ public struct ChatRoomView: View {
     
     // MARK: - Helper Functions
     
+    /// Anchors the `ScrollView` to the bottom on first layout (iOS 17+),
+    /// so the chat opens showing the newest message — no perceived "scroll
+    /// from top" animation. On iOS < 17 the view simply starts at the top;
+    /// our `.onAppear` fallback then jumps to the last message without
+    /// animation to approximate the same UX.
+    @ViewBuilder
+    private func scrollViewAnchoredToBottom<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        if #available(iOS 17.0, macOS 14.0, *) {
+            ScrollView { content() }
+                .defaultScrollAnchor(.bottom)
+        } else {
+            ScrollView { content() }
+        }
+    }
+
+    /// Sentinel ID that sits at the very end of the messages LazyVStack
+    /// (`Color.clear.frame(height: 1).id("bottom-anchor")`). Scrolling to
+    /// this anchor lands past the bubble+padding of the last message, so the
+    /// last bubble is always fully visible — unlike scrolling to
+    /// `lastMessage.id` with anchor `.bottom`, which only aligns the bubble
+    /// body and can leave its bottom padding clipped by the input bar.
+    private static let bottomAnchorID = "bottom-anchor"
+
     /// Scroll to bottom function (matches TypeScript scrollToBottom)
     private func scrollToBottom(proxy: ScrollViewProxy) {
-        if let lastMessage = viewModel.messages.last {
+        if viewModel.messages.last != nil {
             withAnimation(.easeOut(duration: 0.3)) {
-                proxy.scrollTo(lastMessage.id, anchor: .bottom)
+                proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
             }
             showScrollButton = false
             newMessagesCount = 0
@@ -792,7 +864,13 @@ public struct ChatRoomView: View {
         // Guard: Don't load if already loading or history complete
         guard !viewModel.isLoadingMore else { return }
         guard viewModel.room.historyComplete != true else { return }
-        
+
+        // Guard: wait until the chat has performed its initial pin-to-bottom.
+        // Before that, SwiftUI reports `scrollTop == 0` at layout time, which
+        // would incorrectly trigger a "load more older messages" request the
+        // moment the user opens a room.
+        guard hasPerformedInitialScroll else { return }
+
         // Guard: Only trigger when near top (scrollTop < 150px) - matches TypeScript
         guard metrics.scrollTop < 150 else { return }
         
@@ -862,5 +940,21 @@ public struct ChatRoomView: View {
             checkIfLoadMoreMessages(metrics: metrics)
         }
     }
-    
+
 }
+
+#if os(iOS)
+/// Hides the navigation bar on iOS using the modern toolbar API (iOS 16+)
+/// when available, falling back to `.navigationBarHidden` on iOS 15. The
+/// legacy `.navigationBarHidden(true)` is known to leak into the parent
+/// view on pop, breaking `RoomListView`'s title/search/toolbar on return.
+private struct HideNavigationBarModifier: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 16.0, *) {
+            content.toolbar(.hidden, for: .navigationBar)
+        } else {
+            content.navigationBarHidden(true)
+        }
+    }
+}
+#endif

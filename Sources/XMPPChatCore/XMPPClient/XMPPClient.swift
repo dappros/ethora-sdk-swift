@@ -909,28 +909,47 @@ extension XMPPClient: XMPPStreamDelegate {
     /// This ensures messages are available even if no ChatRoomViewModel is active
     private func processIncomingMessage(_ message: Message) {
         let roomJID = message.roomJid.components(separatedBy: "/").first ?? message.roomJid
-        
+        let selfLocal = self.username.components(separatedBy: "@").first ?? ""
+
         // MessageCache is @MainActor, so we need to call it from main actor context
         Task { @MainActor in
             // Load existing messages from cache
             var cachedMessages = MessageCache.shared.loadMessages(forRoomJID: roomJID) ?? []
-            
+
             // Check if message already exists (avoid duplicates)
             if !cachedMessages.contains(where: { $0.id == message.id || ($0.xmppId != nil && $0.xmppId == message.id) || (message.xmppId != nil && $0.id == message.xmppId) }) {
                 // Add message to cache
                 cachedMessages.append(message)
-                
+
                 // Sort by timestamp
                 cachedMessages.sort { msg1, msg2 in
                     let ts1 = msg1.timestamp ?? 0
                     let ts2 = msg2.timestamp ?? 0
                     return ts1 < ts2
                 }
-                
+
                 // Save to cache (limit to 100 messages per room)
                 let messagesToSave = Array(cachedMessages.suffix(100))
                 MessageCache.shared.saveMessages(messagesToSave, forRoomJID: roomJID)
-                
+
+                // Mirror the new cache into `RoomStore.rooms[jid].messages`
+                // so that `recomputeUnreadForRoom` below sees the freshly
+                // appended message — without this step the recompute would
+                // run against the stale in-memory copy and always land on 0.
+                if var storeRoom = RoomStore.shared.rooms[roomJID] {
+                    storeRoom.messages = messagesToSave
+                    RoomStore.shared.rooms[roomJID] = storeRoom
+                }
+
+                // Recompute unread in the same MainActor tick, right after
+                // the cache + RoomStore are in sync. This is the single
+                // source of truth for the badge — mirrors React's
+                // `unreadMiddleware.computeUnreadForRoom`.
+                RoomStore.shared.recomputeUnreadForRoom(
+                    jid: roomJID,
+                    currentUserLocal: selfLocal
+                )
+
                 // Post notification for RoomListViewModel to update room.messages
                 NotificationCenter.default.post(
                     name: NSNotification.Name("RoomMessagesUpdated"),
@@ -941,7 +960,7 @@ extension XMPPClient: XMPPStreamDelegate {
                         "message": message
                     ]
                 )
-                
+
                 //print("✅ XMPPClient: Processed history message - saved to cache, posted notification")
             } else {
                 //print("⚠️ XMPPClient: Message already exists in cache, skipping")
@@ -970,22 +989,10 @@ extension XMPPClient: XMPPStreamDelegate {
             // safe for ChatRoomViewModel's own reconciliation as well.
             self.processIncomingMessage(message)
 
-            // Bump unread count for non-active, non-self messages. Works even
-            // when no ChatRoomViewModel is alive (user is on the room list),
-            // because `XMPPClient` listens here regardless of UI state.
-            let senderLocal = message.user.xmppUsername?.components(separatedBy: "@").first
-            let selfLocal = self.username.components(separatedBy: "@").first
-            let isSelf = senderLocal != nil && selfLocal != nil && senderLocal == selfLocal
-            let bareRoomJID = roomJID.components(separatedBy: "/").first ?? roomJID
-            Task { @MainActor in
-                let activeJID = RoomStore.shared.activeRoomJID
-                guard !isSelf, activeJID != bareRoomJID else { return }
-                guard let room = RoomStore.shared.rooms[bareRoomJID] else { return }
-                RoomStore.shared.updateUnreadCount(
-                    roomJID: bareRoomJID,
-                    count: room.unreadMessages + 1
-                )
-            }
+            // Unread recompute is handled inside `processIncomingMessage`
+            // (above) once the cache + RoomStore are in sync. Doing it here
+            // in parallel would race against the async cache save and
+            // always see stale messages.
 
             // Notify delegate (for backward compatibility)
             self.delegate?.xmppClient(self, didReceiveMessage: message)

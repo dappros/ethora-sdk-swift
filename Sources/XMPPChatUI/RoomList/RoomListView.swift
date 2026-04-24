@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import Combine
 import XMPPChatCore
 
 // Helper wrapper to create ChatRoomViewModel with callback
@@ -268,6 +269,26 @@ public struct RoomListView: View {
     }
 }
 
+/// Explicitly restores navigation bar visibility when returning from a
+/// pushed `ChatRoomView` (which hides its nav bar via
+/// `.navigationBarHidden(true)`). On iOS 16+ that legacy modifier leaks
+/// into the parent stack on pop, killing the "Chats" title, search bar,
+/// and the "+" toolbar button. The modern `.toolbar(.visible, for:
+/// .navigationBar)` reliably resets it.
+private struct RestoreNavBarVisibilityModifier: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 16.0, macOS 13.0, *) {
+            content.toolbar(.visible, for: .navigationBar)
+        } else {
+            #if os(iOS)
+            content.navigationBarHidden(false)
+            #else
+            content
+            #endif
+        }
+    }
+}
+
 private struct RoomListModeModifier: ViewModifier {
     let hideRoomList: Bool
     @Binding var searchText: String
@@ -278,6 +299,7 @@ private struct RoomListModeModifier: ViewModifier {
             content.navigationTitle("Chat")
         } else {
             content
+                .modifier(RestoreNavBarVisibilityModifier())
                 .searchable(text: $searchText)
                 .navigationTitle("Chats")
                 .toolbar {
@@ -443,8 +465,16 @@ struct RoomListItemView: View {
     
     /// Get the last message from room's messages array or lastMessage property
     private func getLastMessage(from room: Room) -> Message? {
-        // First check if room has messages in the messages array
-        if let lastMessage = room.messages.last {
+        // Take the last message with non-empty visible body that isn't a
+        // deleted stub or a typing/composing stanza that slipped in.
+        // Without this filter the preview shows "Test User:" with no body
+        // text, because the tail of `messages` may end on a chat-state
+        // stanza right after the user typed.
+        if let lastMessage = room.messages.reversed().first(where: { msg in
+            guard msg.isDeleted != true else { return false }
+            let trimmed = msg.body.trimmingCharacters(in: .whitespacesAndNewlines)
+            return !trimmed.isEmpty
+        }) {
             return lastMessage
         }
         // Fallback to lastMessage property if available
@@ -596,6 +626,7 @@ public class RoomListViewModel: ObservableObject {
     // Composing timeouts per room
     private var composingTimeouts: [String: Timer] = [:]
     private var notificationObservers: [NSObjectProtocol] = []
+    private var unreadSyncCancellable: AnyCancellable?
     
     // New initializer - token is now managed by UserStore
     public init(
@@ -682,21 +713,63 @@ public class RoomListViewModel: ObservableObject {
                 if let cachedMessages = MessageCache.shared.loadMessages(forRoomJID: roomJID) {
                     // Update room's messages array
                     self.rooms[roomIndex].messages = cachedMessages
-                    
+
+                    // Keep RoomStore in sync for unread recomputation.
+                    if var storeRoom = RoomStore.shared.rooms[roomJID] {
+                        storeRoom.messages = cachedMessages
+                        RoomStore.shared.rooms[roomJID] = storeRoom
+                    }
+
+                    // Recompute unread from messages + lastViewedTimestamp
+                    // (mirrors React's unreadMiddleware).
+                    let myLocal = UserStore.shared.currentUser?.xmppUsername?
+                        .components(separatedBy: "@").first ?? ""
+                    RoomStore.shared.recomputeUnreadForRoom(
+                        jid: roomJID,
+                        currentUserLocal: myLocal
+                    )
+
+                    // Reflect the freshly computed badge back into the view
+                    // model's own `rooms` array (ChatRoomItem binds to
+                    // `viewModel.rooms`, not `RoomStore.shared.rooms`).
+                    if let storeRoom = RoomStore.shared.rooms[roomJID] {
+                        self.rooms[roomIndex].unreadMessages = storeRoom.unreadMessages
+                    }
+
                     // Notify MessageLoaderQueue about the update
                     self.messageLoaderQueue?.onRoomMessagesUpdated(
                         roomJID: roomJID,
                         currentMessageCount: cachedMessages.count
                     )
-                    
+
                     // Trigger UI update
                     self.objectWillChange.send()
-                    
+
                     //print("✅ RoomListViewModel: Updated room \(roomJID) with \(cachedMessages.count) messages from cache")
                 }
             }
         }
         notificationObservers.append(roomMessagesRefreshToken)
+
+        // Mirror `unreadMessages` changes from RoomStore back into
+        // `self.rooms` so the badge in the row refreshes even when the
+        // recompute is triggered from elsewhere (e.g. `ChatRoomViewModel`
+        // setting `lastViewedTimestamp`, MAM history refresh).
+        let unreadSyncToken = RoomStore.shared.$rooms
+            .receive(on: RunLoop.main)
+            .sink { [weak self] storeRooms in
+                guard let self = self else { return }
+                var didChange = false
+                for (jid, storeRoom) in storeRooms {
+                    if let idx = self.rooms.firstIndex(where: { $0.jid == jid }),
+                       self.rooms[idx].unreadMessages != storeRoom.unreadMessages {
+                        self.rooms[idx].unreadMessages = storeRoom.unreadMessages
+                        didChange = true
+                    }
+                }
+                if didChange { self.objectWillChange.send() }
+            }
+        self.unreadSyncCancellable = unreadSyncToken
         
         // Listen for composing (typing) indicator changes
         let composingChangedToken = NotificationCenter.default.addObserver(
