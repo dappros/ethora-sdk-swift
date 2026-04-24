@@ -55,16 +55,33 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
     // Callback to notify when room messages are updated
     public var onMessagesUpdated: ((Room) -> Void)?
     
+    /// Captured at init time so `deinit` (non-isolated) can read the JID
+    /// without touching the actor-isolated `room` property.
+    private let ownedRoomJID: String
+
     public init(room: Room, client: XMPPClient, currentUserId: String, config: ChatConfig? = nil) {
         self.room = room
         self.client = client
         self.currentUserId = currentUserId
         self.config = config
-        
+        self.ownedRoomJID = room.jid
+
         // Load cached messages immediately
         loadCachedMessages()
-        
+
         setupObservers()
+    }
+
+    deinit {
+        // Clear the "active room" pointer so that when the user leaves the
+        // chat screen, incoming messages start bumping its unread badge
+        // instead of being silently counted as "read".
+        let jid = ownedRoomJID
+        Task { @MainActor in
+            if RoomStore.shared.activeRoomJID == jid {
+                RoomStore.shared.activeRoomJID = nil
+            }
+        }
     }
     
     private func setupObservers() {
@@ -820,6 +837,18 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
     
     /// Called when view appears - ensures messages are displayed
     public func onViewAppeared() {
+        // Mark this room as the active one so `XMPPClient.onMessageReceived`
+        // knows not to bump its unread counter while the user is looking at
+        // it. Also zero out the badge + stamp the current time as the last
+        // viewed timestamp, so messages that arrived before the user opened
+        // the room are counted "read" immediately.
+        RoomStore.shared.activeRoomJID = room.jid
+        RoomStore.shared.updateUnreadCount(roomJID: room.jid, count: 0)
+        RoomStore.shared.setLastViewedTimestamp(
+            roomJID: room.jid,
+            timestamp: Int64(Date().timeIntervalSince1970 * 1000)
+        )
+
         // Guard: Don't load if already loading to prevent multiple simultaneous requests
         guard !isLoading && !isLoadingMore else {
             //print("📋 ChatRoomViewModel: Already loading, skipping onViewAppeared load")

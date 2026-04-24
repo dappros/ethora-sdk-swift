@@ -957,10 +957,39 @@ extension XMPPClient: XMPPStreamDelegate {
             //NSlog("📨 XMPPClient: Real-time message in room %@", roomJID)
             //print("📨 XMPPClient: Real-time message in room \(roomJID)")
             guard let self = self else { return }
-            
+
+            // Persist real-time messages into the cache even when there is
+            // no active ChatRoomViewModel. Without this, messages that
+            // arrive while the user is on the room list (or has no chat
+            // open) are handed off only to the live delegate / notification,
+            // and if no one is listening they disappear: MessageCache keeps
+            // the previous snapshot, the room list's "last message" preview
+            // doesn't move forward, and when the user finally opens the
+            // chat, the message is missing from history. `processIncomingMessage`
+            // is idempotent (dedupe by id / xmppId), so calling it here is
+            // safe for ChatRoomViewModel's own reconciliation as well.
+            self.processIncomingMessage(message)
+
+            // Bump unread count for non-active, non-self messages. Works even
+            // when no ChatRoomViewModel is alive (user is on the room list),
+            // because `XMPPClient` listens here regardless of UI state.
+            let senderLocal = message.user.xmppUsername?.components(separatedBy: "@").first
+            let selfLocal = self.username.components(separatedBy: "@").first
+            let isSelf = senderLocal != nil && selfLocal != nil && senderLocal == selfLocal
+            let bareRoomJID = roomJID.components(separatedBy: "/").first ?? roomJID
+            Task { @MainActor in
+                let activeJID = RoomStore.shared.activeRoomJID
+                guard !isSelf, activeJID != bareRoomJID else { return }
+                guard let room = RoomStore.shared.rooms[bareRoomJID] else { return }
+                RoomStore.shared.updateUnreadCount(
+                    roomJID: bareRoomJID,
+                    count: room.unreadMessages + 1
+                )
+            }
+
             // Notify delegate (for backward compatibility)
             self.delegate?.xmppClient(self, didReceiveMessage: message)
-            
+
             // Also post notification so multiple ChatRoomViewModels can receive it
             // This prevents conflicts when multiple chat rooms are open
             NotificationCenter.default.post(
