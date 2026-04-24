@@ -1028,11 +1028,28 @@ extension XMPPClient: XMPPStreamDelegate {
             // Process incoming message (save to cache, update room, etc.)
             // This ensures messages are available even if no ChatRoomViewModel is active
             self.processIncomingMessage(message)
-            
+
             // Notify delegate (for ChatRoomViewModel if active)
             //print("📤 XMPPClient: Notifying delegate about history message")
             self.delegate?.xmppClient(self, didReceiveMessage: message)
             //print("✅ XMPPClient: Delegate notified")
+
+            // Also post `XMPPMessageReceived` so any live `ChatRoomViewModel`
+            // picks up MAM-delivered messages too. Without this, the user
+            // who was already sitting inside a room when the app went
+            // background wouldn't see the messages that arrived during
+            // offline until they leave and re-enter the chat — because the
+            // VM only subscribes to `XMPPMessageReceived`, not to
+            // `RoomMessagesUpdated`. Reconciliation inside
+            // `handleIncomingMessage` is already dedupe-safe by id.
+            NotificationCenter.default.post(
+                name: NSNotification.Name("XMPPMessageReceived"),
+                object: self,
+                userInfo: [
+                    "message": message,
+                    "roomJID": roomJID
+                ]
+            )
         }
         
         // Set up reaction handler

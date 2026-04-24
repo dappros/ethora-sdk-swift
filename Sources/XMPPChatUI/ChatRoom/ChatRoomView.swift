@@ -60,6 +60,20 @@ public struct ChatRoomView: View {
     /// time `scrollTop == 0` trips the "near-top" guard and would fire an
     /// unwanted older-history load right as the chat opens.
     @State private var hasPerformedInitialScroll: Bool = false
+    /// While `true`, every `messages.count` / `isLoading` flip re-pins the
+    /// scroll view to `bottom-anchor`. Flipped off the moment the user
+    /// manually scrolls upward, re-armed on `onAppear`. Guarantees the chat
+    /// opens at the bottom every time — including repeat opens and the
+    /// race where MAM sends the last batch of messages a second or two
+    /// after `onAppear` fires.
+    @State private var pinToBottom: Bool = true
+    /// iOS 17+ `scrollPosition(id:)` binding. SwiftUI re-anchors the
+    /// ScrollView to whatever id this holds whenever content or viewport
+    /// size changes — which is exactly what we need for the chat-on-open
+    /// + keyboard-appears edge cases. Keep pointed at `bottom-anchor`
+    /// until the user scrolls manually (we clear it in
+    /// `updateScrollButton` when `distanceFromBottom > 150`).
+    @State private var scrollPinAnchorID: String? = "bottom-anchor"
     @FocusState private var isInputFocused: Bool
     @State private var showConnectionStatus: Bool = true
     @State private var dragOffset: CGFloat = 0
@@ -538,21 +552,21 @@ public struct ChatRoomView: View {
                         // Only scroll on initial load or when restoring position
                         // Don't scroll on every message count change to avoid lag
                         // After pull-to-refresh don't auto-scroll — preserve the position
-                        if viewModel.shouldScrollToBottom(), viewModel.messages.last != nil {
-                            // Initial open: snap to bottom instantly. Later
-                            // message bumps (new incoming / typing) keep the
-                            // animated `scrollToBottom(proxy:)` path.
-                            if !hasPerformedInitialScroll {
-                                DispatchQueue.main.async {
+                        if pinToBottom, viewModel.messages.last != nil {
+                            // Keep pinning bottom until the user scrolls
+                            // manually. Same multi-hop loop as in `onAppear`
+                            // — a single `scrollTo` can land slightly above
+                            // the true bottom because LazyVStack lays rows
+                            // out on demand. Repeating for ~300ms catches
+                            // settlement. Stops immediately if the user
+                            // flips `pinToBottom` off by scrolling up.
+                            Task { @MainActor in
+                                for _ in 0..<6 {
+                                    if !pinToBottom { return }
                                     proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
-                                    hasPerformedInitialScroll = true
+                                    try? await Task.sleep(nanoseconds: 50_000_000)
                                 }
-                            } else {
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                                    withAnimation(.easeOut(duration: 0.3)) {
-                                        proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
-                                    }
-                                }
+                                hasPerformedInitialScroll = true
                             }
                         } else if let savedPosition = viewModel.getScrollPosition(),
                                   viewModel.messages.contains(where: { $0.id == savedPosition }),
@@ -567,13 +581,17 @@ public struct ChatRoomView: View {
                         }
                     }
                     .onChange(of: viewModel.isLoading) { isLoading in
-                        // When loading completes, snap to bottom instantly if
-                        // this is still the first load — otherwise the user
-                        // perceives a "scrolled from top" animation when the
-                        // room has no cached messages at first paint.
-                        if !isLoading && viewModel.shouldScrollToBottom(), viewModel.messages.last != nil {
-                            DispatchQueue.main.async {
-                                proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
+                        // When loading finishes, re-pin to the bottom while
+                        // `pinToBottom` is still armed. This catches the
+                        // case where the chat opened on an empty state and
+                        // the first cache/MAM batch arrived after `onAppear`.
+                        if !isLoading && pinToBottom, viewModel.messages.last != nil {
+                            Task { @MainActor in
+                                for _ in 0..<6 {
+                                    if !pinToBottom { return }
+                                    proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
+                                    try? await Task.sleep(nanoseconds: 50_000_000)
+                                }
                                 hasPerformedInitialScroll = true
                             }
                         }
@@ -590,30 +608,38 @@ public struct ChatRoomView: View {
                         // Store proxy for button access
                         scrollProxy = proxy
 
-                        // When view appears, restore scroll position if available
-                        if let savedPosition = viewModel.getScrollPosition(),
-                           viewModel.messages.contains(where: { $0.id == savedPosition }),
-                           !viewModel.hasRestoredScrollPosition {
-                            viewModel.markScrollPositionRestored()
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                                proxy.scrollTo(savedPosition, anchor: .center)
-                                hasPerformedInitialScroll = true
-                            }
-                        } else if viewModel.shouldScrollToBottom(), viewModel.messages.last != nil {
-                            // First load — snap to bottom instantly, no scroll
-                            // animation. `defaultScrollAnchor(.bottom)` on
-                            // iOS 17+ already lands us here at layout time;
-                            // this branch covers the iOS 15/16 fallback and
-                            // the case where messages arrive right after
-                            // onAppear.
-                            DispatchQueue.main.async {
+                        // Re-arm bottom-pin on every open: we want the chat
+                        // to always land at the newest message, including
+                        // repeat opens and cases where `messages` arrive a
+                        // second or two after `onAppear`. The pin is
+                        // dropped the moment the user manually scrolls up.
+                        pinToBottom = true
+                        hasPerformedInitialScroll = false
+                        isUserScrolledUp = false
+                        // iOS 17+ scroll-position binding: re-pointing at
+                        // `bottom-anchor` tells SwiftUI to anchor the
+                        // ScrollView's visual bottom to this id and keep
+                        // it stable through content / viewport changes
+                        // (new messages arriving, keyboard appearing).
+                        scrollPinAnchorID = "bottom-anchor"
+
+                        // `LazyVStack` inside `ScrollView` lays out rows
+                        // incrementally, so a single `scrollTo(bottom)` at
+                        // `onAppear` can land slightly above the true
+                        // bottom (last row's intrinsic height is computed
+                        // only after it's rendered). We pin for a short
+                        // window: repeated scrollTo calls every 50ms for
+                        // ~1s — this soaks up LazyVStack settlement and
+                        // any MAM/cache batch that lands shortly after
+                        // `onAppear`. Stops as soon as the user scrolls
+                        // up manually (which flips `pinToBottom` off).
+                        Task { @MainActor in
+                            for _ in 0..<20 {
+                                if !pinToBottom { return }
                                 proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
-                                hasPerformedInitialScroll = true
+                                try? await Task.sleep(nanoseconds: 50_000_000)
                             }
-                        } else {
-                            // No messages yet; flag will flip on the first
-                            // non-empty load via `onChange(isLoading)` or
-                            // `onChange(messages)` below.
+                            hasPerformedInitialScroll = true
                         }
                     }
                 }
@@ -790,14 +816,42 @@ public struct ChatRoomView: View {
     /// from top" animation. On iOS < 17 the view simply starts at the top;
     /// our `.onAppear` fallback then jumps to the last message without
     /// animation to approximate the same UX.
+    ///
+    /// Also dismisses the keyboard as soon as the user starts scrolling
+    /// (iOS 16+), and on any tap that lands on the scroll view's empty
+    /// area — matches Telegram/Messages behaviour.
     @ViewBuilder
     private func scrollViewAnchoredToBottom<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        let baseScroll = ScrollView { content() }
+            .simultaneousGesture(
+                // Use `simultaneousGesture` so taps on message bubbles still
+                // fire their own handlers — this just adds an extra observer
+                // for the tap and uses it to drop the keyboard.
+                TapGesture().onEnded { dismissKeyboard() }
+            )
+
         if #available(iOS 17.0, macOS 14.0, *) {
-            ScrollView { content() }
+            baseScroll
                 .defaultScrollAnchor(.bottom)
+                .scrollPosition(id: $scrollPinAnchorID, anchor: .bottom)
+                .scrollDismissesKeyboard(.immediately)
+        } else if #available(iOS 16.0, macOS 13.0, *) {
+            baseScroll
+                .scrollDismissesKeyboard(.immediately)
         } else {
-            ScrollView { content() }
+            baseScroll
         }
+    }
+
+    private func dismissKeyboard() {
+        #if canImport(UIKit)
+        UIApplication.shared.sendAction(
+            #selector(UIResponder.resignFirstResponder),
+            to: nil,
+            from: nil,
+            for: nil
+        )
+        #endif
     }
 
     /// Sentinel ID that sits at the very end of the messages LazyVStack
@@ -855,6 +909,15 @@ public struct ChatRoomView: View {
             showScrollButton = true
             isUserScrolledUp = true
             atBottom = false
+            // User took scroll control — stop auto-pinning to the bottom.
+            // Re-armed on next `onAppear`.
+            pinToBottom = false
+            // Release the iOS 17 scroll-position binding so SwiftUI doesn't
+            // keep yanking the view back to the bottom while the user is
+            // reading history. Re-pointed at `bottom-anchor` in onAppear.
+            if scrollPinAnchorID != nil {
+                scrollPinAnchorID = nil
+            }
         }
     }
     
