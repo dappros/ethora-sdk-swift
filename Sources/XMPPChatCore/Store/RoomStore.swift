@@ -392,17 +392,17 @@ public class RoomStore: ObservableObject {
     // MARK: - Cache Management
     
     private func saveToCache() {
-        // Limit messages per room to 50 (like web)
+        // Limit messages per room to 100 (matches `MessageCache.maxCachedMessagesPerRoom`)
         var roomsToSave = rooms
         for (jid, room) in roomsToSave {
-            if room.messages.count > 50 {
+            if room.messages.count > 100 {
                 roomsToSave[jid] = Room(
                     id: room.id,
                     jid: room.jid,
                     name: room.name,
                     title: room.title,
                     usersCnt: room.usersCnt,
-                    messages: Array(room.messages.suffix(50)),
+                    messages: Array(room.messages.suffix(100)),
                     isLoading: room.isLoading,
                     roomBg: room.roomBg,
                     members: room.members,

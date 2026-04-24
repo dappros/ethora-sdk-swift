@@ -17,7 +17,7 @@ public class MessageCache {
     // MARK: - Configuration (hybrid per-room + global limits)
     
     // Cache up to N messages per room (matches web limit by default)
-    private var maxCachedMessagesPerRoom: Int = 50
+    private var maxCachedMessagesPerRoom: Int = 100
     
     // Global limits across all rooms
     private var maxCachedRooms: Int = 50

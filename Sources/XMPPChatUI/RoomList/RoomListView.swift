@@ -679,20 +679,55 @@ public class RoomListViewModel: ObservableObject {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            if let self = self, !self.rooms.isEmpty {
-                self.messageLoaderQueue?.reset()
-                self.messageLoaderQueue?.start()
-                // After reconnect (or fresh connect after app relaunch) fetch
-                // the latest slice of history for every known room, so any
-                // messages that arrived while the app was offline show up
-                // immediately — without the user having to open each chat.
+            guard let self = self else { return }
+
+            if self.rooms.isEmpty {
+                // After a long background → XMPP reconnect we sometimes get
+                // here with an empty room list (REST 401'd earlier, cache
+                // got cleared, or this VM was just created). Re-trigger the
+                // full `loadRooms` path so the user doesn't have to toggle
+                // tabs to repopulate the list. It's a no-op when already
+                // loading.
+                if !self.isLoading {
+                    self.loadRooms()
+                }
+                return
+            }
+
+            self.messageLoaderQueue?.reset()
+            self.messageLoaderQueue?.start()
+            // After reconnect (or fresh connect after app relaunch) fetch
+            // the latest slice of history for every known room, so any
+            // messages that arrived while the app was offline show up
+            // immediately — without the user having to open each chat.
+            Task { @MainActor [weak self] in
+                await self?.refreshLatestForAllRooms()
+            }
+            //print("🔄 RoomListViewModel: Started auto-load history queue (client connected)")
+        }
+        notificationObservers.append(didConnectToken)
+
+        // Session was restored by `SessionRecoveryManager` (either direct
+        // XMPP reconnect or a refresh-then-reconnect). Repopulate the room
+        // list if it got wiped and re-pull the latest messages in each
+        // chat, so the user who sat in a specific chat during background
+        // still sees the newest messages on return — without having to
+        // exit and re-enter the room.
+        let recoveryToken = NotificationCenter.default.addObserver(
+            forName: SessionRecoveryManager.sessionRecoveredNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self = self else { return }
+            if self.rooms.isEmpty {
+                if !self.isLoading { self.loadRooms() }
+            } else {
                 Task { @MainActor [weak self] in
                     await self?.refreshLatestForAllRooms()
                 }
-                //print("🔄 RoomListViewModel: Started auto-load history queue (client connected)")
             }
         }
-        notificationObservers.append(didConnectToken)
+        notificationObservers.append(recoveryToken)
         
         // Listen for room messages updates to update the room's messages array
         let roomMessagesRefreshToken = NotificationCenter.default.addObserver(
