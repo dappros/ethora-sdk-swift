@@ -129,8 +129,12 @@ struct MessagesListView: View {
                 .id(message.id)
             }
             
+            // Visual padding below the last message so it never sits flush
+            // against the input bar. `ScrollViewReader.scrollTo(bottomAnchorID,
+            // anchor: .bottom)` aligns this sentinel with the visible bottom,
+            // giving the bubble above 8pt of breathing room.
             Color.clear
-                .frame(height: 1)
+                .frame(height: 8)
                 .id("bottom-anchor")
         }
     }
