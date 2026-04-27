@@ -50,7 +50,9 @@ public struct RoomListView: View {
     /// Programmatic navigation when opening a room from a push (RN `PENDING_NOTIFICATION_JID_KEY` flow).
     @State private var pushNavActive: Bool = false
     @State private var pushNavRoomBareJID: String?
-    
+    @State private var roomPendingDeletion: Room?
+    @State private var deleteRoomErrorMessage: String?
+
     public init(viewModel: RoomListViewModel, singleRoomJID: String? = nil, hideRoomList: Bool = false) {
         self.viewModel = viewModel
         self.singleRoomJID = singleRoomJID
@@ -91,6 +93,42 @@ public struct RoomListView: View {
                     tryOpenRoomFromPendingPushNotification()
                 }
             }
+            .alert(
+                "Delete chat?",
+                isPresented: Binding(
+                    get: { roomPendingDeletion != nil },
+                    set: { if !$0 { roomPendingDeletion = nil } }
+                ),
+                presenting: roomPendingDeletion
+            ) { room in
+                Button("Delete", role: .destructive) {
+                    Task {
+                        do {
+                            try await viewModel.deleteRoom(room)
+                        } catch {
+                            deleteRoomErrorMessage = error.localizedDescription
+                        }
+                        roomPendingDeletion = nil
+                    }
+                }
+                Button("Cancel", role: .cancel) {
+                    roomPendingDeletion = nil
+                }
+            } message: { room in
+                Text("\"\(room.title.isEmpty ? room.name : room.title)\" will be deleted for everyone.")
+            }
+            .alert(
+                "Delete failed",
+                isPresented: Binding(
+                    get: { deleteRoomErrorMessage != nil },
+                    set: { if !$0 { deleteRoomErrorMessage = nil } }
+                ),
+                presenting: deleteRoomErrorMessage
+            ) { _ in
+                Button("OK", role: .cancel) { deleteRoomErrorMessage = nil }
+            } message: { msg in
+                Text(msg)
+            }
         }
     }
     
@@ -119,6 +157,13 @@ public struct RoomListView: View {
                             currentUserId: viewModel.currentUserId,
                             messages: room.messages
                         )
+                    }
+                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                        Button(role: .destructive) {
+                            roomPendingDeletion = room
+                        } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
                     }
                 }
             }
@@ -786,19 +831,42 @@ public class RoomListViewModel: ObservableObject {
         }
         notificationObservers.append(roomMessagesRefreshToken)
 
-        // Mirror `unreadMessages` changes from RoomStore back into
-        // `self.rooms` so the badge in the row refreshes even when the
-        // recompute is triggered from elsewhere (e.g. `ChatRoomViewModel`
-        // setting `lastViewedTimestamp`, MAM history refresh).
+        // Mirror RoomStore changes back into `self.rooms` so the room list
+        // reacts live to:
+        //   - `unreadMessages` recomputes triggered from elsewhere (e.g.
+        //     `ChatRoomViewModel` setting `lastViewedTimestamp`, MAM
+        //     history refresh) — the badge needs to redraw,
+        //   - new rooms appearing via `XMPPClient.onChatInvite` (someone
+        //     adds this user to a room from another client) — without this
+        //     branch the placeholder lives in `RoomStore` but the row
+        //     never appears until cold-start REST refresh,
+        //   - server-side metadata refresh (title / picture / lastMessage)
+        //     that arrives after the placeholder via `addRoomFromApi`.
+        // `messages` is intentionally not mirrored — it can hold optimistic
+        // entries from the open `ChatRoomViewModel` that must not be
+        // overwritten by the bounded RoomStore copy.
         let unreadSyncToken = RoomStore.shared.$rooms
             .receive(on: RunLoop.main)
             .sink { [weak self] storeRooms in
                 guard let self = self else { return }
                 var didChange = false
                 for (jid, storeRoom) in storeRooms {
-                    if let idx = self.rooms.firstIndex(where: { $0.jid == jid }),
-                       self.rooms[idx].unreadMessages != storeRoom.unreadMessages {
-                        self.rooms[idx].unreadMessages = storeRoom.unreadMessages
+                    if let idx = self.rooms.firstIndex(where: { $0.jid == jid }) {
+                        // Replace the row wholesale but keep this VM's
+                        // `messages` array, which may contain optimistic
+                        // entries from `ChatRoomViewModel` that the bounded
+                        // RoomStore copy does not carry.
+                        let preservedMessages = self.rooms[idx].messages
+                        var candidate = storeRoom
+                        if !preservedMessages.isEmpty {
+                            candidate.messages = preservedMessages
+                        }
+                        if self.rooms[idx] != candidate {
+                            self.rooms[idx] = candidate
+                            didChange = true
+                        }
+                    } else {
+                        self.rooms.append(storeRoom)
                         didChange = true
                     }
                 }
@@ -882,8 +950,44 @@ public class RoomListViewModel: ObservableObject {
             }
         }
         notificationObservers.append(composingChangedToken)
+
+        // Remote-side room deletion (kicked or `DELETE /chats` from another
+        // client). XMPPClient already removes the room from RoomStore — this
+        // observer just pops the row out of this VM's local mirror so the
+        // list re-renders without the deleted chat.
+        let roomDeletedToken = NotificationCenter.default.addObserver(
+            forName: NSNotification.Name("XMPPRoomDeleted"),
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            guard let self = self,
+                  let userInfo = notification.userInfo,
+                  let roomJID = userInfo["roomJID"] as? String else { return }
+            if let idx = self.rooms.firstIndex(where: { $0.jid == roomJID }) {
+                self.rooms.remove(at: idx)
+                self.objectWillChange.send()
+            }
+        }
+        notificationObservers.append(roomDeletedToken)
     }
-    
+
+    /// Delete a chat for everyone — REST `DELETE /chats` then drop the
+    /// row locally. The server signals other participants via XMPP
+    /// `<presence type="unavailable">` with status 110+321, which lands in
+    /// `XMPPClient.onRoomKicked` on their side.
+    public func deleteRoom(_ room: Room) async throws {
+        _ = try await RoomsAPI.deleteRoom(
+            name: room.name,
+            baseURL: apiBaseURL,
+            appId: appId
+        )
+        RoomStore.shared.deleteRoom(jid: room.jid)
+        if let idx = self.rooms.firstIndex(where: { $0.jid == room.jid }) {
+            self.rooms.remove(at: idx)
+            self.objectWillChange.send()
+        }
+    }
+
     deinit {
         // Never capture `self` in async work from `deinit`.
         let queue = messageLoaderQueue

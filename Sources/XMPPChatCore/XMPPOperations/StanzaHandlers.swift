@@ -231,14 +231,23 @@ public class StanzaHandlers {
         onChatInvite?(roomJID)
     }
     
-    /// Handle room kicked (onRoomKicked from TypeScript)
+    /// Handle room kicked (onRoomKicked from TypeScript).
+    ///
+    /// Mirrors `ethora-chat-component/src/networking/stanzaHandlers.ts:562`:
+    /// the server confirms removal from a room with a `<presence
+    /// type="unavailable">` carrying status `110` (this user) **and** `321`
+    /// (membership lost — fired by ejabberd both on explicit kick and on
+    /// `DELETE /chats`). Any other `unavailable` presence is just another
+    /// occupant leaving and must not delete the room locally.
     public func onRoomKicked(_ stanza: XMPPStanza) {
-        guard stanza.attributes["type"] == "unavailable" else {
-            return
-        }
-        
+        guard stanza.attributes["type"] == "unavailable" else { return }
+        guard let xElement = stanza.getChild("x") else { return }
+        let statusCodes = xElement.getChildren("status").compactMap { $0.attributes["code"] }
+        guard statusCodes.contains("110"), statusCodes.contains("321") else { return }
+
         let from = stanza.attributes["from"] ?? ""
         let roomJID = from.components(separatedBy: "/").first ?? ""
+        guard !roomJID.isEmpty else { return }
         onRoomKicked?(roomJID)
     }
     

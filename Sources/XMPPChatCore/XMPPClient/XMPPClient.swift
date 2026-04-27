@@ -1092,6 +1092,80 @@ extension XMPPClient: XMPPStreamDelegate {
             self?.markPresenceResponseReceived(for: roomJID)
         }
 
+        // XEP-0045 mediated chat invite — fired when another client adds this
+        // user to a room. Without this hookup the room only appears after a
+        // cold-start REST refresh in `ChatHeadlessSession`/`ChatWrapperViewModel`,
+        // which is what the React reference avoids in `onChatInvite`
+        // (ethora-chat-component/src/networking/stanzaHandlers.ts:376).
+        // Three things have to happen for a fresh room to show up live and
+        // start delivering messages:
+        //   1. seed RoomStore with a minimal placeholder so RoomListView
+        //      reacts immediately — REST refresh below fills in metadata
+        //   2. send MUC presence so the server starts broadcasting room
+        //      stanzas to this client (mucsub alone is not enough — see
+        //      project memory `muc_occupant_required_for_broadcasts`)
+        //   3. pull `RoomsAPI.getRooms` to merge full title / icon /
+        //      lastMessage / members
+        handlers.onChatInvite = { [weak self] (roomJID: String) in
+            guard let self = self, !roomJID.isEmpty else { return }
+            print("📨 XMPPClient: Chat invite received for room \(roomJID)")
+
+            Task { @MainActor in
+                if RoomStore.shared.rooms[roomJID] == nil {
+                    let placeholderName = roomJID.components(separatedBy: "@").first ?? roomJID
+                    let placeholder = Room(
+                        id: roomJID,
+                        jid: roomJID,
+                        name: placeholderName,
+                        title: placeholderName
+                    )
+                    RoomStore.shared.addRoom(placeholder)
+                }
+
+                await self.sendPresenceToRoom(roomJID: roomJID)
+
+                let config = ConfigStore.shared.config
+                let baseURLString = (config.baseUrl ?? "https://api.chat.ethora.com/v1")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                guard let baseURL = URL(string: baseURLString), !baseURLString.isEmpty else {
+                    return
+                }
+                let conferenceDomain = config.xmppSettings?.conference ?? "conference.xmpp.chat.ethora.com"
+
+                do {
+                    let rooms = try await RoomsAPI.getRooms(
+                        baseURL: baseURL,
+                        appId: config.appId ?? AppConfig.defaultAppId,
+                        conferenceDomain: conferenceDomain
+                    )
+                    for room in rooms {
+                        RoomStore.shared.addRoomFromApi(room)
+                    }
+                } catch {
+                    print("⚠️ XMPPClient.onChatInvite: REST refresh failed — \(error.localizedDescription)")
+                }
+            }
+        }
+
+        // Counterpart to `onChatInvite`: fires when this user is removed
+        // from a room (status 110+321), which on ejabberd happens both for
+        // an explicit kick and for `DELETE /chats`. Drives the same UX as
+        // React `stanzaHandlers.ts:562` — drop the room from RoomStore and
+        // post a notification so any RoomListViewModel that already mirrors
+        // the room into its own array can pop the row immediately.
+        handlers.onRoomKicked = { [weak self] (roomJID: String) in
+            guard let self = self, !roomJID.isEmpty else { return }
+            print("🗑️ XMPPClient: Room destroyed/kicked — \(roomJID)")
+            Task { @MainActor in
+                RoomStore.shared.deleteRoom(jid: roomJID)
+            }
+            NotificationCenter.default.post(
+                name: NSNotification.Name("XMPPRoomDeleted"),
+                object: self,
+                userInfo: ["roomJID": roomJID]
+            )
+        }
+
         // Set up composing (typing) indicator handler
         handlers.onComposingChanged = { [weak self] (roomJID: String, composingList: [String], isComposing: Bool) in
             //print("⌨️ XMPPClient: Composing changed in room \(roomJID) - isComposing: \(isComposing), users: \(composingList)")
