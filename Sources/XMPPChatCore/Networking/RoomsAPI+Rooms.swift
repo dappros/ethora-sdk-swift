@@ -123,6 +123,7 @@ extension RoomsAPI {
         didRefresh: Bool = false
     ) async throws -> ApiRoom {
         let url = baseURL.appendingPathComponent("chats/my/\(chatName)")
+        print("🔍 getRoomByName/MY/! \(url)")
         
         return try await performRequest(
             url: url,

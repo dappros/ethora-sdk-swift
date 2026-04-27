@@ -50,8 +50,7 @@ public struct RoomListView: View {
     /// Programmatic navigation when opening a room from a push (RN `PENDING_NOTIFICATION_JID_KEY` flow).
     @State private var pushNavActive: Bool = false
     @State private var pushNavRoomBareJID: String?
-    @State private var roomPendingDeletion: Room?
-    @State private var deleteRoomErrorMessage: String?
+    @State private var roomPendingLeave: Room?
 
     public init(viewModel: RoomListViewModel, singleRoomJID: String? = nil, hideRoomList: Bool = false) {
         self.viewModel = viewModel
@@ -94,40 +93,24 @@ public struct RoomListView: View {
                 }
             }
             .alert(
-                "Delete chat?",
+                "Leave chat?",
                 isPresented: Binding(
-                    get: { roomPendingDeletion != nil },
-                    set: { if !$0 { roomPendingDeletion = nil } }
+                    get: { roomPendingLeave != nil },
+                    set: { if !$0 { roomPendingLeave = nil } }
                 ),
-                presenting: roomPendingDeletion
+                presenting: roomPendingLeave
             ) { room in
-                Button("Delete", role: .destructive) {
+                Button("Leave", role: .destructive) {
                     Task {
-                        do {
-                            try await viewModel.deleteRoom(room)
-                        } catch {
-                            deleteRoomErrorMessage = error.localizedDescription
-                        }
-                        roomPendingDeletion = nil
+                        await viewModel.leaveRoom(room)
+                        roomPendingLeave = nil
                     }
                 }
                 Button("Cancel", role: .cancel) {
-                    roomPendingDeletion = nil
+                    roomPendingLeave = nil
                 }
             } message: { room in
-                Text("\"\(room.title.isEmpty ? room.name : room.title)\" will be deleted for everyone.")
-            }
-            .alert(
-                "Delete failed",
-                isPresented: Binding(
-                    get: { deleteRoomErrorMessage != nil },
-                    set: { if !$0 { deleteRoomErrorMessage = nil } }
-                ),
-                presenting: deleteRoomErrorMessage
-            ) { _ in
-                Button("OK", role: .cancel) { deleteRoomErrorMessage = nil }
-            } message: { msg in
-                Text(msg)
+                Text("You will leave \"\(room.title.isEmpty ? room.name : room.title)\" and stop receiving new messages from this chat.")
             }
         }
     }
@@ -160,9 +143,9 @@ public struct RoomListView: View {
                     }
                     .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                         Button(role: .destructive) {
-                            roomPendingDeletion = room
+                            roomPendingLeave = room
                         } label: {
-                            Label("Delete", systemImage: "trash")
+                            Label("Leave", systemImage: "rectangle.portrait.and.arrow.right")
                         }
                     }
                 }
@@ -971,17 +954,61 @@ public class RoomListViewModel: ObservableObject {
         notificationObservers.append(roomDeletedToken)
     }
 
-    /// Delete a chat for everyone — REST `DELETE /chats` then drop the
-    /// row locally. The server signals other participants via XMPP
-    /// `<presence type="unavailable">` with status 110+321, which lands in
-    /// `XMPPClient.onRoomKicked` on their side.
-    public func deleteRoom(_ room: Room) async throws {
-        _ = try await RoomsAPI.deleteRoom(
-            name: room.name,
-            baseURL: apiBaseURL,
-            appId: appId
-        )
-        RoomStore.shared.deleteRoom(jid: room.jid)
+    /// Покинуть чат (как «Leave» в веб-меню):
+    /// 1. Шлём `<presence type="unavailable" to="room/nick"/>` (XEP-0045
+    ///    §7.14) — это и есть единственный wire-stanza, который посылает
+    ///    React-референс.
+    /// 2. Дополнительно вызываем `DELETE /chats/users-access` (тот же
+    ///    REST-эндпоинт, через который реакт убирает других мемберов из
+    ///    чата в `ChatProfileModal`). Без этого шага бэкенд
+    ///    `example` оставляет юзера в `members`, и `GET /chats/my`
+    ///    при следующем рефреше возвращает покинутые чаты в список.
+    /// 3. Локально помечаем комнату hidden (`RoomStore.hideRoom`) — это
+    ///    страховка на случай, если REST упал. `addRoomFromApi` после
+    ///    hide игнорирует этот JID, и комната не «воскресает» от REST.
+    ///
+    /// Реальный delete чата (`DELETE /chats`) намеренно не вызывается —
+    /// чат на сервере должен остаться, чтобы остальные участники
+    /// продолжали в нём переписываться.
+    public func leaveRoom(_ room: Room) async {
+        print("👋 RoomListViewModel.leaveRoom: id=\(room.id), jid=\(room.jid), name=\(room.name)")
+        let bareRoomJID = room.jid.components(separatedBy: "/").first ?? room.jid
+
+        if let client = ClientRegistry.shared.getGlobalXMPPClient() {
+            await client.leaveRoom(roomJID: bareRoomJID)
+        } else {
+            print("⚠️ RoomListViewModel.leaveRoom: no live XMPPClient — XMPP step skipped")
+        }
+
+        // REST step: best-effort. Web (`ChatProfileModal.handleDeleteUser`)
+        // передаёт `chatName = activeRoom.jid.split('@')[0]` — то есть
+        // localpart, и `members = [xmppUsername]`. Тот же endpoint
+        // принимает self-removal на этом бэкенде.
+        let chatName = bareRoomJID.components(separatedBy: "@").first ?? bareRoomJID
+        let memberId = currentUserId
+        if !chatName.isEmpty, !memberId.isEmpty {
+            do {
+                _ = try await RoomsAPI.deleteRoomMember(
+                    chatName: chatName,
+                    members: [memberId],
+                    baseURL: apiBaseURL,
+                    appId: appId
+                )
+                print("👋 RoomListViewModel.leaveRoom: REST deleteRoomMember OK for \(chatName)")
+            } catch AuthAPIError.httpError(404, _) {
+                print("👋 RoomListViewModel.leaveRoom: REST 404 — backend already considers us out of \(chatName)")
+            } catch {
+                // Не блокируем выход из чата на REST-ошибке: hidden-флаг
+                // ниже сам по себе уберёт строку из UI и подавит её
+                // воскрешение при ближайшем `GET /chats/my`. Если бэкенд
+                // продолжит держать нас в `members`, мы хотя бы не
+                // спамим юзера ошибкой и не возвращаем чат на экран.
+                print("⚠️ RoomListViewModel.leaveRoom: REST deleteRoomMember failed — \(error.localizedDescription)")
+            }
+        }
+
+        RoomStore.shared.hideRoom(jid: room.jid)
+        MessageCache.shared.clearMessages(forRoomJID: room.jid)
         if let idx = self.rooms.firstIndex(where: { $0.jid == room.jid }) {
             self.rooms.remove(at: idx)
             self.objectWillChange.send()

@@ -18,6 +18,14 @@ public class RoomStore: ObservableObject {
     @Published public var activeRoomJID: String?
     @Published public var isLoading: Bool = false
     @Published public var globalLoading: Bool = false
+
+    /// Bare JID-ы чатов, из которых юзер вышел через «Leave» — но
+    /// бэкенд `GET /chats/my` всё ещё их отдаёт. Сюда мы кладём такие
+    /// комнаты, и `addRoomFromApi(...)` игнорирует их при следующем
+    /// рефреше, чтобы не возвращать строку в список. На реальный re-join
+    /// (см. `unhideRoom(jid:)` в обработчике XEP-0249/XEP-0045 invite)
+    /// флаг снимается.
+    @Published public var hiddenRoomJIDs: Set<String> = []
     
     // Edit action state
     @Published public var editAction: EditAction?
@@ -54,6 +62,16 @@ public class RoomStore: ObservableObject {
     ///   Only messages that arrive **after** the app started will bump the
     ///   badge, which is the behaviour Telegram ships with.
     public func addRoom(_ room: Room) {
+        // Если юзер недавно вышел из этой комнаты — не возвращаем её,
+        // даже если REST `/chats/my` отдал её обратно. Снять hidden можно
+        // только явным образом (см. `unhideRoom(jid:)`), чтобы случайный
+        // фоновый рефреш не «воскрешал» только что покинутый чат.
+        let bareJID = room.jid.components(separatedBy: "/").first ?? room.jid
+        if hiddenRoomJIDs.contains(bareJID) {
+            print("🙈 RoomStore.addRoom skipped — \(bareJID) is in hiddenRoomJIDs")
+            return
+        }
+
         var toStore = room
         if let existing = rooms[room.jid] {
             if toStore.lastViewedTimestamp == nil || (toStore.lastViewedTimestamp ?? 0) <= 0 {
@@ -81,6 +99,30 @@ public class RoomStore: ObservableObject {
             activeRoomJID = nil
         }
         saveToCache()
+    }
+
+    /// Помечаем комнату как «вышли из неё» — удаляем её из текущего
+    /// списка и добавляем bare JID в `hiddenRoomJIDs`, чтобы
+    /// `addRoomFromApi(...)` не воскресил эту комнату при ближайшем
+    /// `GET /chats/my`. Используется в swipe-Leave; снимается через
+    /// `unhideRoom(jid:)` при ре-инвайте.
+    public func hideRoom(jid: String) {
+        let bareJID = jid.components(separatedBy: "/").first ?? jid
+        hiddenRoomJIDs.insert(bareJID)
+        rooms.removeValue(forKey: bareJID)
+        if activeRoomJID == bareJID {
+            activeRoomJID = nil
+        }
+        saveToCache()
+    }
+
+    /// Снимает «hidden» с комнаты — нужно при ре-инвайте, чтобы
+    /// XMPP-broadcast снова дошёл до UI и комната появилась в списке.
+    public func unhideRoom(jid: String) {
+        let bareJID = jid.components(separatedBy: "/").first ?? jid
+        if hiddenRoomJIDs.remove(bareJID) != nil {
+            saveToCache()
+        }
     }
     
     /// Update room
@@ -350,6 +392,7 @@ public class RoomStore: ObservableObject {
         }
 
         let lastViewed = room.lastViewedTimestamp ?? 0
+        var counted: [(id: String, ts: Int64, body: String, isMedia: Bool, isSystem: String?, sender: String)] = []
         let unread = pool.reduce(0) { acc, msg in
             guard msg.id != "delimiter-new" else { return acc }
             guard msg.isDeleted != true else { return acc }
@@ -366,8 +409,23 @@ public class RoomStore: ObservableObject {
             }
             let ts = msg.timestamp ?? 0
             guard ts > 0 else { return acc }
-            if lastViewed <= 0 { return acc + 1 }
-            return ts > lastViewed ? acc + 1 : acc
+            if lastViewed > 0 && ts <= lastViewed { return acc }
+            counted.append((
+                id: msg.id,
+                ts: ts,
+                body: String(trimmed.prefix(60)),
+                isMedia: msg.isMediafile == "true",
+                isSystem: msg.isSystemMessage,
+                sender: senderLocal
+            ))
+            return acc + 1
+        }
+
+        if unread > 0 {
+            print("🔢 recomputeUnread room=\(jid) lastViewed=\(lastViewed) pool=\(pool.count) → unread=\(unread)")
+            for c in counted {
+                print("   • id=\(c.id) ts=\(c.ts) body='\(c.body)' isMedia=\(c.isMedia) isSystem=\(String(describing: c.isSystem)) sender=\(c.sender)")
+            }
         }
 
         if room.unreadMessages != unread {
@@ -432,12 +490,19 @@ public class RoomStore: ObservableObject {
         if let encoded = try? JSONEncoder().encode(roomsToSave) {
             UserDefaults.standard.set(encoded, forKey: "ethora_room_store")
         }
+        if let encodedHidden = try? JSONEncoder().encode(hiddenRoomJIDs) {
+            UserDefaults.standard.set(encodedHidden, forKey: "ethora_room_store_hidden")
+        }
     }
-    
+
     private func loadFromCache() {
         if let data = UserDefaults.standard.data(forKey: "ethora_room_store"),
            let decoded = try? JSONDecoder().decode([String: Room].self, from: data) {
             rooms = decoded
+        }
+        if let hiddenData = UserDefaults.standard.data(forKey: "ethora_room_store_hidden"),
+           let decodedHidden = try? JSONDecoder().decode(Set<String>.self, from: hiddenData) {
+            hiddenRoomJIDs = decodedHidden
         }
     }
     
@@ -448,7 +513,9 @@ public class RoomStore: ObservableObject {
         editAction = nil
         usersSet.removeAll()
         reportRoom = ReportRoomState()
+        hiddenRoomJIDs.removeAll()
         UserDefaults.standard.removeObject(forKey: "ethora_room_store")
+        UserDefaults.standard.removeObject(forKey: "ethora_room_store_hidden")
     }
 }
 
