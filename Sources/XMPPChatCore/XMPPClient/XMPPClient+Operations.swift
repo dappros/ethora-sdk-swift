@@ -25,10 +25,11 @@ extension XMPPClient {
         await operations.presenceInRoom(roomJID: roomJID)
     }
 
-    /// Покинуть комнату MUC — посылает `<presence type="unavailable"
-    /// to="room/nick"/>`. Использование — поведение «Leave» в списке чатов
-    /// (как на вебе): сервер перестаёт слать этому ресурсу broadcast'ы из
-    /// этой комнаты, но сам чат и остальные участники не трогаются.
+    /// Leave a MUC room — sends `<presence type="unavailable"
+    /// to="room/nick"/>`. Used by the "Leave" action in the chat list
+    /// (matches web behavior): the server stops broadcasting room
+    /// stanzas to this resource, while the room itself and the other
+    /// occupants are untouched.
     public func leaveRoom(roomJID: String) async {
         await operations.leaveRoom(roomJID: roomJID)
     }

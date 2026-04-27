@@ -69,13 +69,14 @@ extension XMPPOperations {
         print("✅ [XMPP] Room presence stanza sent")
     }
     
-    /// Покинуть комнату MUC — посылаем `<presence type="unavailable"
-    /// to="room/nick"/>` (XEP-0045, §7.14). Web делает то же самое в
-    /// меню «Leave», см. лог пользователя:
+    /// Leave a MUC room — sends `<presence type="unavailable"
+    /// to="room/nick"/>` (XEP-0045, §7.14). Web does exactly this in
+    /// the "Leave" menu, per the user-supplied log:
     ///   <presence to="…@conference.…/nickname" type="unavailable"/>
-    /// Это НЕ разрушает комнату на сервере — она остаётся, просто этот
-    /// клиент перестаёт быть occupant'ом и больше не получает broadcast'ы
-    /// (а заодно ejabberd снимает mucsub-подписку для этого ресурса).
+    /// This does NOT destroy the room on the server — it stays alive;
+    /// this client just stops being an occupant and no longer receives
+    /// broadcasts (and ejabberd drops the mucsub subscription for this
+    /// resource as a side effect).
     public func leaveRoom(roomJID: String) async {
         guard let stream = client?.xmppStream else { return }
         guard let jid = stream.jid else {
@@ -100,10 +101,10 @@ extension XMPPOperations {
         print("📤 [XMPP] Leaving room \(bareRoomJID) — <presence type='unavailable' to='\(toJID)'/>")
         stream.send(stanza)
 
-        // На случай повторного захода в эту же комнату дальше по сессии:
-        // сбрасываем флаг «присутствие подтверждено», чтобы следующий
-        // `presenceInRoom` для этого JID реально ушёл, а не отбросился
-        // ранним return-ом.
+        // In case the user later re-joins the same room in this session:
+        // clear the "presence ack received" flag so the next
+        // `presenceInRoom` for this JID actually goes out instead of
+        // being short-circuited by the early return.
         await MainActor.run {
             client?.clearPresenceResponse(forRoom: bareRoomJID)
         }

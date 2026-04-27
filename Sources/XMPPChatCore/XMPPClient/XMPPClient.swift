@@ -133,10 +133,9 @@ public class XMPPClient {
         roomsWithPresenceResponse.removeAll()
     }
 
-    /// Снимаем флаг «presence ack получен» для одной конкретной комнаты —
-    /// нужен сценарию leave/re-join, чтобы повторный `presenceInRoom`
-    /// после выхода не отбросился ранним return-ом по
-    /// `hasPresenceResponseForRoom`.
+    /// Clears the "presence ack received" flag for a single room. Needed
+    /// in the leave/re-join flow so a subsequent `presenceInRoom` after
+    /// leaving isn't short-circuited by `hasPresenceResponseForRoom`.
     internal func clearPresenceResponse(forRoom roomJID: String) {
         let bareRoomJID = roomJID.components(separatedBy: "/").first ?? roomJID
         roomsWithPresenceResponse.remove(bareRoomJID)
@@ -920,13 +919,13 @@ extension XMPPClient: XMPPStreamDelegate {
         let roomJID = message.roomJid.components(separatedBy: "/").first ?? message.roomJid
         let selfLocal = self.username.components(separatedBy: "@").first ?? ""
 
-        // Match React (`stanzaHandlers.ts:94-96`): пустые body и не-медиа
-        // (typing/chatstate/служебное), которые сюда просачиваются, не
-        // должны попадать в pool сообщений. Иначе они проходят фильтр
-        // `recomputeUnreadForRoom` через ветку «body пустой OR isMedia=true»
-        // в обратную сторону: на iOS условие `!trimmed.isEmpty || isMedia`
-        // их фактически пропускало, давая «phantom unread» при пустой
-        // комнате (lastMessage = nil, но unread > 0).
+        // Match React (`stanzaHandlers.ts:94-96`): non-media stanzas
+        // with an empty body (typing/chatstate/other service frames)
+        // that slip through here must not land in the message pool.
+        // Otherwise they pass the `recomputeUnreadForRoom` filter via
+        // the `!trimmed.isEmpty || isMedia` branch on iOS, producing
+        // "phantom unread" in an otherwise empty room (lastMessage =
+        // nil, yet unread > 0).
         let trimmedBody = message.body.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmedBody.isEmpty && message.isMediafile != "true" {
             print("⏭️ processIncomingMessage skipped — empty body, not media — id=\(message.id) room=\(roomJID)")
@@ -1133,10 +1132,11 @@ extension XMPPClient: XMPPStreamDelegate {
             print("📨 XMPPClient: Chat invite received for room \(roomJID)")
 
             Task { @MainActor in
-                // Если юзер раньше выходил из этой комнаты, на нашем
-                // клиенте стоит hidden-флаг (см. `RoomStore.hideRoom`).
-                // Ре-инвайт = осознанное возвращение в чат, поэтому
-                // снимаем флаг до addRoom — иначе addRoom его проигнорит.
+                // If the user previously left this room, our client
+                // still has a hidden flag set (see `RoomStore.hideRoom`).
+                // A re-invite is a deliberate return into the chat, so
+                // clear the flag before addRoom — otherwise addRoom
+                // would skip it.
                 RoomStore.shared.unhideRoom(jid: roomJID)
 
                 if RoomStore.shared.rooms[roomJID] == nil {

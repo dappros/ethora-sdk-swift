@@ -19,12 +19,12 @@ public class RoomStore: ObservableObject {
     @Published public var isLoading: Bool = false
     @Published public var globalLoading: Bool = false
 
-    /// Bare JID-ы чатов, из которых юзер вышел через «Leave» — но
-    /// бэкенд `GET /chats/my` всё ещё их отдаёт. Сюда мы кладём такие
-    /// комнаты, и `addRoomFromApi(...)` игнорирует их при следующем
-    /// рефреше, чтобы не возвращать строку в список. На реальный re-join
-    /// (см. `unhideRoom(jid:)` в обработчике XEP-0249/XEP-0045 invite)
-    /// флаг снимается.
+    /// Bare JIDs of chats the user has left via "Leave" — but the
+    /// backend `GET /chats/my` still returns them. We park such rooms
+    /// here so `addRoomFromApi(...)` skips them on the next refresh and
+    /// the row doesn't pop back into the list. The flag is cleared on a
+    /// genuine re-join (see `unhideRoom(jid:)` in the XEP-0249/XEP-0045
+    /// invite handler).
     @Published public var hiddenRoomJIDs: Set<String> = []
     
     // Edit action state
@@ -62,10 +62,11 @@ public class RoomStore: ObservableObject {
     ///   Only messages that arrive **after** the app started will bump the
     ///   badge, which is the behaviour Telegram ships with.
     public func addRoom(_ room: Room) {
-        // Если юзер недавно вышел из этой комнаты — не возвращаем её,
-        // даже если REST `/chats/my` отдал её обратно. Снять hidden можно
-        // только явным образом (см. `unhideRoom(jid:)`), чтобы случайный
-        // фоновый рефреш не «воскрешал» только что покинутый чат.
+        // If the user just left this room — don't bring it back, even
+        // if REST `/chats/my` returned it. The hidden flag is only
+        // cleared explicitly (see `unhideRoom(jid:)`), so an incidental
+        // background refresh can't "resurrect" a chat the user has
+        // just walked out of.
         let bareJID = room.jid.components(separatedBy: "/").first ?? room.jid
         if hiddenRoomJIDs.contains(bareJID) {
             print("🙈 RoomStore.addRoom skipped — \(bareJID) is in hiddenRoomJIDs")
@@ -101,11 +102,11 @@ public class RoomStore: ObservableObject {
         saveToCache()
     }
 
-    /// Помечаем комнату как «вышли из неё» — удаляем её из текущего
-    /// списка и добавляем bare JID в `hiddenRoomJIDs`, чтобы
-    /// `addRoomFromApi(...)` не воскресил эту комнату при ближайшем
-    /// `GET /chats/my`. Используется в swipe-Leave; снимается через
-    /// `unhideRoom(jid:)` при ре-инвайте.
+    /// Marks a room as "left" — removes it from the current list and
+    /// adds the bare JID to `hiddenRoomJIDs` so `addRoomFromApi(...)`
+    /// won't resurrect this room on the next `GET /chats/my`. Used by
+    /// the swipe-Leave action; cleared via `unhideRoom(jid:)` on
+    /// re-invite.
     public func hideRoom(jid: String) {
         let bareJID = jid.components(separatedBy: "/").first ?? jid
         hiddenRoomJIDs.insert(bareJID)
@@ -116,8 +117,9 @@ public class RoomStore: ObservableObject {
         saveToCache()
     }
 
-    /// Снимает «hidden» с комнаты — нужно при ре-инвайте, чтобы
-    /// XMPP-broadcast снова дошёл до UI и комната появилась в списке.
+    /// Clears the "hidden" flag for a room — needed on re-invite so
+    /// XMPP broadcasts reach the UI again and the room reappears in
+    /// the list.
     public func unhideRoom(jid: String) {
         let bareJID = jid.components(separatedBy: "/").first ?? jid
         if hiddenRoomJIDs.remove(bareJID) != nil {
@@ -398,8 +400,17 @@ public class RoomStore: ObservableObject {
             guard msg.isDeleted != true else { return acc }
             guard msg.pending != true else { return acc }
             guard msg.isSystemMessage != "true" else { return acc }
+            // Count ONLY messages with a non-empty `body`. This matches
+            // what `RoomListView.getLastMessage` shows as the room
+            // preview's lastMessage and removes "phantom unread" — the
+            // case where the pool holds media stanzas with an empty
+            // body (or other service frames) that the UI renders as
+            // "No messages yet" yet unread keeps ticking. Real media
+            // arrives in `RoomStore` via `SendMedia` along a different
+            // path with a textual body already set (`fileName` /
+            // `media`), so this check doesn't drop those.
             let trimmed = msg.body.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty || msg.isMediafile == "true" else { return acc }
+            guard !trimmed.isEmpty else { return acc }
 
             let senderLocal = msg.user.xmppUsername?
                 .components(separatedBy: "@").first ?? ""
@@ -421,7 +432,7 @@ public class RoomStore: ObservableObject {
             return acc + 1
         }
 
-        if unread > 0 {
+        if pool.count > 0 || unread > 0 {
             print("🔢 recomputeUnread room=\(jid) lastViewed=\(lastViewed) pool=\(pool.count) → unread=\(unread)")
             for c in counted {
                 print("   • id=\(c.id) ts=\(c.ts) body='\(c.body)' isMedia=\(c.isMedia) isSystem=\(String(describing: c.isSystem)) sender=\(c.sender)")

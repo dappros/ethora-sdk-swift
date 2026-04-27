@@ -954,22 +954,23 @@ public class RoomListViewModel: ObservableObject {
         notificationObservers.append(roomDeletedToken)
     }
 
-    /// Покинуть чат (как «Leave» в веб-меню):
-    /// 1. Шлём `<presence type="unavailable" to="room/nick"/>` (XEP-0045
-    ///    §7.14) — это и есть единственный wire-stanza, который посылает
-    ///    React-референс.
-    /// 2. Дополнительно вызываем `DELETE /chats/users-access` (тот же
-    ///    REST-эндпоинт, через который реакт убирает других мемберов из
-    ///    чата в `ChatProfileModal`). Без этого шага бэкенд
-    ///    `example` оставляет юзера в `members`, и `GET /chats/my`
-    ///    при следующем рефреше возвращает покинутые чаты в список.
-    /// 3. Локально помечаем комнату hidden (`RoomStore.hideRoom`) — это
-    ///    страховка на случай, если REST упал. `addRoomFromApi` после
-    ///    hide игнорирует этот JID, и комната не «воскресает» от REST.
+    /// Leave a chat (mirrors the "Leave" web menu item):
+    /// 1. Send `<presence type="unavailable" to="room/nick"/>`
+    ///    (XEP-0045 §7.14) — the only wire-stanza the React reference
+    ///    emits.
+    /// 2. Additionally call `DELETE /chats/users-access` (the same REST
+    ///    endpoint React uses to remove other members from a chat in
+    ///    `ChatProfileModal`). Without this step the `example`
+    ///    backend keeps the user in `members`, and `GET /chats/my`
+    ///    returns left chats on the next refresh.
+    /// 3. Locally flag the room as hidden (`RoomStore.hideRoom`) —
+    ///    a safety net in case REST fails. After hide,
+    ///    `addRoomFromApi` ignores this JID, so the room won't
+    ///    "resurrect" via REST.
     ///
-    /// Реальный delete чата (`DELETE /chats`) намеренно не вызывается —
-    /// чат на сервере должен остаться, чтобы остальные участники
-    /// продолжали в нём переписываться.
+    /// The real chat delete (`DELETE /chats`) is intentionally NOT
+    /// called — the room must stay alive on the server so the other
+    /// participants can keep chatting in it.
     public func leaveRoom(_ room: Room) async {
         print("👋 RoomListViewModel.leaveRoom: id=\(room.id), jid=\(room.jid), name=\(room.name)")
         let bareRoomJID = room.jid.components(separatedBy: "/").first ?? room.jid
@@ -981,9 +982,9 @@ public class RoomListViewModel: ObservableObject {
         }
 
         // REST step: best-effort. Web (`ChatProfileModal.handleDeleteUser`)
-        // передаёт `chatName = activeRoom.jid.split('@')[0]` — то есть
-        // localpart, и `members = [xmppUsername]`. Тот же endpoint
-        // принимает self-removal на этом бэкенде.
+        // passes `chatName = activeRoom.jid.split('@')[0]` (i.e. the
+        // localpart) and `members = [xmppUsername]`. The same endpoint
+        // accepts self-removal on this backend.
         let chatName = bareRoomJID.components(separatedBy: "@").first ?? bareRoomJID
         let memberId = currentUserId
         if !chatName.isEmpty, !memberId.isEmpty {
@@ -998,11 +999,12 @@ public class RoomListViewModel: ObservableObject {
             } catch AuthAPIError.httpError(404, _) {
                 print("👋 RoomListViewModel.leaveRoom: REST 404 — backend already considers us out of \(chatName)")
             } catch {
-                // Не блокируем выход из чата на REST-ошибке: hidden-флаг
-                // ниже сам по себе уберёт строку из UI и подавит её
-                // воскрешение при ближайшем `GET /chats/my`. Если бэкенд
-                // продолжит держать нас в `members`, мы хотя бы не
-                // спамим юзера ошибкой и не возвращаем чат на экран.
+                // Don't block leaving on a REST failure: the hidden
+                // flag below removes the row from the UI on its own
+                // and suppresses its resurrection on the next
+                // `GET /chats/my`. If the backend keeps us in
+                // `members`, at least we don't spam the user with
+                // errors or bring the chat back on screen.
                 print("⚠️ RoomListViewModel.leaveRoom: REST deleteRoomMember failed — \(error.localizedDescription)")
             }
         }
@@ -1047,6 +1049,23 @@ public class RoomListViewModel: ObservableObject {
                 return r
             }
             self.isLoading = false
+
+            // The stale cache may carry "frozen" `unreadMessages` from
+            // earlier sessions (e.g. phantom unread from service
+            // stanzas that stopped reaching the pool after the
+            // `recomputeUnreadForRoom` filter fix). Recompute right
+            // after restoring from UserDefaults so the UI doesn't have
+            // to wait for a new message to clear the badge.
+            let myLocalForStale = UserStore.shared.currentUser?.xmppUsername?
+                .components(separatedBy: "@").first ?? ""
+            if !myLocalForStale.isEmpty {
+                RoomStore.shared.recomputeAllUnread(currentUserLocal: myLocalForStale)
+                for idx in self.rooms.indices {
+                    if let storeRoom = RoomStore.shared.rooms[self.rooms[idx].jid] {
+                        self.rooms[idx].unreadMessages = storeRoom.unreadMessages
+                    }
+                }
+            }
         } else {
             isLoading = true
         }
@@ -1102,7 +1121,23 @@ public class RoomListViewModel: ObservableObject {
                 for room in roomsWithCachedMessages {
                     RoomStore.shared.addRoom(room)
                 }
-                
+
+                // Recompute unread for every room after the REST
+                // refresh. Without this, the `unreadMessages` value
+                // frozen in UserDefaults sits on the UI until at least
+                // one new message lands in the room — and empty chats
+                // keep displaying a stale 3/5 badge forever.
+                let myLocalForRefresh = UserStore.shared.currentUser?.xmppUsername?
+                    .components(separatedBy: "@").first ?? ""
+                if !myLocalForRefresh.isEmpty {
+                    RoomStore.shared.recomputeAllUnread(currentUserLocal: myLocalForRefresh)
+                    for idx in self.rooms.indices {
+                        if let storeRoom = RoomStore.shared.rooms[self.rooms[idx].jid] {
+                            self.rooms[idx].unreadMessages = storeRoom.unreadMessages
+                        }
+                    }
+                }
+
                 // After loading rooms, send presence to each room
                 // This is needed so the user can receive history for each room
                 if !loadedRooms.isEmpty {
