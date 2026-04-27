@@ -1609,6 +1609,8 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
                     return
                 }
                 
+                let uploadBaseURL = Self.resolvedUploadBaseURL()
+
                 print("📤 ChatRoomViewModel.sendMedia: Uploading file \(finalFileName) (\(finalData.count) bytes) to server...")
                 let uploadResponse: UploadResponse
                 if finalMimeType.hasPrefix("image/") {
@@ -1616,6 +1618,7 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
                         initialData: finalData,
                         fileName: finalFileName,
                         mimeType: finalMimeType,
+                        baseURL: uploadBaseURL,
                         token: token
                     )
                 } else {
@@ -1623,6 +1626,7 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
                         fileData: finalData,
                         fileName: finalFileName,
                         mimeType: finalMimeType,
+                        baseURL: uploadBaseURL,
                         token: token
                     )
                 }
@@ -1751,21 +1755,23 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
         initialData: Data,
         fileName: String,
         mimeType: String,
+        baseURL: URL,
         token: String
     ) async throws -> UploadResponse {
         // Try increasingly strict limits; this handles environments with low nginx body limits.
         let attemptCaps = [1_900_000, 1_200_000, 800_000, 500_000, 320_000, 200_000]
         var lastError: Error?
-        
+
         for (index, cap) in attemptCaps.enumerated() {
             let candidate = optimizeImagePayload(data: initialData, mimeType: mimeType, maxBytes: cap)
             print("📤 ChatRoomViewModel.sendMedia: Upload attempt \(index + 1)/\(attemptCaps.count), target<=\(cap)B, actual=\(candidate.data.count)B")
-            
+
             do {
                 return try await AuthAPI.uploadFile(
                     fileData: candidate.data,
                     fileName: fileName,
                     mimeType: candidate.mimeType,
+                    baseURL: baseURL,
                     token: token
                 )
             } catch let AuthAPIError.httpError(statusCode, body) where statusCode == 413 {
@@ -1776,8 +1782,23 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
                 throw error
             }
         }
-        
+
         throw lastError ?? AuthAPIError.networkError("Image upload failed after compression attempts.")
+    }
+
+    /// Returns the upload base URL from the host-supplied `ChatConfig`,
+    /// falling back to the SDK's public default when the config has no
+    /// `baseUrl`. The default lives in `AuthAPI.uploadFile` and points at
+    /// the public Ethora API; the SDK never embeds non-public hosts.
+    private static func resolvedUploadBaseURL() -> URL {
+        let fallback = URL(string: "https://api.chat.ethora.com/v1")!
+        guard let raw = ConfigStore.shared.config.baseUrl?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+              !raw.isEmpty,
+              let url = URL(string: raw) else {
+            return fallback
+        }
+        return url
     }
     
     private func optimizeImagePayload(
