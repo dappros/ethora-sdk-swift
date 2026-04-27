@@ -211,7 +211,7 @@ public class ConfigStore: ObservableObject {
         userDefaults.removeObject(forKey: configKey)
     }
 
-    /// Force single environment to example to avoid mixed API/XMPP runtime state.
+    /// Force single environment to chat.ethora to avoid mixed API/XMPP runtime state.
     public func forceethoradev() {
         config.baseUrl = AppConfig.defaultBaseURL.absoluteString
         config.appId = AppConfig.defaultAppId

@@ -113,13 +113,13 @@ private func makeChatConfig() -> ChatConfig {
     var config = ChatConfig()
 
     // API/XMPP
-    config.baseUrl = "https://api.example.com/v1"
+    config.baseUrl = "https://api.chat.ethora.com/v1"
     config.appId = "YOUR_APP_ID"
     config.customAppToken = "YOUR_ETHORA_APP_TOKEN"
     config.xmppSettings = XMPPSettings(
-        xmppServerUrl: "wss://xmpp.example.com:5443/ws",
-        host: "xmpp.example.com",
-        conference: "conference.xmpp.example.com"
+        xmppServerUrl: "wss://xmpp.chat.ethora.com:5443/ws",
+        host: "xmpp.chat.ethora.com",
+        conference: "conference.xmpp.chat.ethora.com"
     )
 
     // Auth (JWT autologin via /users/client)
@@ -136,7 +136,7 @@ private func makeChatConfig() -> ChatConfig {
 
 ```swift
 struct ChatScreen: View {
-    private let roomJID = "my-room@conference.xmpp.example.com"
+    private let roomJID = "my-room@conference.xmpp.chat.ethora.com"
 
     var body: some View {
         let config = makeChatConfig()
@@ -170,7 +170,7 @@ struct ChatScreen: View {
 let response = try await AuthAPI.loginWithEmail(
     email: email,
     password: password,
-    baseURL: URL(string: "https://api.example.com/v1")!,
+    baseURL: URL(string: "https://api.chat.ethora.com/v1")!,
     appToken: "YOUR_ETHORA_APP_TOKEN"
 )
 await UserStore.shared.setUser(from: response)
@@ -183,6 +183,48 @@ var config = ChatConfig()
 config.userLogin = UserLoginConfig(enabled: true, user: preAuthenticatedUser)
 ```
 
+## Headless Unread (no chat UI mounted)
+
+Use this when the host app needs a live unread badge while the chat
+screen is closed — equivalent to a `useChatHeadless()` + `useUnreadCount()`
+pair in React.
+
+```swift
+import XMPPChatCore
+
+@MainActor
+final class UnreadHost: ObservableObject {
+    @Published private(set) var totalUnread: Int = 0
+
+    private let bridge = UnreadStateBridge()
+    private var cancellable: AnyCancellable?
+
+    init() {
+        cancellable = bridge.$totalUnreadCount
+            .receive(on: RunLoop.main)
+            .assign(to: \.totalUnread, on: self)
+    }
+
+    func startSession(config: ChatConfig) {
+        ChatHeadlessSession.shared.start(config: config)
+    }
+
+    func stopSession() async {
+        await ChatHeadlessSession.shared.stop()
+    }
+}
+```
+
+`ChatHeadlessSession.shared.start(config:)` runs the same auth → XMPP →
+rooms-sync → MUC presence → unread recompute pipeline that
+`ChatWrapperView` does internally, but without rendering anything. The
+created `XMPPClient` is registered with `ClientRegistry`, so a later
+`ChatWrapperView` mount reuses the same socket — no duplicate
+presences/subscriptions.
+
+Call `stop()` on logout. Do not call it while `ChatWrapperView` is on
+screen.
+
 ## Using `XMPPChatCore` Without UI
 
 Use this when you need a custom UI while reusing transport + operations.
@@ -191,13 +233,13 @@ Use this when you need a custom UI while reusing transport + operations.
 import XMPPChatCore
 
 let settings = XMPPSettings(
-    xmppServerUrl: "wss://xmpp.example.com:5443/ws",
-    host: "xmpp.example.com",
-    conference: "conference.xmpp.example.com"
+    xmppServerUrl: "wss://xmpp.chat.ethora.com:5443/ws",
+    host: "xmpp.chat.ethora.com",
+    conference: "conference.xmpp.chat.ethora.com"
 )
 
 let client = XMPPClient(
-    username: "user@xmpp.example.com",
+    username: "user@xmpp.chat.ethora.com",
     password: "xmppPassword",
     settings: settings
 )
@@ -209,10 +251,10 @@ while !client.isFullyConnected() {
     try? await Task.sleep(nanoseconds: 300_000_000)
 }
 
-await client.sendPresenceToRoom(roomJID: "room@conference.xmpp.example.com")
+await client.sendPresenceToRoom(roomJID: "room@conference.xmpp.chat.ethora.com")
 
 client.operations.sendTextMessage(
-    roomJID: "room@conference.xmpp.example.com",
+    roomJID: "room@conference.xmpp.chat.ethora.com",
     firstName: "John",
     lastName: "Doe",
     photo: "",
@@ -221,7 +263,7 @@ client.operations.sendTextMessage(
 )
 
 client.operations.sendGetHistory(
-    chatJID: "room@conference.xmpp.example.com",
+    chatJID: "room@conference.xmpp.chat.ethora.com",
     max: 20,
     before: nil
 )
@@ -360,7 +402,7 @@ Optional config:
 config.push = PushNotificationConfig(
     enabled: true,
     appId: "YOUR_APP_ID",
-    pushBaseURL: "https://api.example.com/v1"
+    pushBaseURL: "https://api.chat.ethora.com/v1"
 )
 ```
 
