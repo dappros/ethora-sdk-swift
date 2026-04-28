@@ -19,6 +19,10 @@ struct MessageBubbleView: View {
     let onDelete: (() -> Void)?
     let onReport: (() -> Void)?
     let onMediaTap: ((Message) -> Void)?
+    /// Local-only removal for messages that were flagged failed and never
+    /// reached the server. Distinct from `onDelete`, which sends `<delete/>`
+    /// to the server.
+    var onDiscard: (() -> Void)? = nil
     @Environment(\.colorScheme) private var colorScheme
     
     private var bubbleStyle: MessageBubbleStyle? { ConfigStore.shared.config.bubleMessage }
@@ -66,18 +70,27 @@ struct MessageBubbleView: View {
                 }
                 
                 HStack(spacing: 4) {
-                    if isUser, let pending = message.pending, pending {
+                    if isUser, message.failed != true, let pending = message.pending, pending {
                         Text("sending...")
                             .font(.caption2)
                             .foregroundColor(.white.opacity(0.7))
                     }
-                    
+                    if isUser, message.failed == true {
+                        Text("not sent")
+                            .font(.caption2)
+                            .foregroundColor(.red)
+                    }
+
                     Text(message.date, style: .time)
                         .font(.caption2)
                         .foregroundColor(isUser ? .white.opacity(0.7) : .secondary)
-                    
+
                     if isUser {
-                        MessageStatusIndicatorView(message: message, onRetry: onRetry)
+                        MessageStatusIndicatorView(
+                            message: message,
+                            onRetry: onRetry,
+                            onDiscard: onDiscard
+                        )
                     }
                 }
             }
@@ -260,21 +273,35 @@ struct MessageBubbleView: View {
 struct MessageStatusIndicatorView: View {
     let message: Message
     let onRetry: (() -> Void)?
-    
+    var onDiscard: (() -> Void)? = nil
+
+    @State private var showFailedActions = false
+
     var body: some View {
         Group {
-            if let pending = message.pending, pending {
-                ProgressView()
-                    .scaleEffect(0.6)
-                    .frame(width: 12, height: 12)
-            } else if message.xmppId == nil && message.pending == false {
-                Button(action: {
-                    onRetry?()
-                }) {
+            if message.failed == true {
+                Button(action: { showFailedActions = true }) {
                     Image(systemName: "exclamationmark.circle.fill")
                         .font(.caption2)
                         .foregroundColor(.red)
                 }
+                .confirmationDialog(
+                    "Message not sent",
+                    isPresented: $showFailedActions,
+                    titleVisibility: .visible
+                ) {
+                    if onRetry != nil {
+                        Button("Resend") { onRetry?() }
+                    }
+                    if onDiscard != nil {
+                        Button("Delete", role: .destructive) { onDiscard?() }
+                    }
+                    Button("Cancel", role: .cancel) {}
+                }
+            } else if let pending = message.pending, pending {
+                ProgressView()
+                    .scaleEffect(0.6)
+                    .frame(width: 12, height: 12)
             } else if message.xmppId != nil {
                 ZStack {
                     Image(systemName: "checkmark")
