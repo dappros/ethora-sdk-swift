@@ -127,30 +127,11 @@ public final class SessionRecoveryManager {
                 return
             }
 
-            // XMPP still down after a valid refresh — DON'T force logout.
-            // The user's credentials are valid; this is a transient network
-            // issue. `XMPPClient`'s own background reconnect logic keeps
-            // running, the chat-room screen stays mounted with a "no
-            // connection" banner, and queued sends in `xmppStream` will
-            // flush when the WebSocket comes back. Force-logging out here
-            // used to kick users from an open chat into the room list on
-            // any outage longer than ~16 seconds.
-            print("[SessionRecovery] XMPP still offline after refresh — leaving client to keep retrying")
+            // XMPP still down after a valid refresh — treat as unrecoverable.
+            await forceLogout()
         } catch {
-            // Only force-logout when the server actually rejects the
-            // refresh token (401/403). Network failures (no WiFi, DNS,
-            // server unreachable, 5xx) leave the user's credentials
-            // valid — kicking them out would erase the chat just because
-            // they hit a flaky link. Treat anything that isn't an
-            // explicit auth rejection as transient and keep the
-            // session.
-            if case AuthAPIError.httpError(let code, _) = error,
-               code == 401 || code == 403 {
-                print("[SessionRecovery] refresh token rejected by server (\(code)) — logging out")
-                await forceLogout()
-            } else {
-                print("[SessionRecovery] refresh failed (transient): \(error.localizedDescription) — keeping session")
-            }
+            print("[SessionRecovery] refresh token failed: \(error.localizedDescription)")
+            await forceLogout()
         }
     }
 

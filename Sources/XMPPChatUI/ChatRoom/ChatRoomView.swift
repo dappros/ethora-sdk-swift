@@ -256,9 +256,13 @@ public struct ChatRoomView: View {
                                     onLongPress: {
                                         // Context menu will be shown via .contextMenu modifier
                                     },
-                                    onRetry: isUser ? {
-                                        viewModel.retryFailedMessage(message)
-                                    } : nil,
+                                    onRetry: nil,
+                                    // onRetry: {
+                                    //     // Retry sending failed message
+                                    //     if message.pending == false && message.xmppId == nil {
+                                    //         viewModel.resendMessage(message)
+                                    //     }
+                                    // },
                                     onReactionTap: { emoji in
                                         viewModel.addReaction(messageId: message.id, emoji: emoji)
                                     },
@@ -278,10 +282,7 @@ public struct ChatRoomView: View {
                                     onReport: nil,
                                     onMediaTap: { mediaMessage in
                                         mediaPreview = MediaPreviewTarget(message: mediaMessage)
-                                    },
-                                    onDiscard: isUser ? {
-                                        viewModel.discardFailedMessage(message.id)
-                                    } : nil
+                                    }
 //                                    onReport: !isUser ? {
 //                                        messageToReport = message
 //                                        showReportModal = true

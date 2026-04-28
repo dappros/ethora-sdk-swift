@@ -82,37 +82,13 @@ public class StanzaHandlers {
               firstChild.attributes["xmlns"] == "urn:xmpp:mam:2" else {
             return
         }
-
+        
         // Check if this is part of an active get-history query
         let roomJID = stanza.attributes["from"] ?? ""
         for (queryId, collector) in getHistoryCollectors {
             collector(stanza, roomJID)
         }
-
-        // XEP-0308 replay from MAM. The stored sequence is:
-        //   1) the original `<message><body>…</body></message>` (pre-edit)
-        //   2) a separate `<message id="edit-message-…"><replace .../></message>`
-        // Without this branch the second stanza falls through to
-        // `MessageParser.getDataFromStanza` (returns nil — no `<data>`),
-        // gets dropped, and the edit is lost forever once history is
-        // replayed: the original-body stanza in step 1 silently overwrites
-        // any locally-applied edit. Detect the replace stanza here and
-        // route through the same callback realtime edits use.
-        if let result = firstChild.name == "result" ? firstChild : stanza.getChild("result"),
-           let forwarded = result.getChild("forwarded"),
-           let inner = forwarded.getChild("message"),
-           let replace = inner.getChild("replace") {
-            let editRoomJID = inner.getChild("stanza-id")?.attributes["by"]
-                ?? stanza.attributes["from"]
-                ?? ""
-            let editMessageId = replace.attributes["id"] ?? ""
-            let newText = replace.attributes["text"] ?? ""
-            if !editMessageId.isEmpty {
-                onMessageEdited?(editRoomJID, editMessageId, newText)
-                return
-            }
-        }
-
+        
         // Match TypeScript: const { data, id, body, ...rest } = await getDataFromXml(stanza);
         guard let messageData = MessageParser.getDataFromStanza(stanza) else {
             return
