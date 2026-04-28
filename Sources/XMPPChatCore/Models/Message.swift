@@ -22,6 +22,23 @@ public struct Message: Codable, Identifiable, Equatable {
     public var mimetype: String?
     public var location: String?
     public var pending: Bool?
+    /// Wall-clock time when this message first entered `pending = true`.
+    /// Used to surface a "failed to send" state after a timeout that
+    /// survives app backgrounding / kill (the in-memory periodic tick
+    /// alone wouldn't — see `ChatRoomViewModel.startFailedTick`).
+    public var pendingSince: Date?
+    /// Set when the send is considered failed: the periodic tick saw
+    /// `pendingSince` older than the failure threshold (30s) without the
+    /// server echoing the message back. Drives the red ⓘ + Resend/Delete
+    /// affordance in `MessageBubbleView`.
+    public var failed: Bool?
+    /// Sticky flag set when this message was corrected via XEP-0308
+    /// (`<replace/>`) — either by us locally via `editMessage` or by the
+    /// owner from another device picked up through `onEditMessage`.
+    /// Once true, `handleIncomingMessage` keeps the existing body when the
+    /// same id flows back in (e.g. MAM replay returning the pre-edit
+    /// stanza), so the edit isn't silently clobbered by stale history.
+    public var wasEdited: Bool?
     public var timestamp: Int64?
     public var showInChannel: String?
     public var activeMessage: Bool?
@@ -54,6 +71,8 @@ public struct Message: Codable, Identifiable, Equatable {
         mimetype: String? = nil,
         location: String? = nil,
         pending: Bool? = nil,
+        pendingSince: Date? = nil,
+        failed: Bool? = nil,
         timestamp: Int64? = nil,
         showInChannel: String? = nil,
         activeMessage: Bool? = nil,
@@ -69,7 +88,8 @@ public struct Message: Codable, Identifiable, Equatable {
         size: String? = nil,
         xmppId: String? = nil,
         xmppFrom: String? = nil,
-        waveForm: String? = nil
+        waveForm: String? = nil,
+        wasEdited: Bool? = nil
     ) {
         self.id = id
         self.user = user
@@ -85,6 +105,9 @@ public struct Message: Codable, Identifiable, Equatable {
         self.mimetype = mimetype
         self.location = location
         self.pending = pending
+        self.pendingSince = pendingSince
+        self.failed = failed
+        self.wasEdited = wasEdited
         self.timestamp = timestamp
         self.showInChannel = showInChannel
         self.activeMessage = activeMessage

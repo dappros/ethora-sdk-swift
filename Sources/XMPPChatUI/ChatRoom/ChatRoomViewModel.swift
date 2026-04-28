@@ -59,6 +59,17 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
     /// without touching the actor-isolated `room` property.
     private let ownedRoomJID: String
 
+    /// After this many seconds of `pending == true` without server echo,
+    /// an outgoing message is treated as failed (red ⓘ + Resend/Delete).
+    /// Stamped via `Message.pendingSince`, so this rule survives app
+    /// backgrounding / kill — see `markStalePendingsFailed`.
+    private static let failedThresholdSeconds: TimeInterval = 30
+
+    /// How often the failed-state tick runs while the chat room is on
+    /// screen. 5s is enough granularity that the user doesn't perceive
+    /// a delay past 30s.
+    private static let failedTickIntervalSeconds: TimeInterval = 5
+
     public init(room: Room, client: XMPPClient, currentUserId: String, config: ChatConfig? = nil) {
         self.room = room
         self.client = client
@@ -70,6 +81,21 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
         loadCachedMessages()
 
         setupObservers()
+
+        // Catch up on cache: any pending message older than the threshold
+        // — including one left behind by a previous app launch that was
+        // killed mid-send — gets surfaced as failed right now instead of
+        // waiting for the first tick.
+        markStalePendingsFailed()
+
+        // Periodic recompute while the chat is open. Combine retains the
+        // sink in `cancellables`, so the timer dies with the view model.
+        Timer.publish(every: Self.failedTickIntervalSeconds, on: .main, in: .common)
+            .autoconnect()
+            .sink { [weak self] _ in
+                self?.markStalePendingsFailed()
+            }
+            .store(in: &cancellables)
     }
 
     deinit {
@@ -472,7 +498,8 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
                     size: updatedMessage.size,
                     xmppId: updatedMessage.xmppId,
                     xmppFrom: updatedMessage.xmppFrom,
-                    waveForm: updatedMessage.waveForm
+                    waveForm: updatedMessage.waveForm,
+                    wasEdited: true
                 )
                 messages[index] = editedMessage
                 room.messages = messages
@@ -957,20 +984,21 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
             body: text,
             roomJid: room.jid,
             pending: true,
+            pendingSince: Date(),
             timestamp: Int64(Date().timeIntervalSince1970 * 1000),
             xmppId: messageId // Store the sent ID so we can match it when server confirms
         )
-        
+
         messages.append(optimisticMessage)
-        
+
         // Update room's messages array
         room.messages = messages
-        
+
         // CRITICAL: Save pending message to cache immediately so it persists even if connection is lost
         // This ensures the message will still be visible after app restart
         MessageCache.shared.saveMessages(messages, forRoomJID: room.jid)
     }
-    
+
     /// Send reply to a message
     public func sendReply(messageId: String, text: String, alsoSendToMain: Bool) {
         guard !text.isEmpty else { return }
@@ -1025,6 +1053,7 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
             body: text,
             roomJid: room.jid,
             pending: true,
+            pendingSince: Date(),
             timestamp: Int64(Date().timeIntervalSince1970 * 1000),
             isReply: true,
             mainMessage: messageId
@@ -1095,13 +1124,21 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
             //   { ...message, pending: false }
             // );
             let existingMessage = messages[existingIndex]
-            
+
+            // If we already applied an edit to this message locally, the
+            // incoming `body` is almost certainly a stale pre-edit copy
+            // replayed from MAM history. Keep the edited body so we don't
+            // silently revert to "New new2211" on every reconnect / cache
+            // re-sync. `wasEdited` is sticky once set.
+            let preserveEditedBody = (existingMessage.wasEdited == true)
+            let mergedBody = preserveEditedBody ? existingMessage.body : message.body
+
             // Deep merge: keep existing values, but update with new message and set pending: false
             let updatedMessage = Message(
                 id: message.id, // Use confirmed ID from server
                 user: message.user,
                 date: message.date,
-                body: message.body,
+                body: mergedBody,
                 roomJid: message.roomJid,
                 key: message.key ?? existingMessage.key,
                 coinsInMessage: message.coinsInMessage ?? existingMessage.coinsInMessage,
@@ -1127,9 +1164,10 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
                 size: message.size ?? existingMessage.size,
                 xmppId: message.xmppId ?? existingMessage.xmppId, // Keep xmppId if available
                 xmppFrom: message.xmppFrom ?? existingMessage.xmppFrom,
-                waveForm: message.waveForm ?? existingMessage.waveForm
+                waveForm: message.waveForm ?? existingMessage.waveForm,
+                wasEdited: existingMessage.wasEdited
             )
-            
+
             // REPLACE existing message, don't add new one
             let oldBody = existingMessage.body
             messages[existingIndex] = updatedMessage
@@ -1160,11 +1198,15 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
             
             // Update the existing message with new body (edit confirmation)
             let existingMessage = messages[editedIndex]
+            // Same guard as the primary dedup: don't let a stale pre-edit
+            // body from history overwrite a locally-applied edit.
+            let preserveEditedBody = (existingMessage.wasEdited == true)
+            let mergedBody = preserveEditedBody ? existingMessage.body : message.body
             let updatedMessage = Message(
                 id: message.id,
                 user: message.user,
                 date: message.date,
-                body: message.body, // Use new body from server
+                body: mergedBody, // Use new body from server unless we have a sticky local edit
                 roomJid: message.roomJid,
                 key: message.key ?? existingMessage.key,
                 coinsInMessage: message.coinsInMessage ?? existingMessage.coinsInMessage,
@@ -1190,9 +1232,10 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
                 size: message.size ?? existingMessage.size,
                 xmppId: message.xmppId ?? existingMessage.xmppId,
                 xmppFrom: message.xmppFrom ?? existingMessage.xmppFrom,
-                waveForm: message.waveForm ?? existingMessage.waveForm
+                waveForm: message.waveForm ?? existingMessage.waveForm,
+                wasEdited: existingMessage.wasEdited
             )
-            
+
             messages[editedIndex] = updatedMessage
             room.messages = messages
             
@@ -1262,7 +1305,8 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
                 size: message.size ?? pendingMessage.size,
                 xmppId: message.xmppId ?? pendingMessage.xmppId,
                 xmppFrom: message.xmppFrom ?? pendingMessage.xmppFrom,
-                waveForm: message.waveForm ?? pendingMessage.waveForm
+                waveForm: message.waveForm ?? pendingMessage.waveForm,
+                wasEdited: pendingMessage.wasEdited
             )
                 messages[pendingIndex] = updatedMessage
                 
@@ -1718,6 +1762,7 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
                     mimetype: resultMimetype,
                     location: resultLocation,
                     pending: true,
+                    pendingSince: Date(),
                     timestamp: Int64(Date().timeIntervalSince1970 * 1000),
                     fileName: resultFilename,
                     originalName: uploadResult.originalname ?? resultFilename,
@@ -1915,11 +1960,12 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
                 size: updatedMessage.size,
                 xmppId: updatedMessage.xmppId,
                 xmppFrom: updatedMessage.xmppFrom,
-                waveForm: updatedMessage.waveForm
+                waveForm: updatedMessage.waveForm,
+                wasEdited: true
             )
             messages[index] = newMessage
             room.messages = messages
-            
+
             print("✅ ChatRoomViewModel: Message updated optimistically. Total messages: \(messages.count)")
             print("   Message ID: \(newMessage.id), Body: '\(newMessage.body)'")
             
@@ -1962,7 +2008,55 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
             sendMessage(message.body)
         }
     }
-    
+
+    /// Re-send a message that was surfaced as failed by `markStalePendingsFailed`.
+    /// Removes the failed copy from the local list and cache, then sends a
+    /// fresh message with the same content (new id, new pending timer).
+    /// If the original eventually reaches the server later (auto-retry from
+    /// the WebSocket's send queue), the user may see a duplicate — that's
+    /// the documented v1 trade-off for keeping the auto-retry alive.
+    public func retryFailedMessage(_ message: Message) {
+        discardFailedMessage(message.id)
+        resendMessage(message)
+    }
+
+    /// Locally discard a failed outgoing message. Does NOT send `<delete/>`
+    /// to the server — by definition the server never received it. Use
+    /// `deleteMessage(_:)` for confirmed messages.
+    public func discardFailedMessage(_ messageId: String) {
+        let before = messages.count
+        messages = messages.filter { $0.id != messageId }
+        if messages.count != before {
+            room.messages = messages
+            MessageCache.shared.saveMessages(messages, forRoomJID: room.jid)
+        }
+    }
+
+    /// Walk `messages`, flag any pending entry whose `pendingSince` is older
+    /// than the failure threshold. Re-entrant — only mutates messages that
+    /// transition this tick, so the publisher doesn't churn when nothing
+    /// changes.
+    private func markStalePendingsFailed() {
+        let now = Date()
+        var didChange = false
+        for index in messages.indices {
+            let m = messages[index]
+            guard m.pending == true, m.failed != true else { continue }
+            // Fall back to message `date` if `pendingSince` is missing
+            // (older cached messages without the new field).
+            let since = m.pendingSince ?? m.date
+            if now.timeIntervalSince(since) > Self.failedThresholdSeconds {
+                messages[index].pending = false
+                messages[index].failed = true
+                didChange = true
+            }
+        }
+        if didChange {
+            room.messages = messages
+            MessageCache.shared.saveMessages(messages, forRoomJID: room.jid)
+        }
+    }
+
     public func deleteMessage(_ messageId: String) {
         print("🗑️ ChatRoomViewModel: Deleting message \(messageId)")
         print("   Current messages count: \(messages.count)")
