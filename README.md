@@ -14,13 +14,14 @@ This repository ships as a Swift Package with both products.
 4. [Quick Start (Recommended)](#quick-start-recommended)
 5. [Authentication Flows](#authentication-flows)
 6. [Using `XMPPChatCore` Without UI](#using-xmppchatcore-without-ui)
-7. [Configuration Reference (`ChatConfig`)](#configuration-reference-chatconfig)
-8. [Core API Reference](#core-api-reference)
-9. [Push Notifications (FCM)](#push-notifications-fcm)
-10. [Persistence and Stores](#persistence-and-stores)
-11. [Examples in This Repo](#examples-in-this-repo)
-12. [Production Notes and Pitfalls](#production-notes-and-pitfalls)
-13. [Build and Validation](#build-and-validation)
+7. [Logging Out from Your Host App](#logging-out-from-your-host-app)
+8. [Configuration Reference (`ChatConfig`)](#configuration-reference-chatconfig)
+9. [Core API Reference](#core-api-reference)
+10. [Push Notifications (FCM)](#push-notifications-fcm)
+11. [Persistence and Stores](#persistence-and-stores)
+12. [Examples in This Repo](#examples-in-this-repo)
+13. [Production Notes and Pitfalls](#production-notes-and-pitfalls)
+14. [Build and Validation](#build-and-validation)
 
 ## What You Get
 
@@ -268,6 +269,85 @@ client.operations.sendGetHistory(
     before: nil
 )
 ```
+
+## Logging Out from Your Host App
+
+`LogoutManager` is a public, idempotent entry point you can call from
+anywhere in your app — most commonly from your own logout button so that
+signing out of your app also signs out of chat.
+
+It runs the full chat teardown in a fixed order:
+
+1. Resets push (FCM token + mucsub room subscriptions) while the XMPP
+   stream is still alive.
+2. Disconnects XMPP.
+3. Clears the global `XMPPClient` from `ClientRegistry`.
+4. Clears caches: `RoomStore`, `MessageCache`, unread / last-read keys,
+   pending push JID.
+5. Clears the user and tokens from `UserStore`.
+6. Optionally resets `ChatConfig` (off by default — host apps typically
+   keep their API/XMPP settings for the next login).
+
+### Async/await (recommended)
+
+```swift
+import XMPPChatCore
+
+func appLogout() async {
+    // ...your own host-app logout (revoke server session, clear keychain, etc.)...
+
+    await LogoutManager.shared.logout()
+}
+```
+
+### Callback API
+
+```swift
+LogoutManager.shared.logout(client: nil) {
+    // Chat logout finished — navigate to your login screen.
+}
+```
+
+### With confirmation
+
+```swift
+LogoutManager.shared.logoutWithConfirmation(
+    client: nil,
+    showConfirmation: { confirm in
+        // Present an alert; call confirm(true) on OK, confirm(false) on cancel.
+    },
+    onCompletion: {
+        // Chat logout finished.
+    }
+)
+```
+
+### Fine-grained control
+
+`Options` lets you skip individual steps. Defaults perform a full
+logout while keeping `ChatConfig`.
+
+```swift
+await LogoutManager.shared.logout(
+    options: .init(
+        disconnectXMPP: true,
+        resetPush: true,
+        clearUser: true,
+        clearCaches: true,
+        resetConfig: false   // set to true to also wipe ChatConfig
+    )
+)
+```
+
+### Notes
+
+- The `client` parameter is optional. When omitted, `LogoutManager`
+  picks up the current client from `ClientRegistry`.
+- Safe to call when the user is already logged out — every step is a
+  no-op in that case.
+- If you used `ChatHeadlessSession`, call `await ChatHeadlessSession.shared.stop()`
+  before invoking logout (or rely on logout to disconnect XMPP — it
+  will still tear down correctly, but `stop()` is the cleaner pairing).
 
 ## Configuration Reference (`ChatConfig`)
 
