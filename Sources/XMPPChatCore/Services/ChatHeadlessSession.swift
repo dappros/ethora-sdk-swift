@@ -99,6 +99,19 @@ public final class ChatHeadlessSession: ObservableObject {
     private func run() async {
         let config = ConfigStore.shared.config
 
+        // Gate: refuse to start the headless pipeline until the host
+        // has populated `ChatConfig` with their backend endpoints. The
+        // SDK ships without any hardcoded production defaults.
+        do {
+            _ = try AppConfig.requireBaseURL()
+            _ = try AppConfig.requireXMPPSettings()
+            _ = try AppConfig.requireAppId()
+        } catch {
+            status = .failed((error as? LocalizedError)?.errorDescription
+                ?? error.localizedDescription)
+            return
+        }
+
         status = .authenticating
         if !(await ensureAuthenticated(config: config)) {
             return
@@ -125,11 +138,20 @@ public final class ChatHeadlessSession: ObservableObject {
         if let existing = ClientRegistry.shared.getGlobalXMPPClient() {
             client = existing
         } else {
-            client = XMPPClient(
+            // The gate above guarantees `xmppSettings` is fully set, so
+            // the failable init should always succeed here. We still
+            // surface a clean failure if the host mutated the config
+            // between the gate and this point.
+            guard let newClient = XMPPClient(
                 username: xmppUsername,
                 password: xmppPassword,
                 settings: config.xmppSettings
-            )
+            ) else {
+                status = .failed(ConfigError.missingXMPPSettings.errorDescription
+                    ?? "Missing XMPP settings")
+                return
+            }
+            client = newClient
             ClientRegistry.shared.setGlobalXMPPClient(client)
         }
 
@@ -203,16 +225,16 @@ public final class ChatHeadlessSession: ObservableObject {
     }
 
     private func syncRooms(config: ChatConfig, client: XMPPClient, user: User) async throws {
-        let baseURLString = (config.baseUrl ?? "https://api.chat.ethora.com/v1")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let baseURL = URL(string: baseURLString), !baseURLString.isEmpty else {
-            throw StartError(message: "Invalid baseUrl")
-        }
-        let conferenceDomain = config.xmppSettings?.conference ?? "conference.xmpp.chat.ethora.com"
+        // All endpoints come from `ChatConfig` via the `AppConfig`
+        // accessors; the gate at the top of `run()` already verified
+        // they are present.
+        let baseURL = try await AppConfig.resolveBaseURL(nil)
+        let conferenceDomain = try await AppConfig.resolveConferenceDomain(nil)
+        let appId = try await AppConfig.resolveAppId(nil)
 
         let rooms = try await RoomsAPI.getRooms(
             baseURL: baseURL,
-            appId: config.appId ?? AppConfig.defaultAppId,
+            appId: appId,
             conferenceDomain: conferenceDomain
         )
 

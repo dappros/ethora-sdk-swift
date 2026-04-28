@@ -39,31 +39,34 @@ public struct PushAPI {
         authBaseURL: URL? = nil,
         didRefresh: Bool = false
     ) async throws {
-        // Use provided values or defaults from config
+        // Resolve all endpoints from `ChatConfig` — the SDK has no
+        // hardcoded production defaults. If neither `pushBaseURL`
+        // override nor `ChatConfig.baseUrl` is set, the call throws
+        // `ConfigError.missingBaseURL`.
         let config = await MainActor.run { ConfigStore.shared.config }
-        
-        // Final appId: provided parameter > config.push.appId > AppConfig.defaultAppId
-        let finalAppId = appId ?? config.push?.appId ?? AppConfig.defaultAppId
-        
-        // Push registration lives on the main API (`…/v1/push/subscriptions/...`), same as RN — not a separate push host.
-        let apiBaseFromConfig: URL = {
-            if let s = config.baseUrl, let u = URL(string: s), !s.isEmpty { return u }
-            return AppConfig.defaultBaseURL
-        }()
 
-        // Final pushBaseURL: explicit override > config.push.pushBaseURL > Chat API baseUrl
+        let finalAppId: String
+        if let appId = appId, !appId.isEmpty {
+            finalAppId = appId
+        } else if let pushAppId = config.push?.appId, !pushAppId.isEmpty {
+            finalAppId = pushAppId
+        } else {
+            finalAppId = try await AppConfig.resolveAppId(nil)
+        }
+
+        // Push registration lives on the main API
+        // (`…/v1/push/subscriptions/...`), same as RN — not a separate
+        // push host. We still allow the host to override via
+        // `ChatConfig.push.pushBaseURL`.
+        let apiBaseFromConfig = try await AppConfig.resolveBaseURL(nil)
+
         var finalPushBaseURL = pushBaseURL
         if finalPushBaseURL == nil, let configURL = config.push?.pushBaseURL, let u = URL(string: configURL) {
             finalPushBaseURL = u
         }
         let pushURL = finalPushBaseURL ?? apiBaseFromConfig
-        
-        // Final authBaseURL: provided parameter > config.baseUrl > AppConfig.defaultBaseURL
-        var finalAuthBaseURL = authBaseURL
-        if finalAuthBaseURL == nil, let configAuthURL = config.baseUrl {
-            finalAuthBaseURL = URL(string: configAuthURL)
-        }
-        let authURL = finalAuthBaseURL ?? AppConfig.defaultBaseURL
+
+        let authURL = try await AppConfig.resolveBaseURL(authBaseURL)
 
         let storedToken = await MainActor.run { UserStore.shared.token }
         let userToken = token ?? storedToken

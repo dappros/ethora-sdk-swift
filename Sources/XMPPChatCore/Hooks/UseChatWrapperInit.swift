@@ -221,7 +221,26 @@ public class ChatWrapperViewModel: ObservableObject {
             }
             return
         }
-        
+
+        // Gate: refuse to connect until the host has supplied its
+        // backend endpoints. The SDK ships without hardcoded production
+        // values — `baseUrl`, `xmppSettings`, and `appId` MUST be
+        // present in `ConfigStore` before we touch the network.
+        do {
+            _ = try await AppConfig.resolveBaseURL(nil)
+            _ = try await MainActor.run { try AppConfig.requireXMPPSettings() }
+            _ = try await AppConfig.resolveAppId(nil)
+        } catch {
+            await MainActor.run {
+                self.loadingText = (error as? LocalizedError)?.errorDescription
+                    ?? error.localizedDescription
+                self.inited = false
+                self.isConnectionLost = true
+                self.showModal = false
+            }
+            return
+        }
+
         await MainActor.run {
             self.loadingText = "Connecting..."
             self.showModal = false
@@ -235,12 +254,23 @@ public class ChatWrapperViewModel: ObservableObject {
         } else if let global = ClientRegistry.shared.getGlobalXMPPClient() {
             activeClient = global
         } else {
-            let settings = config.xmppSettings
-            activeClient = XMPPClient(
+            // Build a new XMPPClient. The failable init returns nil if
+            // `xmppSettings` is missing or has empty fields — we surface
+            // that to the host as a `ConfigError`, since the SDK no
+            // longer ships hardcoded production endpoints.
+            guard let newClient = XMPPClient(
                 username: xmppUsername,
                 password: xmppPassword,
-                settings: settings
-            )
+                settings: config.xmppSettings
+            ) else {
+                await MainActor.run {
+                    self.loadingText = ConfigError.missingXMPPSettings.errorDescription
+                    self.inited = false
+                    self.isConnectionLost = true
+                }
+                return
+            }
+            activeClient = newClient
             ClientRegistry.shared.setGlobalXMPPClient(activeClient)
         }
         
@@ -319,21 +349,11 @@ public class ChatWrapperViewModel: ObservableObject {
         }
         
         do {
-            let baseURLString = (config.baseUrl ?? "https://api.chat.ethora.com/v1")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            guard let baseURL = URL(string: baseURLString), !baseURLString.isEmpty else {
-                await MainActor.run {
-                    self.roomsRetryState = .noRooms
-                    self.loadingText = nil
-                }
-                return
-            }
-            let conferenceDomain = config.xmppSettings?.conference ?? "conference.xmpp.chat.ethora.com"
-            let rooms = try await RoomsAPI.getRooms(
-                baseURL: baseURL,
-                appId: config.appId ?? AppConfig.defaultAppId,
-                conferenceDomain: conferenceDomain
-            )
+            // All endpoints come from `ChatConfig`. If anything is
+            // missing (no baseUrl / xmppSettings / appId) we treat it as
+            // "no rooms" — the rooms-retry hook is best-effort during
+            // app startup, not a hard failure point.
+            let rooms = try await RoomsAPI.getRooms()
             
             let normalizedSelected = selectedRoomJID.components(separatedBy: "/").first ?? selectedRoomJID
             let hasSelectedRoom = rooms.contains { room in
@@ -377,10 +397,15 @@ public class ChatWrapperViewModel: ObservableObject {
             }
         }
         
-        // If no custom function is provided, fall back to AuthAPI.refreshToken using UserStore.refreshToken.
-        let baseURLString = (config.baseUrl ?? "https://api.chat.ethora.com/v1")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let baseURL = URL(string: baseURLString), !baseURLString.isEmpty else {
+        // If no custom function is provided, fall back to
+        // `AuthAPI.refreshToken`. The base URL is read from
+        // `ChatConfig.baseUrl` via `AppConfig.requireBaseURL()`; if the
+        // host hasn't configured one, refresh is skipped (we don't
+        // surface a fatal error here — startup is best-effort).
+        let baseURL: URL
+        do {
+            baseURL = try AppConfig.requireBaseURL()
+        } catch {
             return
         }
         let currentRefreshToken = UserStore.shared.refreshToken

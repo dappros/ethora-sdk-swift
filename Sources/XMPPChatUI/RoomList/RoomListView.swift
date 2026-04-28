@@ -656,17 +656,21 @@ public class RoomListViewModel: ObservableObject {
     private var notificationObservers: [NSObjectProtocol] = []
     private var unreadSyncCancellable: AnyCancellable?
     
-    // New initializer - token is now managed by UserStore
+    // Designated initializer. The host MUST supply `appId`,
+    // `apiBaseURL`, and `conferenceDomain` — the SDK no longer
+    // substitutes hardcoded production endpoints. Use the
+    // `ChatConfig`-based convenience initializer below to read these
+    // from `ConfigStore.shared.config` automatically.
     public init(
         client: XMPPClient,
         currentUserId: String,
-        appId: String? = nil,
-        apiBaseURL: URL = URL(string: "https://api.chat.ethora.com/v1")!,
-        conferenceDomain: String = "conference.xmpp.chat.ethora.com"
+        appId: String,
+        apiBaseURL: URL,
+        conferenceDomain: String
     ) {
         self.client = client
         self.currentUserId = currentUserId
-        self.appId = appId ?? AppConfig.defaultAppId
+        self.appId = appId
         self.apiBaseURL = apiBaseURL
         self.conferenceDomain = conferenceDomain
         
@@ -1365,16 +1369,28 @@ public class RoomListViewModel: ObservableObject {
 
 extension RoomListViewModel {
     /// Preferred initializer when using `ChatConfig` (e.g. `ChatWrapperView`).
-    public convenience init(client: XMPPClient, currentUserId: String, config: ChatConfig) {
-        let baseURL = URL(string: config.baseUrl ?? AppConfig.defaultBaseURL.absoluteString) ?? AppConfig.defaultBaseURL
-        let resolvedAppId = config.appId ?? AppConfig.defaultAppId
-        let conference = config.xmppSettings?.conference
-            ?? AppConfig.defaultXMPPSettings.conference
-            ?? "conference.xmpp.chat.ethora.com"
+    /// Returns `nil` when `ChatConfig` is missing `baseUrl`, `appId`, or
+    /// `xmppSettings.conference` — the SDK does not silently fall back
+    /// to any built-in production endpoint.
+    public convenience init?(client: XMPPClient, currentUserId: String, config: ChatConfig) {
+        guard let rawBaseURL = config.baseUrl?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !rawBaseURL.isEmpty,
+              let baseURL = URL(string: rawBaseURL) else {
+            return nil
+        }
+        guard let appId = config.appId?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !appId.isEmpty else {
+            return nil
+        }
+        guard let conference = config.xmppSettings?.conference?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+              !conference.isEmpty else {
+            return nil
+        }
         self.init(
             client: client,
             currentUserId: currentUserId,
-            appId: resolvedAppId,
+            appId: appId,
             apiBaseURL: baseURL,
             conferenceDomain: conference
         )

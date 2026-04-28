@@ -100,12 +100,13 @@ public final class SessionRecoveryManager {
             return
         }
 
-        let baseURL: URL = {
-            if let s = ConfigStore.shared.config.baseUrl, let u = URL(string: s), !s.isEmpty {
-                return u
-            }
-            return AppConfig.defaultBaseURL
-        }()
+        let baseURL: URL
+        do {
+            baseURL = try AppConfig.requireBaseURL()
+        } catch {
+            print("[SessionRecovery] cannot refresh token: \(error.localizedDescription)")
+            return
+        }
 
         do {
             let (newToken, newRefreshToken) = try await AuthAPI.refreshToken(

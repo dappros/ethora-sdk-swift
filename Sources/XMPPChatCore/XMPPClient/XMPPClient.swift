@@ -79,19 +79,29 @@ public class XMPPClient {
     public private(set) lazy var operations: XMPPOperations = XMPPOperations(client: self)
     
     // MARK: - Initialization
-    public init(
+    /// Failable initializer. Returns `nil` when `settings` is missing
+    /// or has empty `host`/`conference`/`devServer` — the SDK no longer
+    /// substitutes hardcoded production values, so callers must resolve
+    /// the host's transport (e.g. via `AppConfig.requireXMPPSettings()`)
+    /// before constructing a client.
+    public init?(
         username: String,
         password: String,
-        settings: XMPPSettings? = nil
+        settings: XMPPSettings?
     ) {
+        guard let settings = settings else { return nil }
+        let devServer = settings.devServer?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let host = settings.host?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let conference = settings.conference?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !devServer.isEmpty, !host.isEmpty, !conference.isEmpty else { return nil }
+
         self.username = username
         self.password = password
-        
-        self.devServer = settings?.devServer ?? "wss://xmpp.chat.ethora.com/ws"
-        self.host = settings?.host ?? "xmpp.chat.ethora.com"
-        self.service = settings?.conference ?? "conference.xmpp.chat.ethora.com"
+        self.devServer = devServer
+        self.host = host
+        self.service = conference
         self.conference = "conference.\(self.host)"
-        
+
         initializeClient()
     }
     
@@ -181,8 +191,10 @@ public class XMPPClient {
                 // Note: We don't wait for disconnect to complete - the new connection will handle it
             }
             
-            // Match TypeScript: const url = this.devServer || `wss://xmpp.chat.ethora.com/ws`;
-            let url = devServer.isEmpty ? "wss://xmpp.chat.ethora.com/ws" : devServer
+            // `devServer` is non-empty by construction (the failable
+            // init rejects empty values), so we use it as-is. The SDK
+            // does not substitute a hardcoded production endpoint.
+            let url = devServer
             
             // Match TypeScript: this.host = url.match(/wss:\/\/([^:/]+)/)?.[1] || '';
             if let urlObj = URL(string: url),
@@ -1152,18 +1164,26 @@ extension XMPPClient: XMPPStreamDelegate {
 
                 await self.sendPresenceToRoom(roomJID: roomJID)
 
-                let config = ConfigStore.shared.config
-                let baseURLString = (config.baseUrl ?? "https://api.chat.ethora.com/v1")
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                guard let baseURL = URL(string: baseURLString), !baseURLString.isEmpty else {
+                // Resolve REST + conference from the host's config. If
+                // anything is missing we silently bail — invites delivered
+                // before the SDK is fully configured are best-effort and
+                // shouldn't crash. The next `loadRooms()` will recover.
+                let baseURL: URL
+                let conferenceDomain: String
+                let resolvedAppId: String
+                do {
+                    baseURL = try AppConfig.requireBaseURL()
+                    conferenceDomain = try AppConfig.resolveConferenceDomainSync()
+                    resolvedAppId = try AppConfig.requireAppId()
+                } catch {
+                    print("⚠️ XMPPClient.onChatInvite: missing config — \(error.localizedDescription)")
                     return
                 }
-                let conferenceDomain = config.xmppSettings?.conference ?? "conference.xmpp.chat.ethora.com"
 
                 do {
                     let rooms = try await RoomsAPI.getRooms(
                         baseURL: baseURL,
-                        appId: config.appId ?? AppConfig.defaultAppId,
+                        appId: resolvedAppId,
                         conferenceDomain: conferenceDomain
                     )
                     for room in rooms {

@@ -84,15 +84,12 @@ public struct AuthAPI {
     public static func loginWithEmail(
         email: String,
         password: String,
-        baseURL: URL = URL(string: "https://api.chat.ethora.com/v1")!,
+        baseURL: URL? = nil,
         appToken: String = AppConfig.appToken,
         useEthoraJwtWordPrefix: Bool = true
     ) async throws -> LoginResponse {
-        // FORCE VISIBLE LOGGING - This MUST appear in Xcode console
-        //NSlog("🔥🔥🔥 AUTHAPI.LOGINWITHEMAIL CALLED 🔥🔥🔥")
-        //print("🔥🔥🔥 AUTHAPI.LOGINWITHEMAIL CALLED 🔥🔥🔥")
-        
-        let url = baseURL.appendingPathComponent("users/login-with-email")
+        let resolvedBaseURL = try await AppConfig.resolveBaseURL(baseURL)
+        let url = resolvedBaseURL.appendingPathComponent("users/login-with-email")
         //NSlog("🌐 AuthAPI.loginWithEmail: URL = %@", url.absoluteString)
         //NSlog("📧 AuthAPI.loginWithEmail: email = %@", email)
         //print("🌐 AuthAPI.loginWithEmail: URL = \(url.absoluteString)")
@@ -233,10 +230,11 @@ public struct AuthAPI {
     /// - Returns: New token and refreshToken
     public static func refreshToken(
         refreshToken: String,
-        baseURL: URL = URL(string: "https://api.chat.ethora.com/v1")!,
+        baseURL: URL? = nil,
         appToken: String = AppConfig.appToken
     ) async throws -> (token: String, refreshToken: String) {
-        let url = baseURL.appendingPathComponent("users/login/refresh")
+        let resolvedBaseURL = try await AppConfig.resolveBaseURL(baseURL)
+        let url = resolvedBaseURL.appendingPathComponent("users/login/refresh")
         print("🌐 AuthAPI.refreshToken: POST \(url.absoluteString)")
 
         // Match React exactly (see ethora-chat-component/src/networking/
@@ -358,9 +356,10 @@ public struct AuthAPI {
     /// - Returns: LoginResponse with token, refreshToken, and user data
     public static func loginViaJwt(
         clientToken: String,
-        baseURL: URL = URL(string: "https://api.chat.ethora.com/v1")!
+        baseURL: URL? = nil
     ) async throws -> LoginResponse {
-        let url = baseURL.appendingPathComponent("/users/client")
+        let resolvedBaseURL = try await AppConfig.resolveBaseURL(baseURL)
+        let url = resolvedBaseURL.appendingPathComponent("/users/client")
         print("🌐 AuthAPI.loginViaJwt: URL = \(url)")
         
         var request = URLRequest(url: url)
@@ -422,10 +421,11 @@ public struct AuthAPI {
     /// - Returns: Boolean indicating if email exists
     public static func checkEmailExist(
         email: String,
-        baseURL: URL = URL(string: "https://api.chat.ethora.com/v1")!,
+        baseURL: URL? = nil,
         appToken: String = AppConfig.appToken
     ) async throws -> Bool {
-        let url = baseURL.appendingPathComponent("users/checkEmail/\(email)")
+        let resolvedBaseURL = try await AppConfig.resolveBaseURL(baseURL)
+        let url = resolvedBaseURL.appendingPathComponent("users/checkEmail/\(email)")
         //print("🌐 AuthAPI.checkEmailExist: URL = \(url.absoluteString)")
         
         var request = URLRequest(url: url)
@@ -475,11 +475,11 @@ public struct AuthAPI {
         fileData: Data,
         fileName: String,
         mimeType: String,
-        baseURL: URL = URL(string: "https://api.chat.ethora.com/v1")!,
+        baseURL: URL? = nil,
         token: String
     ) async throws -> UploadResponse {
-        
-        let url = baseURL.appendingPathComponent("files/")
+        let resolvedBaseURL = try await AppConfig.resolveBaseURL(baseURL)
+        let url = resolvedBaseURL.appendingPathComponent("files/")
         //print("🌐 AuthAPI.uploadFile: URL = \(url.absoluteString)")
         //print("📁 Uploading file: \(fileName) (\(fileData.count) bytes, \(mimeType))")
         

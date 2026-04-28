@@ -29,8 +29,12 @@ public class XMPPOperations {
         let id = customId ?? (isReply ? "send-reply-message-\(Int64(Date().timeIntervalSince1970 * 1000))" : "send-text-message-\(Int64(Date().timeIntervalSince1970 * 1000))")
         
         guard let stream = client?.xmppStream else { return }
-        
-        let devServer = client?.devServer ?? "wss://xmpp.chat.ethora.com/ws"
+
+        // `client.devServer` is non-empty by construction (failable
+        // XMPPClient init enforces this); fall back is intentionally
+        // gone so we never silently emit messages stamped with the SDK
+        // author's WebSocket URL.
+        guard let devServer = client?.devServer, !devServer.isEmpty else { return }
         
         let dataStanza = XMPPStanza(
             name: "data",

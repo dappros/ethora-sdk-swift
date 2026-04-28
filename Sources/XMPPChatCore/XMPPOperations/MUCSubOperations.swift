@@ -26,7 +26,12 @@ extension XMPPOperations {
             return nil
         }
 
-        let conferenceDomain = client?.conference ?? "conference.xmpp.chat.ethora.com"
+        // `client.conference` is set from `XMPPSettings.conference` in
+        // the failable XMPPClient init — if no client is attached we
+        // bail rather than substituting a hardcoded production value.
+        guard let conferenceDomain = client?.conference, !conferenceDomain.isEmpty else {
+            return nil
+        }
         let fixedRoomJID = roomJID.contains("@") ? roomJID : "\(roomJID)@\(conferenceDomain)"
 
         let stanzaId = id ?? "mucsub:\(Int64(Date().timeIntervalSince1970 * 1000))"

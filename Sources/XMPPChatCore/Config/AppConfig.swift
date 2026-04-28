@@ -121,69 +121,115 @@ JWT eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJkYXRhIjp7ImlzVXNlckRhdGFFbmNyeXB0ZWQ
 """
     }
 
-    /// Dev user JWT token (same as `defaultUser.token` in src/api.config.ts).
-    /// Used by default `RoomListViewModel` initializer so rooms load without
-    /// wiring a real login flow yet. Override via `ETHORA_DEV_USER_TOKEN` env.
-    public static var devUserToken: String {
-        return defaultUser.token ?? ""
-    }
-    
-    /// Default appId (same as `defaultUser.appId` in src/api.config.ts)
-    public static var defaultAppId: String {
-        return "646cc8dc96d4a4dc8f7b2f2d"
-    }
-    
-    /// Default base URL for API calls
-    public static var defaultBaseURL: URL {
-        return URL(string: "https://api.chat.ethora.com/v1")!
+    // MARK: - Required configuration accessors
+    //
+    // The SDK ships with NO hardcoded backend defaults — endpoints
+    // (`baseUrl`, `xmppSettings`) and `appId` MUST be supplied by the
+    // host application via `ConfigStore.shared.mergeConfig(_:)` before
+    // mounting chat or starting `ChatHeadlessSession`. The accessors
+    // below throw `ConfigError` when a value is missing so the caller
+    // can surface a clear failure instead of silently falling back to
+    // an unrelated server.
+
+    /// Returns the host's REST base URL.
+    /// - Throws: `ConfigError.missingBaseURL` if `ChatConfig.baseUrl`
+    ///   is `nil` or empty, `ConfigError.invalidBaseURL` if the value
+    ///   does not parse as a `URL`.
+    @MainActor
+    public static func requireBaseURL() throws -> URL {
+        let raw = ConfigStore.shared.config.baseUrl?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !raw.isEmpty else { throw ConfigError.missingBaseURL }
+        guard let url = URL(string: raw) else {
+            throw ConfigError.invalidBaseURL(raw)
+        }
+        return url
     }
 
-    /// Default base URL for push registration API.
-    /// Must match the REST API base that exposes `push/subscriptions/{appId}` (same as RN `apiClient` baseURL, e.g. `…/v1`).
-    public static var defaultPushBaseURL: URL {
-        return defaultBaseURL
+    /// Returns the host's push REST base URL.
+    /// Falls back to `requireBaseURL()` since push registration uses
+    /// the same REST root in this SDK.
+    @MainActor
+    public static func requirePushBaseURL() throws -> URL {
+        return try requireBaseURL()
     }
-    
-    /// Default XMPP settings (production, not dev)
-    public static var defaultXMPPSettings: XMPPSettings {
-        return XMPPSettings(
-            devServer: "wss://xmpp.chat.ethora.com/ws",
-            host: "xmpp.chat.ethora.com",
-            conference: "conference.xmpp.chat.ethora.com"
-        )
+
+    /// Returns the host's XMPP transport settings.
+    /// - Throws: `ConfigError.missingXMPPSettings` if
+    ///   `ChatConfig.xmppSettings` is `nil` or has an empty
+    ///   `host`/`conference`/`devServer`.
+    @MainActor
+    public static func requireXMPPSettings() throws -> XMPPSettings {
+        guard let settings = ConfigStore.shared.config.xmppSettings else {
+            throw ConfigError.missingXMPPSettings
+        }
+        let host = settings.host?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let conference = settings.conference?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let devServer = settings.devServer?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !host.isEmpty, !conference.isEmpty, !devServer.isEmpty else {
+            throw ConfigError.missingXMPPSettings
+        }
+        return settings
     }
-    
-    /// Default user object (same as `defaultUser` in src/api.config.ts).
-    /// Contains all user data for testing: email, xmppPassword, token, etc.
-    /// DO NOT USE IN PRODUCTION
-    public static var defaultUser: User {
-        return User(
-            id: "65831a646edcd3cee0545757",
-            name: "Raze Yuki",
-            token: "JWT eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJkYXRhIjp7InVzZXJJZCI6IjY1ODMxYTY0NmVkY2QzY2VlMDU0NTc1NyIsImFwcElkIjoiNjQ2Y2M4ZGM5NmQ0YTRkYzhmN2IyZjJkIn0sImlhdCI6MTcxODI1OTMzNCwiZXhwIjoxNzE4MjYwMjM0fQ.-eG07yKkNL6sAFw_-xwBxjios6XtWF6n1MExphyg4W4",
-            refreshToken: "JWT eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJkYXRhIjp7InVzZXJJZCI6IjY1ODMxYTY0NmVkY2QzY2VlMDU0NTc1NyIsImFwcElkIjoiNjQ2Y2M4ZGM5NmQ0YTRkYzhmN2IyZjJkIn0sImlhdCI6MTcxODI1OTMzNCwiZXhwIjoxNzE4ODY0MTM0fQ.Zs7_eLdefD3i6nEO1b_XbFZA_q9SWFKDghj8HqJ2fC0",
-            walletAddress: "0x6816810a7Fe04FC9b800f9D11564C0e4aEC25D78",
-            firstName: "Raze",
-            lastName: "Yuki",
-            email: "yukiraze9@gmail.com",
-            profileImage: "https://lh3.googleusercontent.com/a/ACg8ocLPzhjmRoDe9ZXawhnZN3nd0eEhrqoKwRicJyM6q2z_=s96-c",
-            xmppPassword: "HDC7qnWI16",
-            xmppUsername: "yukiraze9@gmail.com",
-            isProfileOpen: true,
-            isAssetsOpen: true,
-            isAgreeWithTerms: false
-        )
+
+    /// Async helper for callers that aren't on the main actor.
+    /// Resolves `provided` if non-nil, otherwise reads from
+    /// `ConfigStore` on the main actor.
+    public static func resolveBaseURL(_ provided: URL? = nil) async throws -> URL {
+        if let provided = provided { return provided }
+        return try await MainActor.run { try requireBaseURL() }
     }
-    
-    /// Creates an XMPPClient initialized with defaultUser credentials
-    /// (email as username, xmppPassword as password)
-    public static func createDefaultXMPPClient(settings: XMPPSettings? = nil) -> XMPPClient {
-        let user = defaultUser
-        return XMPPClient(
-            username: user.xmppUsername ?? user.email ?? "",
-            password: user.xmppPassword ?? "",
-            settings: settings
-        )
+
+    /// Async helper — same as `resolveBaseURL(_:)` but for `appId`.
+    public static func resolveAppId(_ provided: String? = nil) async throws -> String {
+        if let provided = provided?.trimmingCharacters(in: .whitespacesAndNewlines), !provided.isEmpty {
+            return provided
+        }
+        return try await MainActor.run { try requireAppId() }
+    }
+
+    /// MainActor-only synchronous variant of `resolveConferenceDomain(_:)`.
+    /// Use this when the caller is already on the main actor and would
+    /// rather avoid hopping back through `MainActor.run`.
+    @MainActor
+    public static func resolveConferenceDomainSync(_ provided: String? = nil) throws -> String {
+        if let provided = provided?.trimmingCharacters(in: .whitespacesAndNewlines), !provided.isEmpty {
+            return provided
+        }
+        let settings = try requireXMPPSettings()
+        guard let conference = settings.conference?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !conference.isEmpty else {
+            throw ConfigError.missingXMPPSettings
+        }
+        return conference
+    }
+
+    /// Async helper — resolves the XMPP conference domain.
+    /// If `provided` is non-empty it is returned as is; otherwise the
+    /// value is read from `ChatConfig.xmppSettings.conference` on the
+    /// main actor. Throws `ConfigError.missingXMPPSettings` if none is
+    /// configured.
+    public static func resolveConferenceDomain(_ provided: String? = nil) async throws -> String {
+        if let provided = provided?.trimmingCharacters(in: .whitespacesAndNewlines), !provided.isEmpty {
+            return provided
+        }
+        let settings = try await MainActor.run { try requireXMPPSettings() }
+        guard let conference = settings.conference?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !conference.isEmpty else {
+            throw ConfigError.missingXMPPSettings
+        }
+        return conference
+    }
+
+    /// Returns the host's `appId`.
+    /// - Throws: `ConfigError.missingAppId` if `ChatConfig.appId` is
+    ///   missing or empty.
+    @MainActor
+    public static func requireAppId() throws -> String {
+        let raw = ConfigStore.shared.config.appId?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !raw.isEmpty else { throw ConfigError.missingAppId }
+        return raw
     }
 }
 

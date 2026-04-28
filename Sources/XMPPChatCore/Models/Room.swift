@@ -236,10 +236,15 @@ public struct MessageStats: Codable, Equatable {
 
 // Convenience initializer from ApiRoom (mirrors createRoomFromApi.ts)
 public extension Room {
-    init(apiRoom: ApiRoom, conferenceDomain: String, usersArrayLength: Int = 0) {
+    /// Failable initializer used to map a REST `ApiRoom` into a Room.
+    /// Returns `nil` if `conferenceDomain` is empty after trimming —
+    /// callers MUST resolve the host's XMPP conference (see
+    /// `AppConfig.resolveConferenceDomain(_:)`) before invoking this.
+    init?(apiRoom: ApiRoom, conferenceDomain: String, usersArrayLength: Int = 0) {
+        let trimmedConference = conferenceDomain.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedConference.isEmpty else { return nil }
         let normalizedConference: String = {
-            var value = conferenceDomain.trimmingCharacters(in: .whitespacesAndNewlines)
-            if value.isEmpty { return AppConfig.defaultXMPPSettings.conference ?? "conference.xmpp.chat.ethora.com" }
+            var value = trimmedConference
             value = value.replacingOccurrences(of: "conferenceconference.", with: "conference.")
             value = value.replacingOccurrences(of: "conferenceconference", with: "conference.")
             if value.hasPrefix("conference.") { return value }

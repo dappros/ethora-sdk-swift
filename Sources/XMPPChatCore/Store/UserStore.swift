@@ -117,9 +117,9 @@ public class UserStore: ObservableObject {
         print("🔐 Starting JWT autologin...")
         
         do {
-            // Get base URL from config or use default
-            let baseURL = URL(string: config.baseUrl ?? "https://api.chat.ethora.com/v1")!
-            
+            // Read base URL from `ChatConfig` (no hardcoded default).
+            let baseURL = try await AppConfig.resolveBaseURL(nil)
+
             // Perform JWT login
             let loginResponse = try await AuthAPI.loginViaJwt(
                 clientToken: jwtLogin.token,

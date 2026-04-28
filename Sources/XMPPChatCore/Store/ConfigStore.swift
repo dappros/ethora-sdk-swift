@@ -19,14 +19,16 @@ public class ConfigStore: ObservableObject {
     private let configKey = "ethora_chat_config"
     
     private init() {
-        // Load saved config or create default
+        // Load saved config or start with an empty `ChatConfig`. The SDK
+        // ships without any hardcoded backend defaults — endpoints
+        // (`baseUrl`, `xmppSettings`, `appId`) MUST be provided by the
+        // host through `mergeConfig(_:)` before connecting.
         if let savedData = userDefaults.data(forKey: configKey),
            let savedConfig = try? JSONDecoder().decode(ChatConfig.self, from: savedData) {
             self.config = savedConfig
         } else {
             self.config = ChatConfig()
         }
-        forceethoradev()
     }
     
     /// Update configuration
@@ -211,13 +213,6 @@ public class ConfigStore: ObservableObject {
         userDefaults.removeObject(forKey: configKey)
     }
 
-    /// Force single environment to chat.ethora to avoid mixed API/XMPP runtime state.
-    public func forceethoradev() {
-        config.baseUrl = AppConfig.defaultBaseURL.absoluteString
-        config.appId = AppConfig.defaultAppId
-        config.xmppSettings = AppConfig.defaultXMPPSettings
-        saveConfig()
-    }
 }
 
 // MARK: - ChatConfig Codable Extension

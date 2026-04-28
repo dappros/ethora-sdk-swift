@@ -107,22 +107,36 @@ public struct ChatWrapperView: View {
                 .padding()
             }
             // 5. Initialized and client available – render main chat UI.
-            else if let client = viewModel.client {
+            else if let client = viewModel.client,
+                    let listVM = RoomListViewModel(
+                        client: client,
+                        currentUserId: viewModel.currentUserId,
+                        config: config
+                    ) {
                 VStack(spacing: 0) {
                     // Connection banner at top (equivalent to web ConnectionBanner).
                     ConnectionStatusView(connectionManager: ConnectionManager.shared)
-                    
+
                     // Main content: room list + chat rooms, reusing existing RoomListView.
                     RoomListView(
-                        viewModel: RoomListViewModel(
-                            client: client,
-                            currentUserId: viewModel.currentUserId,
-                            config: config
-                        ),
+                        viewModel: listVM,
                         singleRoomJID: initialRoomJID,
                         hideRoomList: config.disableRooms == true
                     )
                 }
+            } else if viewModel.client != nil {
+                // Client is up but `ChatConfig` is missing endpoints.
+                // The init-gate in `UseChatWrapperInit` should already
+                // surface this earlier; render a defensive fallback.
+                VStack(spacing: 12) {
+                    Text("Chat is not configured.")
+                        .font(.headline)
+                    Text(ConfigError.missingBaseURL.errorDescription ?? "")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+                .padding()
             } else {
                 // Safety fallback – should not normally happen.
                 VStack(spacing: 12) {

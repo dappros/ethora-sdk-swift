@@ -1609,7 +1609,13 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
                     return
                 }
                 
-                let uploadBaseURL = Self.resolvedUploadBaseURL()
+                let uploadBaseURL: URL
+                do {
+                    uploadBaseURL = try Self.resolvedUploadBaseURL()
+                } catch {
+                    print("❌ ChatRoomViewModel.sendMedia: \(error.localizedDescription)")
+                    return
+                }
 
                 print("📤 ChatRoomViewModel.sendMedia: Uploading file \(finalFileName) (\(finalData.count) bytes) to server...")
                 let uploadResponse: UploadResponse
@@ -1786,19 +1792,12 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
         throw lastError ?? AuthAPIError.networkError("Image upload failed after compression attempts.")
     }
 
-    /// Returns the upload base URL from the host-supplied `ChatConfig`,
-    /// falling back to the SDK's public default when the config has no
-    /// `baseUrl`. The default lives in `AuthAPI.uploadFile` and points at
-    /// the public Ethora API; the SDK never embeds non-public hosts.
-    private static func resolvedUploadBaseURL() -> URL {
-        let fallback = URL(string: "https://api.chat.ethora.com/v1")!
-        guard let raw = ConfigStore.shared.config.baseUrl?
-                .trimmingCharacters(in: .whitespacesAndNewlines),
-              !raw.isEmpty,
-              let url = URL(string: raw) else {
-            return fallback
-        }
-        return url
+    /// Returns the host-configured upload base URL.
+    /// - Throws: `ConfigError.missingBaseURL` when `ChatConfig.baseUrl`
+    ///   is absent — the SDK ships without any hardcoded production
+    ///   endpoint, so uploads cannot proceed without explicit config.
+    private static func resolvedUploadBaseURL() throws -> URL {
+        return try AppConfig.requireBaseURL()
     }
     
     private func optimizeImagePayload(
