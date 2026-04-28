@@ -75,14 +75,6 @@ public class XMPPClient {
     // Track rooms that have received presence responses (to avoid duplicate sends)
     private var roomsWithPresenceResponse: Set<String> = []
 
-    /// Observer token for `NetworkMonitor.networkBecameAvailableNotification`.
-    /// Held for the lifetime of the client so the offline cap can be
-    /// cleared and a reconnect can be triggered the moment the device's
-    /// link comes back — without waiting for `didBecomeActive` /
-    /// `willEnterForeground` (which never fire if the user stays in the
-    /// foreground throughout the outage).
-    private var networkOnlineObserver: NSObjectProtocol?
-
     /// XMPP IQ / message operations (presence, history, MUC, media, …).
     public private(set) lazy var operations: XMPPOperations = XMPPOperations(client: self)
     
@@ -111,43 +103,8 @@ public class XMPPClient {
         self.conference = "conference.\(self.host)"
 
         initializeClient()
-        observeNetworkAvailability()
     }
 
-    deinit {
-        if let token = networkOnlineObserver {
-            NotificationCenter.default.removeObserver(token)
-        }
-    }
-
-    /// Subscribe to `NetworkMonitor` so we can lift the offline cap and
-    /// trigger an immediate reconnect when the device link is restored.
-    /// Without this, after WiFi has been off long enough to exhaust
-    /// `maxOfflineReconnectAttempts`, `pausedDueToOfflineCap` stays `true`
-    /// and the client never tries again on its own.
-    private func observeNetworkAvailability() {
-        networkOnlineObserver = NotificationCenter.default.addObserver(
-            forName: NetworkMonitor.networkBecameAvailableNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            guard let self = self else { return }
-            self.handleNetworkRestored()
-        }
-    }
-
-    private func handleNetworkRestored() {
-        guard status != .online else { return }
-        logStep("network-restored:resume-reconnect")
-        pausedDueToOfflineCap = false
-        offlineReconnectAttempts = 0
-        // Cancel any pending reconnect timer so the new schedule fires
-        // immediately instead of waiting out the previous backoff.
-        reconnectTimer?.invalidate()
-        reconnectTimer = nil
-        scheduleReconnect(reason: "network-restored")
-    }
-    
     // MARK: - Public Methods
     public func checkOnline() -> Bool {
         return status == .online
@@ -534,12 +491,9 @@ public class XMPPClient {
     
     // MARK: - Helper Methods
     private func isBrowserOnline() -> Bool {
-        // Real reachability via `NWPathMonitor`. Returning `true` when the
-        // device has no link wastes the 10-attempt offline cap during a
-        // long outage — by the time the link returns, the client is
-        // permanently `pausedDueToOfflineCap` and never recovers without
-        // an external poke.
-        return NetworkMonitor.shared.isOnline
+        // On iOS, check network reachability
+        // This is a simplified version
+        return true
     }
     
     private func logStep(_ step: String) {
