@@ -14,7 +14,10 @@ import UIKit
 public struct ConfigurableChatInputView: View {
     @Binding var messageText: String
     let onSendMessage: (String) -> Void
-    let onSendMedia: ((Data, String) -> Void)?
+    /// Sends an attachment. The optional third argument is the caption typed alongside
+    /// the attachment — when non-empty it is delivered as a separate text message right
+    /// after the media stanza.
+    let onSendMedia: ((Data, String, String?) -> Void)?
     let placeholderText: String
     let isEditing: Bool
     let editMessageId: String?
@@ -23,15 +26,15 @@ public struct ConfigurableChatInputView: View {
     let secondarySendButton: SecondarySendButtonConfig?
     let messageTextFilter: MessageTextFilterConfig?
     let customComponent: ((SendInputProps) -> AnyView)?
-    
+
     @State private var showMediaPicker = false
     @State private var showEmojiPicker = false
     @FocusState private var isFocused: Bool
-    
+
     public init(
         messageText: Binding<String>,
         onSendMessage: @escaping (String) -> Void,
-        onSendMedia: ((Data, String) -> Void)? = nil,
+        onSendMedia: ((Data, String, String?) -> Void)? = nil,
         placeholderText: String = "Type a message...",
         isEditing: Bool = false,
         editMessageId: String? = nil,
@@ -84,7 +87,7 @@ public struct ConfigurableChatInputView: View {
 struct DefaultChatInputView: View {
     @Binding var messageText: String
     let onSendMessage: (String) -> Void
-    let onSendMedia: ((Data, String) -> Void)?
+    let onSendMedia: ((Data, String, String?) -> Void)?
     let placeholderText: String
     let isEditing: Bool
     let editMessageId: String?
@@ -221,20 +224,7 @@ struct DefaultChatInputView: View {
                 
                 if let secondaryButton = secondarySendButton, secondaryButton.enabled {
                     Button(action: {
-                        if selectedMediaData != nil {
-                            // Send media
-                            if let data = selectedMediaData, let type = selectedMediaType {
-                                onSendMedia?(data, type)
-                                selectedMediaData = nil
-                                selectedMediaType = nil
-                                selectedMediaFileName = nil
-                                #if os(iOS)
-                                selectedMediaImage = nil
-                                #endif
-                            }
-                        } else {
-                            sendMessage()
-                        }
+                        sendMediaOrText()
                     }) {
                         if let label = secondaryButton.label {
                             AnyView(label)
@@ -245,20 +235,7 @@ struct DefaultChatInputView: View {
                     .buttonStyle(.borderedProminent)
                 } else {
                     Button(action: {
-                        if selectedMediaData != nil {
-                            // Send media
-                            if let data = selectedMediaData, let type = selectedMediaType {
-                                onSendMedia?(data, type)
-                                selectedMediaData = nil
-                                selectedMediaType = nil
-                                selectedMediaFileName = nil
-                                #if os(iOS)
-                                selectedMediaImage = nil
-                                #endif
-                            }
-                        } else {
-                            sendMessage()
-                        }
+                        sendMediaOrText()
                     }) {
                         Image(systemName: "paperplane.fill")
                             .font(.system(size: 18, weight: .medium))
@@ -299,11 +276,32 @@ struct DefaultChatInputView: View {
     
     private func sendMessage() {
         guard !messageText.isEmpty else { return }
-        
+
         let textToSend = messageText
         messageText = ""
         onSendMessage(textToSend)
         HapticFeedback.messageSent()
+    }
+
+    /// If an attachment is selected, send it together with the typed caption (if any) —
+    /// the receiver will deliver them as two separate messages, media first then text.
+    /// Otherwise fall back to a plain text send.
+    private func sendMediaOrText() {
+        if let data = selectedMediaData, let type = selectedMediaType {
+            let trimmedCaption = messageText.trimmingCharacters(in: .whitespacesAndNewlines)
+            let caption: String? = trimmedCaption.isEmpty ? nil : messageText
+            onSendMedia?(data, type, caption)
+            messageText = ""
+            selectedMediaData = nil
+            selectedMediaType = nil
+            selectedMediaFileName = nil
+            #if os(iOS)
+            selectedMediaImage = nil
+            #endif
+            HapticFeedback.messageSent()
+        } else {
+            sendMessage()
+        }
     }
 }
 

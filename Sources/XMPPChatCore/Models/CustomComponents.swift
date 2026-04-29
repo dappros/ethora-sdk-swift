@@ -112,15 +112,18 @@ public struct MessageProps {
 
 public struct SendInputProps {
     public let onSendMessage: ((String) -> Void)?
-    public let onSendMedia: ((Data, String) -> Void)?
+    /// Sends an attachment. The optional third argument is the caption typed alongside
+    /// the attachment — when non-empty it is delivered as a separate text message right
+    /// after the media stanza.
+    public let onSendMedia: ((Data, String, String?) -> Void)?
     public let placeholderText: String?
     public let messageText: Binding<String>
     public let isEditing: Bool
     public let editMessageId: String?
-    
+
     public init(
         onSendMessage: ((String) -> Void)? = nil,
-        onSendMedia: ((Data, String) -> Void)? = nil,
+        onSendMedia: ((Data, String, String?) -> Void)? = nil,
         placeholderText: String? = nil,
         messageText: Binding<String>,
         isEditing: Bool = false,

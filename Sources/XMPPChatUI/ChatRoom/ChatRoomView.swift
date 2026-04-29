@@ -671,9 +671,9 @@ public struct ChatRoomView: View {
                         messageText = ""
                     }
                 },
-                onSendMedia: { data, type in
+                onSendMedia: { data, type, caption in
                     viewModel.stopTyping() // Stop typing when sending media
-                    viewModel.sendMedia(data: data, type: type)
+                    viewModel.sendMedia(data: data, type: type, caption: caption)
                 },
                 isEditing: viewModel.isEditing,
                 editMessageId: viewModel.editMessageId,

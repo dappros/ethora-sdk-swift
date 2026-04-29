@@ -1553,8 +1553,8 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
         )
     }
     
-    public func sendMedia(data: Data, type: String) {
-        print("📤 ChatRoomViewModel.sendMedia: Called with type: \(type), size: \(data.count) bytes")
+    public func sendMedia(data: Data, type: String, caption: String? = nil) {
+        print("📤 ChatRoomViewModel.sendMedia: Called with type: \(type), size: \(data.count) bytes, caption: \(caption?.isEmpty == false ? "yes" : "no")")
         
         guard let user = UserStore.shared.currentUser else {
             print("❌ ChatRoomViewModel.sendMedia: No current user")
@@ -1793,7 +1793,14 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
                 // In some server paths media echo/ack can be delayed or omitted.
                 // Avoid indefinite "sending..." state for successfully uploaded files.
                 scheduleMediaPendingResolution(messageId: messageId, timeoutSeconds: 8)
-                
+
+                // If the user typed a caption alongside the attachment, send it as a
+                // separate text message AFTER the media stanza so order is preserved
+                // on the wire (media first, then text).
+                if let caption = caption?.trimmingCharacters(in: .whitespacesAndNewlines), !caption.isEmpty {
+                    self.sendMessage(caption)
+                }
+
             } catch {
                 print("❌ ChatRoomViewModel.sendMedia: Error - \(error.localizedDescription)")
                 print("   Error details: \(error)")
