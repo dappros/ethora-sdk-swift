@@ -88,7 +88,13 @@ public final class MessageParser {
         if id == nil {
             if let stanzaIdEl = fullData.getChild("stanza-id"),
                let sid = stanzaIdEl.attributes["id"] {
-                id = sid.count >= 16 ? String(sid.suffix(16)) : sid
+                // Use the full stanza-id, matching the React reference
+                // (helpers/getDataFromXml.ts). Truncating to suffix(16)
+                // diverges from React: the server's MAM <before> lookup
+                // expects the same opaque archive id it issued, so
+                // sending a truncated value is a no-op response and the
+                // load-more page silently returns nothing.
+                id = sid
             }
         }
 

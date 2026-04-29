@@ -113,6 +113,29 @@ public class StanzaHandlers {
             }
         }
 
+        // MAM also replays delete events as `<message id="deleteMessageStanza"><delete id="<targetId>"/>…</message>`.
+        // Without this branch they fall through to `MessageParser` and become
+        // phantom messages whose `xmppId` is the constant string
+        // "deleteMessageStanza" — every replayed delete then collides on the
+        // same `xmppId == xmppId` dedup arm in `handleIncomingMessage`,
+        // collapsing the entire history of deletes onto one cached entry
+        // (observed live: every delete-stanza updates the same index 21).
+        // Route through the same callback realtime deletes use.
+        if let result = firstChild.name == "result" ? firstChild : stanza.getChild("result"),
+           let forwarded = result.getChild("forwarded"),
+           let inner = forwarded.getChild("message"),
+           let deleted = inner.getChild("delete"),
+           inner.attributes["id"] == "deleteMessageStanza" {
+            let deleteRoomJID = inner.getChild("stanza-id")?.attributes["by"]
+                ?? stanza.attributes["from"]
+                ?? ""
+            let deletedMessageId = deleted.attributes["id"] ?? ""
+            if !deletedMessageId.isEmpty {
+                onMessageDeleted?(deleteRoomJID, deletedMessageId)
+                return
+            }
+        }
+
         // Match TypeScript: const { data, id, body, ...rest } = await getDataFromXml(stanza);
         guard let messageData = MessageParser.getDataFromStanza(stanza) else {
             return

@@ -430,37 +430,44 @@ public struct ChatRoomView: View {
                         }
                     )
                     .refreshable {
-                        // Pull to refresh - load latest messages
-                        // This also retries after errors
-                        //print("🔄 Pull to refresh triggered from UI")
-                        
-                        // Clear any errors when user pulls to refresh
+                        // Pull-down at the top of a reverse-scroll chat means
+                        // "show me older messages" — not "refetch the latest".
+                        // The latter is what `refreshMessages()` does (it calls
+                        // `loadMessages(before: nil)`); using it here turned
+                        // the gesture into a no-op for the user, since the
+                        // server happily returned the same 30 latest messages
+                        // we already had cached. Route to `loadMoreMessages`
+                        // with a `<before>` derived from the oldest visible
+                        // message, matching the scroll-detect path.
                         viewModel.loadError = nil
-                        
-                        // Call refreshMessages to load new messages
-                        viewModel.refreshMessages()
-                        
-                        // Wait for refresh to complete (isRefreshing becomes false)
-                        // This allows the refreshable spinner to show properly
+
+                        let firstMessage = viewModel.messages.first(where: { $0.id != "delimiter-new" })
+                            ?? viewModel.messages.first
+                        let beforeTimestamp: Int64? = {
+                            guard let message = firstMessage else { return nil }
+                            if let numericId = Int64(message.id) { return numericId }
+                            if let timestamp = message.timestamp { return timestamp }
+                            return Int64(message.date.timeIntervalSince1970 * 1000)
+                        }()
+
+                        if let before = beforeTimestamp {
+                            viewModel.loadMoreMessages(max: 30, beforeTimestamp: before)
+                        } else {
+                            // Empty room (no messages yet) — fall back to the
+                            // initial fetch so pull-to-refresh isn't a no-op
+                            // on first open.
+                            viewModel.refreshMessages()
+                        }
+
+                        // Hold the spinner until the load completes (or times out)
+                        // so SwiftUI's refresh control reflects real progress.
                         var attempts = 0
-                        let maxAttempts = 60 // 6 seconds (60 * 100ms) - longer timeout
-                        
-                        while attempts < maxAttempts && viewModel.isRefreshing {
-                            try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
+                        let maxAttempts = 60 // ~6s
+                        while attempts < maxAttempts && (viewModel.isLoadingMore || viewModel.isRefreshing) {
+                            try? await Task.sleep(nanoseconds: 100_000_000)
                             attempts += 1
                         }
-                        
-                        // Force clear isRefreshing if still set after timeout
-                        if viewModel.isRefreshing {
-                            viewModel.isRefreshing = false
-                            //print("⏱️ Force clearing isRefreshing after timeout")
-                        }
-                        
-                        if !viewModel.isRefreshing {
-                            //print("✅ Pull-to-refresh complete: new messages loaded")
-                        } else {
-                            //print("⏱️ Timeout waiting for new messages after pull-to-refresh")
-                        }
+                        if viewModel.isRefreshing { viewModel.isRefreshing = false }
                     }
                     .onPreferenceChange(ScrollMetricsKey.self) { metrics in
                         // Debounced scroll handler (combines checkAtBottom and checkIfLoadMoreMessages)

@@ -776,7 +776,8 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
             // Show cached messages while waiting
             if let cachedMessages = MessageCache.shared.loadMessages(forRoomJID: room.jid) {
                 messages = cachedMessages
-                room.messages = cachedMessages
+                dedupMessagesByID()
+                room.messages = messages
                 messagesLoaded = true
                 //print("📂 ChatRoomViewModel: Showing \(cachedMessages.count) cached messages while waiting for connection")
             }
@@ -812,7 +813,8 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
         // Check if we have cached messages - if so, show them immediately and load in background
         if let cachedMessages = MessageCache.shared.loadMessages(forRoomJID: room.jid), !forceReload {
             messages = cachedMessages
-            room.messages = cachedMessages
+            dedupMessagesByID()
+            room.messages = messages
             messagesLoaded = true
             //print("📂 ChatRoomViewModel: Using \(cachedMessages.count) cached messages, loading fresh in background")
             // Don't show loader if we have cached messages
@@ -856,9 +858,26 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
     private func loadCachedMessages() {
         if let cachedMessages = MessageCache.shared.loadMessages(forRoomJID: room.jid) {
             messages = cachedMessages
-            room.messages = cachedMessages
+            dedupMessagesByID()
+            room.messages = messages
             messagesLoaded = true
             //print("📂 ChatRoomViewModel: Loaded \(cachedMessages.count) cached messages for room: \(room.jid)")
+        }
+    }
+
+    /// Remove duplicate messages by `id`, keeping the first occurrence.
+    /// SwiftUI `ForEach` refuses to render a collection with repeated ids
+    /// and silently drops the second hit — which used to surface as
+    /// "load-more loader runs but old messages don't appear" once any
+    /// stale cache entry collided with a freshly parsed MAM stanza.
+    /// Idempotent and a no-op when the array is already unique.
+    private func dedupMessagesByID() {
+        guard messages.count > 1 else { return }
+        var seen = Set<String>()
+        seen.reserveCapacity(messages.count)
+        let deduped = messages.filter { seen.insert($0.id).inserted }
+        if deduped.count != messages.count {
+            messages = deduped
         }
     }
     
@@ -1457,9 +1476,16 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
             let ts2 = msg2.timestamp ?? 0
             return ts1 < ts2
         }
-        
+
+        // Belt-and-braces: drop any duplicate-id entries before SwiftUI
+        // sees the array. The dedup checks above (lines ~1108, ~1367)
+        // cover normal flows, but a stale cache or a race between the
+        // notification path and `processIncomingMessage` could still
+        // leak through.
+        dedupMessagesByID()
+
         //print("📊 Messages sorted, final count: \(messages.count)")
-        
+
         // Update room's messages array
         room.messages = messages
         // Update the published room property to trigger UI updates
