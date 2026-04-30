@@ -56,6 +56,13 @@ public class XMPPClient {
     private let idleThresholdMs: TimeInterval = 60.0
     private var lastActivityTs: TimeInterval = Date().timeIntervalSince1970
     private var idlePingTimeout: Timer?
+
+    // One-shot ping probe (used by SessionRecoveryManager on app foreground
+    // to tell a live socket from a zombie one). The continuation is resolved
+    // either by a matching `<iq type='result' id='probe-...'/>` (handlePong)
+    // or by the probe timer firing.
+    private var pingProbeContinuation: CheckedContinuation<Bool, Never>?
+    private var pingProbeTimer: Timer?
     
     // Message Queue
     private var messageQueue: [() async -> Bool] = []
@@ -906,6 +913,84 @@ extension XMPPClient: XMPPStreamDelegate {
         pingTimeout = nil
         lastPingId = nil
         pingInFlight = false
+        // One-shot probe path: resolve waiter if present.
+        if let cont = pingProbeContinuation {
+            pingProbeContinuation = nil
+            pingProbeTimer?.invalidate()
+            pingProbeTimer = nil
+            cont.resume(returning: true)
+        }
+    }
+
+    /// One-shot liveness check. Sends `<iq type='get'><ping xmlns='urn:xmpp:ping'/></iq>`
+    /// and waits up to `timeout` seconds for a matching `<iq type='result'/>`.
+    ///
+    /// Used after the app returns from background to distinguish a live
+    /// WebSocket from a "zombie" one — iOS may report the socket as still
+    /// connected after a long suspend, but the server has already dropped
+    /// it. If the probe times out, the caller (`SessionRecoveryManager`)
+    /// forces a hard reconnect rather than relying on `status == .online`.
+    public func pingProbe(timeout: TimeInterval = 2.0) async -> Bool {
+        guard status == .online,
+              let stream = xmppStream,
+              stream.checkConnected() else {
+            return false
+        }
+
+        // If a probe is already in flight, fail it cleanly so we don't leak
+        // a stranded continuation. The new caller gets a fresh probe.
+        if let existing = pingProbeContinuation {
+            pingProbeContinuation = nil
+            pingProbeTimer?.invalidate()
+            pingProbeTimer = nil
+            existing.resume(returning: false)
+        }
+
+        let pingId = "probe-\(UUID().uuidString)"
+        // Hook into the existing isPong/handlePong dispatch in
+        // xmppStream(_:didReceiveStanza:) — that handler already matches
+        // `lastPingId` and calls handlePong(), which now also resolves
+        // pingProbeContinuation.
+        lastPingId = pingId
+
+        return await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+            pingProbeContinuation = continuation
+            pingProbeTimer = Timer.scheduledTimer(withTimeInterval: timeout, repeats: false) { [weak self] _ in
+                guard let self = self else { return }
+                guard let cont = self.pingProbeContinuation else { return }
+                self.pingProbeContinuation = nil
+                self.pingProbeTimer = nil
+                // Clear lastPingId so a stale pong arriving later doesn't
+                // accidentally trip handlePong's other invariants.
+                if self.lastPingId == pingId { self.lastPingId = nil }
+                cont.resume(returning: false)
+            }
+
+            let pingStanza = XMPPStanza(
+                name: "iq",
+                attributes: ["type": "get", "id": pingId, "to": host],
+                children: [XMPPStanza(name: "ping", attributes: ["xmlns": "urn:xmpp:ping"])]
+            )
+            stream.send(pingStanza)
+        }
+    }
+
+    /// Tear down the current XMPP stream and rebuild it, ignoring the
+    /// cached `status` enum. Used when we have evidence (a failed probe,
+    /// an explicit user action) that the existing socket is dead even if
+    /// it still reports `.online`. Resets the offline backoff so the
+    /// reconnect actually fires immediately.
+    public func forceReconnect() async {
+        logStep("forceReconnect:start")
+        // Reset gate state so initializeClient() is allowed to run, even
+        // if the previous reconnect ran into the offline cap.
+        offlineReconnectAttempts = 0
+        pausedDueToOfflineCap = false
+        reconnecting = false
+        isConnecting = false
+        await disconnect()
+        initializeClient()
+        logStep("forceReconnect:end")
     }
     
     private func handleStanza(_ stanza: XMPPStanza) {

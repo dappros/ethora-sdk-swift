@@ -174,10 +174,69 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
             name: NSNotification.Name("XMPPHistoryLoadFailed"),
             object: nil
         )
+
+        // Reconnect-success → auto-resend any messages that got stuck mid-flight
+        // (e.g. user tapped Send while the WebSocket was a zombie post-background;
+        // the stanza never reached the server, the message stays in `pending`
+        // until either we reconnect and flush it, or the failed-tick eventually
+        // marks it as `failed`).
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleClientDidConnectNotification(_:)),
+            name: NSNotification.Name("XMPPClientDidConnect"),
+            object: nil
+        )
     }
     
+    // MARK: - Reconnect-Success: Auto-Resend Stuck Pendings
+
+    /// Threshold for "stuck pending" — only resend messages whose pending
+    /// timer has already been running this long. Anything younger is
+    /// assumed to still be progressing through the normal MessageQueue
+    /// path on the freshly-reconnected stream and doesn't need a kick.
+    /// Matches the "post-zombie" scenario: user taps Send into a dead
+    /// socket, the stanza never reaches the server, ~5–10s later the
+    /// reconnect lands; this handler kicks the resend rather than
+    /// waiting another ~20s for `markStalePendingsFailed` to flip it
+    /// to `failed` and require a manual tap.
+    private static let pendingResendMinAgeSeconds: TimeInterval = 3.0
+
+    @objc private func handleClientDidConnectNotification(_ notification: Notification) {
+        // Wait briefly for the post-connect MUC presence + history flow to
+        // settle before pushing more sends through. Resending immediately
+        // while presence is in flight risks the stanza being dropped by
+        // the server side ("not in room yet"). 1.5s mirrors the spacing
+        // between presence and first-history-fetch in the connect flow.
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            self?.flushStuckPendingMessages()
+        }
+    }
+
+    private func flushStuckPendingMessages() {
+        guard client.isFullyConnected() else { return }
+        let now = Date()
+        let cutoff = Self.pendingResendMinAgeSeconds
+        let stuck = messages.filter { m in
+            guard m.pending == true, m.failed != true else { return false }
+            let since = m.pendingSince ?? m.date
+            return now.timeIntervalSince(since) >= cutoff
+        }
+        guard !stuck.isEmpty else { return }
+        print("[ChatRoomVM] flushing \(stuck.count) stuck pending message(s) after reconnect")
+        for message in stuck {
+            // Same shape as `retryFailedMessage`: drop the stuck copy from
+            // the local list/cache, then send a fresh message with the same
+            // body. If the original later sneaks through (queued WebSocket
+            // write that survived the reconnect), the user may see one
+            // duplicate — same v1 trade-off documented on `retryFailedMessage`.
+            discardFailedMessage(message.id)
+            resendMessage(message)
+        }
+    }
+
     // MARK: - History Load Failure Handler
-    
+
     @objc private func handleHistoryLoadFailedNotification(_ notification: Notification) {
         guard let userInfo = notification.userInfo,
               let roomJID = userInfo["roomJID"] as? String else {

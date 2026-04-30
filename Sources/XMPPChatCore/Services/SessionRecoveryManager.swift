@@ -78,9 +78,27 @@ public final class SessionRecoveryManager {
         inFlight = true
         defer { inFlight = false }
 
-        // Fast path — already online.
+        // Fast path — `status` says online. But after a long background
+        // suspend the WebSocket may be a zombie: TCP is dead, the OS hasn't
+        // surfaced an error yet, and `status == .online` lies. Probe with a
+        // real XMPP ping; if no pong in 2s, the socket is gone and we have
+        // to force a hard reconnect.
         if client.isFullyConnected() {
-            return
+            let alive = await client.pingProbe(timeout: 2.0)
+            if alive {
+                return
+            }
+            print("[SessionRecovery] ping probe timed out — socket is a zombie, forcing hard reconnect")
+            await client.forceReconnect()
+            if await waitForXMPPOnline(client: client, timeout: 8.0, kickReconnect: false) {
+                NotificationCenter.default.post(
+                    name: Self.sessionRecoveredNotification,
+                    object: self
+                )
+                return
+            }
+            // Hard reconnect didn't come back in 8s — fall through to
+            // refresh-token path below.
         }
 
         // Step 1: Try a plain XMPP reconnect with the existing credentials.
@@ -154,11 +172,20 @@ public final class SessionRecoveryManager {
         }
     }
 
-    private func waitForXMPPOnline(client: XMPPClient, timeout: TimeInterval) async -> Bool {
+    private func waitForXMPPOnline(
+        client: XMPPClient,
+        timeout: TimeInterval,
+        kickReconnect: Bool = true
+    ) async -> Bool {
         // Poke the client's own reconnect logic if it's idle. `ensureConnected`
         // throws when not online, but its side-effect is to schedule a
         // reconnect which we then wait for below.
-        if !client.isFullyConnected() {
+        //
+        // The caller can pass `kickReconnect: false` when they've just kicked
+        // the reconnect themselves (e.g. via `forceReconnect()` after a
+        // failed ping probe) — calling `ensureConnected` on top of that
+        // would schedule a duplicate reconnect and race with the first.
+        if kickReconnect, !client.isFullyConnected() {
             _ = try? await client.ensureConnected(timeout: 2.0)
         }
         let start = Date()
