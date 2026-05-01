@@ -306,11 +306,11 @@ struct MessageStatusIndicatorView: View {
                 ZStack {
                     Image(systemName: "checkmark")
                         .font(.caption2)
-                        .foregroundColor(.white.opacity(0.7))
+                        .foregroundColor(.green)
                         .offset(x: 0, y: 0)
                     Image(systemName: "checkmark")
                         .font(.caption2)
-                        .foregroundColor(.white.opacity(0.7))
+                        .foregroundColor(.green)
                         .offset(x: 3, y: 0)
                 }
                 .frame(width: 16, height: 12)
