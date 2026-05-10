@@ -590,7 +590,33 @@ a single Maestro flow exercises the same intent on either platform.
   extend a Maestro flow in `ethora-sample-swift/.maestro/`, in a paired
   PR to that repo.
 - **Cross-platform parity gap** → make sure the matching Android
-  Compose test or Maestro flow exists too.
+  Compose test, Web Vitest test, or Maestro flow exists too.
+
+### Cross-platform testing overview
+
+This iOS SDK is one of four runtime targets that share a single
+selector contract. The same string IDs power Maestro flows on iOS +
+Android and Playwright tests on Web.
+
+| Layer 1 (hermetic) | Layer 2 (E2E) |
+|--------------------|----------------|
+| `ethora-sdk-swift` — XCTest in `Tests/XMPPChatCoreTests/` + `accessibilityIdentifier` markers in `XMPPChatUI/` (this repo) | `ethora-sample-swift/.maestro/` — 19 Maestro flows on iOS Simulator |
+| `ethora-sdk-android` — Compose UI tests in `chat-ui/src/androidTest/` | `ethora-sample-android/.maestro/` — same 19 Maestro flows on Android emulator |
+| `ethora-chat-component` — Vitest + RTL in `src/**/*.test.tsx` with `data-testid` attrs | `ethora-app-reactjs/tests/e2e/` — Playwright on chromium |
+
+Selector parity (a Maestro `id: "chat_input"` matches all of these):
+
+| String | iOS (`*AccessibilityID`) | Android (`*TestTags`) | Web (`*TestIds`) |
+|--------|--------------------------|----------------------|------------------|
+| `chat_input` | `ChatInputAccessibilityID.inputField` | `ChatInputTestTags.INPUT_FIELD` | `ChatInputTestIds.inputField` |
+| `chat_send_button` | `ChatInputAccessibilityID.sendButton` | `ChatInputTestTags.SEND_BUTTON` | `ChatInputTestIds.sendButton` |
+| `chat_attach_button` | `ChatInputAccessibilityID.attachButton` | `ChatInputTestTags.ATTACH_BUTTON` | `ChatInputTestIds.attachButton` |
+| `chat_message_image` | `MessageBubbleAccessibilityID.mediaContent` | `MessageBubbleTestTags.MEDIA_CONTENT` | `MessageBubbleTestIds.mediaContent` |
+| `rooms_list` | `RoomListAccessibilityID.roomsList` | `RoomListViewTestTags.ROOMS_LIST` | `RoomListTestIds.roomsList` |
+| `room_row` | `RoomListAccessibilityID.roomRow` | `RoomListViewTestTags.ROOM_ROW` | `RoomListTestIds.roomRow` |
+| `create_room_button` | `RoomListAccessibilityID.createRoomButton` | `RoomListViewTestTags.CREATE_ROOM_BUTTON` | `RoomListTestIds.createRoomButton` |
+
+Changing any value above is a 4-repo change — keep them in sync.
 
 ## Build and Validation
 
