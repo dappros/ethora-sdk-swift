@@ -528,6 +528,70 @@ Also see:
 - `RoomsAPI` requires user auth in `UserStore`; call login first.
 - Non-codable config entries (closures/custom views) must be reapplied each app launch.
 
+## Testing
+
+Same two-layer split as the Android SDK ([reference](https://github.com/dappros/ethora-sdk-android/blob/main/README.md#testing)).
+
+### Layer 1 — XCTest unit tests (this repo)
+
+Pure-Swift, hermetic. No XMPP, no API, no FCM. Run with `swift test`
+or via the test diamond in Xcode.
+
+```bash
+swift test
+```
+
+| Where | What | What's covered today |
+|-------|------|----------------------|
+| `Tests/XMPPChatCoreTests/` | Unit tests against `XMPPChatCore` types (stores, models, networking helpers) | `UnreadStateBridgeTests` covering total-unread derivation, missing-room behavior, store reset isolation |
+
+**Gaps** to fill at this layer (file an issue + a test in the same PR
+when you tackle one):
+
+- `RoomStore` add/update/clear semantics
+- JID parsing / normalization helpers
+- Push-notification payload decoding
+- `MessageStore` insertion + de-duplication
+- `XMPPClient` BIND-result handling (testable with a stubbed transport)
+
+For SwiftUI view-rendering tests, add either an XCUITest target (lives
+on the sample side, not here, since hermetic SwiftUI testing in pure
+XCTest needs ViewInspector or similar third-party deps the SDK doesn't
+ship). Practical view coverage flows through Layer 2 instead.
+
+### Layer 2 — End-to-end Maestro flows (`ethora-sample-swift`)
+
+Maestro runs cross-platform; the same YAML flows in
+[`ethora-sample-swift/.maestro/`](https://github.com/dappros/ethora-sample-swift/tree/main/.maestro)
+that drive the Android sample drive the iOS Simulator too. They
+resolve UI nodes by accessibility identifier, not by text, so they're
+robust against localization and theme changes.
+
+Stable identifiers for resolution live in
+[`Sources/XMPPChatUI/AccessibilityIdentifiers.swift`](Sources/XMPPChatUI/AccessibilityIdentifiers.swift).
+String values intentionally match Android's `*TestTags` constants so
+a single Maestro flow exercises the same intent on either platform.
+
+| Identifier | View | Mirrors Android |
+|------------|------|-----------------|
+| `chat_input` | `ChatInputView` text field | `ChatInputTestTags.INPUT_FIELD` |
+| `chat_send_button` | `ChatInputView` send button (both states) | `ChatInputTestTags.SEND_BUTTON` |
+| `chat_attach_button` | `ChatInputView` paperclip | `ChatInputTestTags.ATTACH_BUTTON` |
+| `chat_message_image` | `MessageBubble` MediaMessageView | `MessageBubbleTestTags.MEDIA_CONTENT` |
+| `rooms_list` | `RoomListView` List | `RoomListViewTestTags.ROOMS_LIST` |
+| `room_row` | `RoomListView` NavigationLink | `RoomListViewTestTags.ROOM_ROW` |
+| `create_room_button` | `RoomListView` toolbar "+" | `RoomListViewTestTags.CREATE_ROOM_BUTTON` |
+
+### Adding a test for a fix or new feature
+
+- **Behavior bug in `XMPPChatCore`** → add an XCTest in this repo, in
+  the same PR as the fix.
+- **Behavior bug in `XMPPChatUI`** rendering / interaction → add or
+  extend a Maestro flow in `ethora-sample-swift/.maestro/`, in a paired
+  PR to that repo.
+- **Cross-platform parity gap** → make sure the matching Android
+  Compose test or Maestro flow exists too.
+
 ## Build and Validation
 
 ```bash

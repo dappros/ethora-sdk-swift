@@ -98,6 +98,7 @@ struct DefaultMessageBubble: View {
                     DeletedMessageView()
                 } else if message.isMediafile != nil || message.mimetype != nil {
                     MediaMessageView(message: message, isUser: isUser)
+                        .accessibilityIdentifier(MessageBubbleAccessibilityID.mediaContent)
                 } else {
                     VStack(alignment: .leading, spacing: 8) {
                         UniversalMarkdownTextView(

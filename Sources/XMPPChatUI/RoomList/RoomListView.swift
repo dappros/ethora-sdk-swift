@@ -141,6 +141,7 @@ public struct RoomListView: View {
                             messages: room.messages
                         )
                     }
+                    .accessibilityIdentifier(RoomListAccessibilityID.roomRow)
                     .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                         Button(role: .destructive) {
                             roomPendingLeave = room
@@ -151,6 +152,7 @@ public struct RoomListView: View {
                 }
             }
         }
+        .accessibilityIdentifier(RoomListAccessibilityID.roomsList)
     }
     
     @ViewBuilder
@@ -329,6 +331,13 @@ private struct RoomListModeModifier: ViewModifier {
             content
                 .modifier(RestoreNavBarVisibilityModifier())
                 .searchable(text: $searchText)
+                // The .searchable modifier renders a system search field
+                // whose accessibility identifier we surface for tests via
+                // a UIKit appearance override would be needed to fully
+                // pin — but the simpler path is tagging the host List so
+                // tests can scope a search to "the room list" first, then
+                // type into the system search bar by role. Identifier
+                // lives on the List in body() above.
                 .navigationTitle("Chats")
                 .toolbar {
                     #if os(iOS)
@@ -338,6 +347,7 @@ private struct RoomListModeModifier: ViewModifier {
                         }) {
                             Image(systemName: "plus")
                         }
+                        .accessibilityIdentifier(RoomListAccessibilityID.createRoomButton)
                     }
                     #else
                     ToolbarItem(placement: .automatic) {
@@ -346,6 +356,7 @@ private struct RoomListModeModifier: ViewModifier {
                         }) {
                             Image(systemName: "plus")
                         }
+                        .accessibilityIdentifier(RoomListAccessibilityID.createRoomButton)
                     }
                     #endif
                 }
