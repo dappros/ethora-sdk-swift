@@ -31,5 +31,12 @@ let package = Package(
         .testTarget(
             name: "XMPPChatCoreTests",
             dependencies: ["XMPPChatCore"]),
+        // L2 / ViewModel-level tests target XMPPChatUI's ObservableObject
+        // ViewModels. Kept separate from XMPPChatCoreTests so adding a
+        // SwiftUI dependency here doesn't leak into the Core test target,
+        // which intentionally stays UI-framework-free.
+        .testTarget(
+            name: "XMPPChatUITests",
+            dependencies: ["XMPPChatUI", "XMPPChatCore"]),
     ]
 )
