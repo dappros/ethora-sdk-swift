@@ -181,6 +181,7 @@ struct DefaultChatInputView: View {
                                     .stroke(Color.gray.opacity(0.3), lineWidth: 0.5)
                             )
                     }
+                    .accessibilityIdentifier(ChatInputAccessibilityID.attachButton)
                 }
                 
                 ZStack(alignment: .leading) {
@@ -211,6 +212,7 @@ struct DefaultChatInputView: View {
                 )
                 .accentColor(.blue)
                 .focused($isFocused)
+                .accessibilityIdentifier(ChatInputAccessibilityID.inputField)
                 .onSubmit {
                     if !messageText.isEmpty {
                         sendMessage()
@@ -233,6 +235,7 @@ struct DefaultChatInputView: View {
                         }
                     }
                     .buttonStyle(.borderedProminent)
+                    .accessibilityIdentifier(ChatInputAccessibilityID.sendButton)
                 } else {
                     Button(action: {
                         sendMediaOrText()
@@ -249,6 +252,7 @@ struct DefaultChatInputView: View {
                             )
                     }
                     .disabled(messageText.isEmpty && selectedMediaData == nil)
+                    .accessibilityIdentifier(ChatInputAccessibilityID.sendButton)
                 }
             }
             .padding(.horizontal, 16)
