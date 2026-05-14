@@ -37,7 +37,7 @@ public class StanzaHandlers {
         let icon: String?
     }
     
-    init(client: XMPPClient) {
+    init(client: XMPPClient? = nil) {
         self.client = client
     }
     
@@ -53,7 +53,19 @@ public class StanzaHandlers {
         if mucX != nil {
             return
         }
-        
+
+        // Skip stanzas routed through their own dedicated handlers
+        // (onDeleteMessage / onReactionMessage / onEditMessage). Without
+        // this guard their inner `<body>` — for example the literal
+        // "wow" string our `deleteMessage` operation sends to match the
+        // React/Android wire shape — leaks through as a phantom
+        // incoming message. Mirrors the React `onRealtimeMessage`
+        // guards in `stanzaHandlers.ts`.
+        let stanzaId = stanza.attributes["id"] ?? ""
+        if stanzaId == "deleteMessageStanza" { return }
+        if stanzaId.contains("message-reaction") { return }
+        if stanzaId.contains("edit-message") { return }
+
         // Match TypeScript: try { const { data } = await getDataFromXml(stanza); } catch (error) { handleErrorMessageStanza(stanza); return; }
         guard let messageData = MessageParser.getDataFromStanza(stanza) else {
             // Match TypeScript: handleErrorMessageStanza(stanza)
