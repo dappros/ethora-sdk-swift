@@ -2151,29 +2151,56 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
 
     public func deleteMessage(_ messageId: String) {
         print("🗑️ ChatRoomViewModel: Deleting message \(messageId)")
-        print("   Current messages count: \(messages.count)")
-        
+
         // Send delete request via XMPP
         client.operations.deleteMessage(room: room.jid, msgId: messageId)
-        
-        // Match TypeScript EXACTLY: deleteRoomMessage filters out the message completely
-        // From roomsSlice.ts lines 109-111:
-        // state.rooms[roomJID].messages = state.rooms[roomJID].messages.filter(
-        //   (message) => message.id !== messageId
-        // );
-        // Optimistically remove message from array immediately
-        let messagesBeforeDelete = messages.count
-        messages = messages.filter { $0.id != messageId }
-        room.messages = messages
-        
-        print("✅ ChatRoomViewModel.deleteMessage: Message removed optimistically")
-        print("   Messages before: \(messagesBeforeDelete), after: \(messages.count)")
-        
-        // CRITICAL: Save updated messages array to cache immediately
-        MessageCache.shared.saveMessages(messages, forRoomJID: room.jid)
-        print("💾 ChatRoomViewModel.deleteMessage: Saved updated messages to cache")
-        
-        // Update RoomStore (if needed for other parts of the app)
+
+        // Tombstone the message locally — matches the React `deleteRoomMessage`
+        // reducer and the Android SDK. The row stays in place so the bubble
+        // renders the "deleted" placeholder and reply anchors don't dangle.
+        if let index = messages.firstIndex(where: { $0.id == messageId }) {
+            let original = messages[index]
+            messages[index] = Message(
+                id: original.id,
+                user: original.user,
+                date: original.date,
+                body: "",
+                roomJid: original.roomJid,
+                key: original.key,
+                coinsInMessage: original.coinsInMessage,
+                numberOfReplies: original.numberOfReplies,
+                isSystemMessage: original.isSystemMessage,
+                isMediafile: "false",
+                locationPreview: nil,
+                mimetype: nil,
+                location: nil,
+                pending: original.pending,
+                pendingSince: original.pendingSince,
+                failed: original.failed,
+                timestamp: original.timestamp,
+                showInChannel: original.showInChannel,
+                activeMessage: original.activeMessage,
+                isReply: original.isReply,
+                isDeleted: true,
+                mainMessage: original.mainMessage,
+                reply: original.reply,
+                reaction: nil,
+                fileName: nil,
+                translations: original.translations,
+                langSource: original.langSource,
+                originalName: original.originalName,
+                size: original.size,
+                xmppId: original.xmppId,
+                xmppFrom: original.xmppFrom,
+                waveForm: nil,
+                wasEdited: original.wasEdited
+            )
+            room.messages = messages
+            MessageCache.shared.saveMessages(messages, forRoomJID: room.jid)
+        }
+
+        // Mirror the tombstone into RoomStore so room-list / unread paths
+        // observe the same state.
         RoomStore.shared.deleteMessage(roomJID: room.jid, messageId: messageId)
     }
     

@@ -63,11 +63,12 @@ struct MessageBubbleView: View {
                 }
                 
                 buildMediaOrTextContent()
-                
-                if let reactions = message.reaction, !reactions.isEmpty {
-                    ReactionBadgesView(reactions: reactions)
-                        .padding(.top, 4)
-                }
+
+                // Reactions temporarily disabled.
+                // if let reactions = message.reaction, !reactions.isEmpty {
+                //     ReactionBadgesView(reactions: reactions)
+                //         .padding(.top, 4)
+                // }
                 
                 HStack(spacing: 4) {
                     if isUser, message.failed != true, let pending = message.pending, pending {
@@ -99,23 +100,24 @@ struct MessageBubbleView: View {
             .background(isUser ? outgoingBubbleBackground() : incomingBubbleBackground())
             .cornerRadius(16)
             .shadow(color: .black.opacity(0.05), radius: 1, x: 0, y: 1)
-            .overlay(
-                Group {
-                    if showReactionPicker {
-                        ReactionPickerView(
-                            onReactionSelected: { emoji in
-                                onReactionTap?(emoji)
-                                showReactionPicker = false
-                            },
-                            onDismiss: {
-                                showReactionPicker = false
-                            }
-                        )
-                        .offset(y: -60)
-                    }
-                },
-                alignment: .top
-            )
+            // Reaction picker temporarily disabled.
+            // .overlay(
+            //     Group {
+            //         if showReactionPicker {
+            //             ReactionPickerView(
+            //                 onReactionSelected: { emoji in
+            //                     onReactionTap?(emoji)
+            //                     showReactionPicker = false
+            //                 },
+            //                 onDismiss: {
+            //                     showReactionPicker = false
+            //                 }
+            //             )
+            //             .offset(y: -60)
+            //         }
+            //     },
+            //     alignment: .top
+            // )
         }
         
         @ViewBuilder
@@ -184,9 +186,10 @@ struct MessageBubbleView: View {
                                 }
                                 .onLongPressGesture {
                                     onLongPress?()
-                                    if onReactionTap != nil {
-                                        showReactionPicker = true
-                                    }
+                                    // Reaction picker trigger temporarily disabled.
+                                    // if onReactionTap != nil {
+                                    //     showReactionPicker = true
+                                    // }
                                     HapticFeedback.buttonPress()
                                 }
                         }
@@ -208,9 +211,10 @@ struct MessageBubbleView: View {
                                 }
                                 .onLongPressGesture {
                                     onLongPress?()
-                                    if onReactionTap != nil {
-                                        showReactionPicker = true
-                                    }
+                                    // Reaction picker trigger temporarily disabled.
+                                    // if onReactionTap != nil {
+                                    //     showReactionPicker = true
+                                    // }
                                     HapticFeedback.buttonPress()
                                 }
                         }
@@ -332,6 +336,12 @@ struct MessageContextMenuItems: View {
     let onDelete: (() -> Void)?
     let onReport: (() -> Void)?
     
+    private var isMediaMessage: Bool {
+        let hasMediaFlag = message.isMediafile == "true"
+        let hasLocation = message.location != nil && !(message.location ?? "").isEmpty
+        return hasMediaFlag || hasLocation
+    }
+
     var body: some View {
         Group {
             if let onCopy = onCopy {
@@ -339,13 +349,13 @@ struct MessageContextMenuItems: View {
                     Label("Copy", systemImage: "doc.on.doc")
                 }
             }
-            
-            if isUser, let onEdit = onEdit {
+
+            if isUser, !isMediaMessage, let onEdit = onEdit {
                 Button(action: onEdit) {
                     Label("Edit", systemImage: "pencil")
                 }
             }
-            
+
             if isUser, let onDelete = onDelete {
                 Button(role: .destructive, action: onDelete) {
                     Label("Delete", systemImage: "trash")

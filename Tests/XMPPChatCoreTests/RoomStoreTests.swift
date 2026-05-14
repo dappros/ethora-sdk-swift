@@ -247,26 +247,63 @@ final class RoomStoreTests: XCTestCase {
         )
     }
 
-    func testDeleteMessageDropsRowByDefault() {
-        // iOS deleteMessage removes the row outright (vs Android's
-        // tombstone-flip semantics). Document the actual contract so a
-        // future refactor that changes this behaviour is a deliberate
-        // choice, not a silent drift.
+    func testDeleteMessageTombstonesRow() {
+        // Tombstone contract (cross-platform parity with React + Kotlin):
+        // deleteMessage flips `isDeleted = true` and clears body/media
+        // fields, but the row stays in the list so the bubble can render a
+        // "deleted" placeholder and reply anchors that reference this id
+        // don't dangle.
         let room = makeRoom(id: "a")
         RoomStore.shared.addRoom(room)
         RoomStore.shared.setRoomMessages(
             roomJID: room.jid,
             messages: [
-                makeMessage(id: "doomed", roomJID: room.jid, timestamp: 1_000),
-                makeMessage(id: "survivor", roomJID: room.jid, timestamp: 2_000),
+                makeMessage(id: "doomed", roomJID: room.jid, body: "secret", timestamp: 1_000),
+                makeMessage(id: "survivor", roomJID: room.jid, body: "kept", timestamp: 2_000),
             ]
         )
 
         RoomStore.shared.deleteMessage(roomJID: room.jid, messageId: "doomed")
 
-        XCTAssertEqual(
-            RoomStore.shared.rooms[room.jid]?.messages.map { $0.id }, ["survivor"]
-        )
+        let stored = RoomStore.shared.rooms[room.jid]?.messages ?? []
+        XCTAssertEqual(stored.map { $0.id }, ["doomed", "survivor"],
+                       "row is tombstoned in place, not removed")
+
+        let tombstone = stored.first { $0.id == "doomed" }
+        XCTAssertEqual(tombstone?.isDeleted, true)
+        XCTAssertEqual(tombstone?.body, "", "body must be cleared so the old content can't leak")
+        XCTAssertEqual(tombstone?.isMediafile, "false", "media flag is cleared to suppress attachment UI")
+        XCTAssertNil(tombstone?.mimetype)
+        XCTAssertNil(tombstone?.location)
+        XCTAssertNil(tombstone?.locationPreview)
+        XCTAssertNil(tombstone?.fileName)
+        XCTAssertNil(tombstone?.reaction)
+
+        // Identity-preserving fields stay intact so threading/ordering
+        // anchors keep working.
+        XCTAssertEqual(tombstone?.timestamp, 1_000)
+        XCTAssertEqual(tombstone?.roomJid, room.jid)
+    }
+
+    func testDeleteMessageIsNoOpForUnknownIds() {
+        // No matching id → list is left exactly as it was. Important so a
+        // delete-stanza for a message we never received (e.g. arrived out
+        // of order, or for a different device's local-only draft) doesn't
+        // mutate state.
+        let room = makeRoom(id: "a")
+        RoomStore.shared.addRoom(room)
+        let seeded = [
+            makeMessage(id: "m-1", roomJID: room.jid, timestamp: 1_000),
+            makeMessage(id: "m-2", roomJID: room.jid, timestamp: 2_000),
+        ]
+        RoomStore.shared.setRoomMessages(roomJID: room.jid, messages: seeded)
+
+        RoomStore.shared.deleteMessage(roomJID: room.jid, messageId: "ghost")
+
+        let stored = RoomStore.shared.rooms[room.jid]?.messages ?? []
+        XCTAssertEqual(stored.map { $0.id }, ["m-1", "m-2"])
+        XCTAssertEqual(stored.compactMap { $0.isDeleted }.count, 0,
+                       "no row should be flagged as deleted")
     }
 
     // MARK: - recomputeUnreadForRoom math (Cluster E)
@@ -338,5 +375,158 @@ final class RoomStoreTests: XCTestCase {
             RoomStore.shared.rooms[room.jid]?.unreadMessages, 1,
             "only messages strictly newer than lastViewed contribute to unread"
         )
+    }
+
+    // MARK: - updateMessage (Cluster G)
+
+    func testUpdateMessagePatchesOnlyProvidedFields() {
+        // PartialMessageUpdate is the in-place patcher used by edit /
+        // delete echo handlers. Each unspecified field must keep its
+        // prior value — otherwise an edit-stanza that only carries the
+        // new body would silently wipe the message's reactions.
+        let room = makeRoom(id: "a")
+        RoomStore.shared.addRoom(room)
+        let original = makeMessage(id: "m-1", roomJID: room.jid, body: "v1", timestamp: 1_000)
+        RoomStore.shared.setRoomMessages(roomJID: room.jid, messages: [original])
+
+        var patch = PartialMessageUpdate()
+        patch.body = "v2"
+        RoomStore.shared.updateMessage(roomJID: room.jid, messageId: "m-1", updates: patch)
+
+        let stored = RoomStore.shared.rooms[room.jid]?.messages.first
+        XCTAssertEqual(stored?.body, "v2", "body must reflect the patch")
+        XCTAssertEqual(stored?.timestamp, 1_000, "non-patched timestamp must be preserved")
+        XCTAssertEqual(stored?.id, "m-1", "id is identity — must never change")
+    }
+
+    func testUpdateMessageIsNoOpForUnknownIds() {
+        let room = makeRoom(id: "a")
+        RoomStore.shared.addRoom(room)
+        let seeded = [
+            makeMessage(id: "m-1", roomJID: room.jid, body: "v1", timestamp: 1_000),
+        ]
+        RoomStore.shared.setRoomMessages(roomJID: room.jid, messages: seeded)
+
+        var patch = PartialMessageUpdate()
+        patch.body = "ghost-body"
+        RoomStore.shared.updateMessage(roomJID: room.jid, messageId: "ghost", updates: patch)
+
+        XCTAssertEqual(RoomStore.shared.rooms[room.jid]?.messages.first?.body, "v1",
+                       "unknown id must not touch any existing message body")
+    }
+
+    // MARK: - setReactions
+
+    func testSetReactionsAddsReactionToMessage() {
+        let room = makeRoom(id: "a")
+        RoomStore.shared.addRoom(room)
+        RoomStore.shared.setRoomMessages(
+            roomJID: room.jid,
+            messages: [makeMessage(id: "m-1", roomJID: room.jid)]
+        )
+
+        RoomStore.shared.setReactions(
+            roomJID: room.jid,
+            messageId: "m-1",
+            reactions: ["thumbsup"],
+            from: "alice@xmpp.test",
+            data: [:]
+        )
+
+        let stored = RoomStore.shared.rooms[room.jid]?.messages.first
+        XCTAssertNotNil(stored?.reaction?["alice"],
+                        "reaction must be keyed by the from-JID localpart")
+        XCTAssertEqual(stored?.reaction?["alice"]?.emoji, ["thumbsup"])
+    }
+
+    func testSetReactionsWithEmptyArrayRemovesUserReaction() {
+        // Empty reactions array is the "unreact" signal — must clear
+        // this user's entry, not replace it with an empty list.
+        let room = makeRoom(id: "a")
+        RoomStore.shared.addRoom(room)
+        RoomStore.shared.setRoomMessages(
+            roomJID: room.jid,
+            messages: [makeMessage(id: "m-1", roomJID: room.jid)]
+        )
+        RoomStore.shared.setReactions(
+            roomJID: room.jid,
+            messageId: "m-1",
+            reactions: ["thumbsup"],
+            from: "alice@xmpp.test",
+            data: [:]
+        )
+
+        RoomStore.shared.setReactions(
+            roomJID: room.jid,
+            messageId: "m-1",
+            reactions: [],
+            from: "alice@xmpp.test",
+            data: [:]
+        )
+
+        let stored = RoomStore.shared.rooms[room.jid]?.messages.first
+        XCTAssertNil(stored?.reaction?["alice"],
+                     "empty reactions array removes this user's reaction entry")
+    }
+
+    func testSetReactionsKeepsOtherUsersReactionsIntact() {
+        // Adding/removing alice's reaction must not touch bob's. The
+        // reaction map is per-from-localpart.
+        let room = makeRoom(id: "a")
+        RoomStore.shared.addRoom(room)
+        RoomStore.shared.setRoomMessages(
+            roomJID: room.jid,
+            messages: [makeMessage(id: "m-1", roomJID: room.jid)]
+        )
+        RoomStore.shared.setReactions(
+            roomJID: room.jid,
+            messageId: "m-1",
+            reactions: ["thumbsup"],
+            from: "alice@xmpp.test",
+            data: [:]
+        )
+        RoomStore.shared.setReactions(
+            roomJID: room.jid,
+            messageId: "m-1",
+            reactions: ["heart"],
+            from: "bob@xmpp.test",
+            data: [:]
+        )
+
+        RoomStore.shared.setReactions(
+            roomJID: room.jid,
+            messageId: "m-1",
+            reactions: [],
+            from: "alice@xmpp.test",
+            data: [:]
+        )
+
+        let reactions = RoomStore.shared.rooms[room.jid]?.messages.first?.reaction
+        XCTAssertNil(reactions?["alice"])
+        XCTAssertEqual(reactions?["bob"]?.emoji, ["heart"],
+                       "removing alice must leave bob's reaction in place")
+    }
+
+    // MARK: - Tombstone survives setRoomMessages round-trip
+
+    func testTombstonedMessageSurvivesSetRoomMessages() {
+        // Reload path: cache hydrate via setRoomMessages must keep
+        // isDeleted intact so the bubble keeps showing the placeholder
+        // instead of a confusing empty cell.
+        let room = makeRoom(id: "a")
+        RoomStore.shared.addRoom(room)
+        RoomStore.shared.setRoomMessages(
+            roomJID: room.jid,
+            messages: [
+                makeMessage(id: "doomed", roomJID: room.jid, body: "x", timestamp: 1_000, isDeleted: true),
+                makeMessage(id: "alive", roomJID: room.jid, body: "y", timestamp: 2_000),
+            ]
+        )
+
+        let stored = RoomStore.shared.rooms[room.jid]?.messages ?? []
+        let doomed = stored.first { $0.id == "doomed" }
+        XCTAssertEqual(doomed?.isDeleted, true, "isDeleted must survive the hydrate path")
+        XCTAssertEqual(stored.map { $0.id }, ["doomed", "alive"],
+                       "setRoomMessages preserves order and keeps the tombstone")
     }
 }

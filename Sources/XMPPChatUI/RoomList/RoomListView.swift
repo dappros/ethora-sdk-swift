@@ -78,8 +78,13 @@ public struct RoomListView: View {
             .modifier(RoomListModeModifier(hideRoomList: hideRoomList, searchText: $searchText, viewModel: viewModel))
             .background(pushNavigationLink)
             .onAppear {
-                // Call loadRooms if not already loading
-                if !viewModel.isLoading && viewModel.rooms.isEmpty {
+                // Always trigger loadRooms on appear — it's stale-while-revalidate:
+                // the cached list (seeded into `viewModel.rooms` by the
+                // `RoomStore.$rooms` Combine sink in `init`) stays on screen, and
+                // REST refresh runs in the background. Gating on `rooms.isEmpty`
+                // here meant REST was never called when the cache was warm, so
+                // rooms created on another client never appeared on this device.
+                if !viewModel.isLoading {
                     viewModel.loadRooms()
                 }
                 tryOpenRoomFromPendingPushNotification()
@@ -724,17 +729,14 @@ public class RoomListViewModel: ObservableObject {
         ) { [weak self] _ in
             guard let self = self else { return }
 
-            if self.rooms.isEmpty {
-                // After a long background → XMPP reconnect we sometimes get
-                // here with an empty room list (REST 401'd earlier, cache
-                // got cleared, or this VM was just created). Re-trigger the
-                // full `loadRooms` path so the user doesn't have to toggle
-                // tabs to repopulate the list. It's a no-op when already
-                // loading.
-                if !self.isLoading {
-                    self.loadRooms()
-                }
-                return
+            // Always re-fetch the room list on (re)connect. `loadRooms` is
+            // stale-while-revalidate, so the cached list stays on screen
+            // while REST runs; any rooms created on another client while
+            // we were offline show up without forcing the user to toggle
+            // tabs. The previous early-return only refreshed message
+            // history and silently skipped the room list itself.
+            if !self.isLoading {
+                self.loadRooms()
             }
 
             self.messageLoaderQueue?.reset()
@@ -762,12 +764,13 @@ public class RoomListViewModel: ObservableObject {
             queue: .main
         ) { [weak self] _ in
             guard let self = self else { return }
-            if self.rooms.isEmpty {
-                if !self.isLoading { self.loadRooms() }
-            } else {
-                Task { @MainActor [weak self] in
-                    await self?.refreshLatestForAllRooms()
-                }
+            // Same reasoning as in the `XMPPClientDidConnect` handler:
+            // refresh the room list itself in addition to message history,
+            // so new rooms added on another client during the offline gap
+            // show up after recovery.
+            if !self.isLoading { self.loadRooms() }
+            Task { @MainActor [weak self] in
+                await self?.refreshLatestForAllRooms()
             }
         }
         notificationObservers.append(recoveryToken)

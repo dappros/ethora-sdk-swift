@@ -243,10 +243,55 @@ public class RoomStore: ObservableObject {
         saveToCache()
     }
     
-    /// Delete message from room
+    /// Tombstone a message in a room.
+    ///
+    /// Matches the React `deleteRoomMessage` reducer
+    /// (`ethora-chat-component/src/roomStore/roomsSlice.ts`) and the
+    /// Kotlin SDK: the row stays in place so the bubble can render a
+    /// "message deleted" placeholder and so reply/quoting anchors that
+    /// reference this id don't dangle. Media-side fields and reactions
+    /// are cleared so the placeholder doesn't show stale attachments.
     public func deleteMessage(roomJID: String, messageId: String) {
-        guard var room = rooms[roomJID] else { return }
-        room.messages.removeAll { $0.id == messageId }
+        guard var room = rooms[roomJID],
+              let index = room.messages.firstIndex(where: { $0.id == messageId }) else {
+            return
+        }
+        let original = room.messages[index]
+        room.messages[index] = Message(
+            id: original.id,
+            user: original.user,
+            date: original.date,
+            body: "",
+            roomJid: original.roomJid,
+            key: original.key,
+            coinsInMessage: original.coinsInMessage,
+            numberOfReplies: original.numberOfReplies,
+            isSystemMessage: original.isSystemMessage,
+            isMediafile: "false",
+            locationPreview: nil,
+            mimetype: nil,
+            location: nil,
+            pending: original.pending,
+            pendingSince: original.pendingSince,
+            failed: original.failed,
+            timestamp: original.timestamp,
+            showInChannel: original.showInChannel,
+            activeMessage: original.activeMessage,
+            isReply: original.isReply,
+            isDeleted: true,
+            mainMessage: original.mainMessage,
+            reply: original.reply,
+            reaction: nil,
+            fileName: nil,
+            translations: original.translations,
+            langSource: original.langSource,
+            originalName: original.originalName,
+            size: original.size,
+            xmppId: original.xmppId,
+            xmppFrom: original.xmppFrom,
+            waveForm: nil,
+            wasEdited: original.wasEdited
+        )
         rooms[roomJID] = room
         saveToCache()
     }
