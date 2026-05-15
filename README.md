@@ -1,5 +1,11 @@
 # Ethora SDK for Swift (`ethora-sdk-swift`)
 
+[![Swift Package Manager compatible](https://img.shields.io/badge/SwiftPM-compatible-brightgreen.svg)](https://swift.org/package-manager/)
+[![Swift 5.9+](https://img.shields.io/badge/Swift-5.9+-orange.svg)](https://swift.org)
+[![Platforms](https://img.shields.io/badge/platforms-iOS%2015%2B-lightgrey.svg)](Package.swift)
+[![Release](https://img.shields.io/github/v/release/dappros/ethora-sdk-swift?display_name=tag&sort=semver)](https://github.com/dappros/ethora-sdk-swift/releases)
+[![License](https://img.shields.io/github/license/dappros/ethora-sdk-swift.svg)](LICENSE)
+
 Production-ready iOS chat SDK with:
 - `XMPPChatCore` for auth, API, XMPP transport, stores, and messaging operations
 - `XMPPChatUI` for ready-made SwiftUI chat UI on top of the core
