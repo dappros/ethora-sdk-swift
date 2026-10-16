@@ -19,6 +19,16 @@ public class HandleStanzas {
     /// Main entry point for handling stanzas
     /// Matches TypeScript: handleStanza(stanza: Element, xmppWs: XmppClient)
     public func handleStanza(_ stanza: XMPPStanza) {
+        // Server push pointers (urn:ethora:events:1), also when wrapped by MUC-sub.
+        // Claimed whether trusted or not, so the stanza goes no further.
+        if let carrier = EthoraEvents.carrier(in: stanza) {
+            let ownDomain = EthoraEvents.domain(ofJID: client?.xmppStream?.jid ?? "")
+            Task { @MainActor in
+                EthoraEventHandler.shared.handle(carrier: carrier, ownDomain: ownDomain)
+            }
+            return
+        }
+
         if stanza.attributes["type"] == "headline" {
             return
         }
@@ -63,10 +73,12 @@ public class HandleStanzas {
                 stanzaHandlers.handleComposing(dispatchStanza, currentUser: username)
             }
             stanzaHandlers.onPresenceInRoom(dispatchStanza)
+            stanzaHandlers.onRoomMembershipChange(dispatchStanza)
 
         case "presence":
             stanzaHandlers.onRoomKicked(dispatchStanza)
             stanzaHandlers.onPresenceInRoom(dispatchStanza)
+            stanzaHandlers.onOccupantPresence(dispatchStanza, ownNick: client?.username ?? "")
 
         case "iq":
             stanzaHandlers.onIQError(dispatchStanza)

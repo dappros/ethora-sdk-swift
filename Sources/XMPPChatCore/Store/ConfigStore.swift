@@ -100,6 +100,15 @@ public class ConfigStore: ObservableObject {
         if let disableNewChatButton = partialConfig.disableNewChatButton {
             config.disableNewChatButton = disableNewChatButton
         }
+        if let disableRoomSwipeActions = partialConfig.disableRoomSwipeActions {
+            config.disableRoomSwipeActions = disableRoomSwipeActions
+        }
+        if let disableRoomMute = partialConfig.disableRoomMute {
+            config.disableRoomMute = disableRoomMute
+        }
+        if let disablePublicChatsDirectory = partialConfig.disablePublicChatsDirectory {
+            config.disablePublicChatsDirectory = disablePublicChatsDirectory
+        }
         if let roomListStyles = partialConfig.roomListStyles {
             config.roomListStyles = roomListStyles
         }
@@ -166,6 +175,9 @@ public class ConfigStore: ObservableObject {
         if let whitelistSystemMessage = partialConfig.whitelistSystemMessage {
             config.whitelistSystemMessage = whitelistSystemMessage
         }
+        if let trustedEventSenders = partialConfig.trustedEventSenders {
+            config.trustedEventSenders = trustedEventSenders
+        }
         if let disableTypingIndicator = partialConfig.disableTypingIndicator {
             config.disableTypingIndicator = disableTypingIndicator
         }
@@ -225,11 +237,12 @@ extension ChatConfig: Codable {
         case disableRooms, defaultLogin, disableInteractions
         case chatHeaderBurgerMenu, forceSetRoom, setRoomJidInPath
         case disableRoomMenu, disableRoomConfig, disableNewChatButton
+        case disableRoomSwipeActions, disableRoomMute, disablePublicChatsDirectory
         case backgroundChat, bubleMessage, headerLogo
         case translates, disableProfilesInteractions, disableUserCount
         case clearStoreBeforeInit, disableSentLogic, initBeforeLoad
         case newArch, qrUrl, enableRoomsRetry
-        case botMessageAutoScroll, whitelistSystemMessage
+        case botMessageAutoScroll, whitelistSystemMessage, trustedEventSenders
         case disableTypingIndicator, disableChatInfo, chatHeaderSettings
         case useStoreConsoleEnabled
         case push
@@ -256,6 +269,9 @@ extension ChatConfig: Codable {
         self.disableRoomMenu = try container.decodeIfPresent(Bool.self, forKey: .disableRoomMenu)
         self.disableRoomConfig = try container.decodeIfPresent(Bool.self, forKey: .disableRoomConfig)
         self.disableNewChatButton = try container.decodeIfPresent(Bool.self, forKey: .disableNewChatButton)
+        self.disableRoomSwipeActions = try container.decodeIfPresent(Bool.self, forKey: .disableRoomSwipeActions)
+        self.disableRoomMute = try container.decodeIfPresent(Bool.self, forKey: .disableRoomMute)
+        self.disablePublicChatsDirectory = try container.decodeIfPresent(Bool.self, forKey: .disablePublicChatsDirectory)
         self.backgroundChat = try container.decodeIfPresent(BackgroundChatConfig.self, forKey: .backgroundChat)
         self.bubleMessage = try container.decodeIfPresent(MessageBubbleStyle.self, forKey: .bubleMessage)
         self.headerLogo = try container.decodeIfPresent(String.self, forKey: .headerLogo)
@@ -270,6 +286,7 @@ extension ChatConfig: Codable {
         self.enableRoomsRetry = try container.decodeIfPresent(EnableRoomsRetryConfig.self, forKey: .enableRoomsRetry)
         self.botMessageAutoScroll = try container.decodeIfPresent(Bool.self, forKey: .botMessageAutoScroll)
         self.whitelistSystemMessage = try container.decodeIfPresent([String].self, forKey: .whitelistSystemMessage)
+        self.trustedEventSenders = try container.decodeIfPresent([String].self, forKey: .trustedEventSenders)
         self.disableTypingIndicator = try container.decodeIfPresent(Bool.self, forKey: .disableTypingIndicator)
         self.disableChatInfo = try container.decodeIfPresent(DisableChatInfoConfig.self, forKey: .disableChatInfo)
         self.chatHeaderSettings = try container.decodeIfPresent(ChatHeaderSettingsConfig.self, forKey: .chatHeaderSettings)
@@ -315,6 +332,9 @@ extension ChatConfig: Codable {
         try container.encodeIfPresent(disableRoomMenu, forKey: .disableRoomMenu)
         try container.encodeIfPresent(disableRoomConfig, forKey: .disableRoomConfig)
         try container.encodeIfPresent(disableNewChatButton, forKey: .disableNewChatButton)
+        try container.encodeIfPresent(disableRoomSwipeActions, forKey: .disableRoomSwipeActions)
+        try container.encodeIfPresent(disableRoomMute, forKey: .disableRoomMute)
+        try container.encodeIfPresent(disablePublicChatsDirectory, forKey: .disablePublicChatsDirectory)
         try container.encodeIfPresent(backgroundChat, forKey: .backgroundChat)
         try container.encodeIfPresent(bubleMessage, forKey: .bubleMessage)
         try container.encodeIfPresent(headerLogo, forKey: .headerLogo)
@@ -329,6 +349,7 @@ extension ChatConfig: Codable {
         try container.encodeIfPresent(enableRoomsRetry, forKey: .enableRoomsRetry)
         try container.encodeIfPresent(botMessageAutoScroll, forKey: .botMessageAutoScroll)
         try container.encodeIfPresent(whitelistSystemMessage, forKey: .whitelistSystemMessage)
+        try container.encodeIfPresent(trustedEventSenders, forKey: .trustedEventSenders)
         try container.encodeIfPresent(disableTypingIndicator, forKey: .disableTypingIndicator)
         try container.encodeIfPresent(disableChatInfo, forKey: .disableChatInfo)
         try container.encodeIfPresent(chatHeaderSettings, forKey: .chatHeaderSettings)

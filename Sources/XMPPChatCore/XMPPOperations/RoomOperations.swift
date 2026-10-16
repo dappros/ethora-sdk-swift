@@ -289,15 +289,23 @@ extension XMPPOperations {
     /// Mirrors inviteRoomRequest from inviteRoomRequest.xmpp.ts
     public func inviteRoomRequest(to: String, roomJid: String, chatDomain: String) {
         guard let stream = client?.xmppStream else { return }
-        
-        let id = "invite-rooms:\(Int64(Date().timeIntervalSince1970 * 1000))"
-        let inviteTo = "\(to)\(chatDomain)"
-        
+        let messageStanza = Self.makeInviteStanza(to: to, roomJid: roomJid, chatDomain: chatDomain)
+        stream.send(messageStanza)
+    }
+
+    /// Builds the invite stanza:
+    /// `<message to="room" id="invite-rooms:{ms}"><x xmlns="muc#user"><invite to="user{chatDomain}"/></x></message>`
+    public static func makeInviteStanza(
+        to: String,
+        roomJid: String,
+        chatDomain: String,
+        nowMillis: Int64 = Int64(Date().timeIntervalSince1970 * 1000)
+    ) -> XMPPStanza {
+        let id = "invite-rooms:\(nowMillis)"
         let inviteStanza = XMPPStanza(
             name: "invite",
-            attributes: ["to": inviteTo]
+            attributes: ["to": "\(to)\(chatDomain)"]
         )
-        
         let xStanza = XMPPStanza(
             name: "x",
             attributes: [
@@ -305,8 +313,7 @@ extension XMPPOperations {
             ],
             children: [inviteStanza]
         )
-        
-        let messageStanza = XMPPStanza(
+        return XMPPStanza(
             name: "message",
             attributes: [
                 "to": roomJid,
@@ -314,8 +321,6 @@ extension XMPPOperations {
             ],
             children: [xStanza]
         )
-        
-        stream.send(messageStanza)
     }
     
     // MARK: - Leave Room

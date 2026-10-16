@@ -30,6 +30,14 @@ extension XMPPClient {
     /// (matches web behavior): the server stops broadcasting room
     /// stanzas to this resource, while the room itself and the other
     /// occupants are untouched.
+    /// Invite a user (bare localpart, e.g. `appId_userId`) to a room.
+    /// The invitee's jid is `username` + the connected domain, as in web's CHAT_DOMAIN.
+    public func inviteUserToRoom(username: String, roomJID: String) {
+        let domain = EthoraEvents.domain(ofJID: xmppStream?.jid ?? "")
+        guard !domain.isEmpty else { return }
+        operations.inviteRoomRequest(to: username, roomJid: roomJID, chatDomain: "@\(domain)")
+    }
+
     public func leaveRoom(roomJID: String) async {
         await operations.leaveRoom(roomJID: roomJID)
     }

@@ -134,6 +134,12 @@ public class RoomStore: ObservableObject {
         if let usersCnt = updates.usersCnt {
             room.usersCnt = usersCnt
         }
+        if let title = updates.title {
+            room.title = title
+        }
+        if let name = updates.name {
+            room.name = name
+        }
         if let messages = updates.messages {
             room.messages = messages
         }
@@ -187,6 +193,9 @@ public class RoomStore: ObservableObject {
         }
         if let historyComplete = updates.historyComplete {
             room.historyComplete = historyComplete
+        }
+        if let muted = updates.muted {
+            room.muted = muted
         }
         
         rooms[jid] = room
@@ -601,6 +610,8 @@ public struct ReportRoomState {
 
 public struct PartialRoomUpdate {
     public var usersCnt: Int?
+    public var title: String?
+    public var name: String?
     public var messages: [Message]?
     public var isLoading: Bool?
     public var roomBg: String?
@@ -619,6 +630,7 @@ public struct PartialRoomUpdate {
     public var role: String?
     public var messageStats: MessageStats?
     public var historyComplete: Bool?
+    public var muted: Bool?
     
     public init() {}
 }
