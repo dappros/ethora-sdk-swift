@@ -205,7 +205,7 @@ public final class MessageParser {
 
         // Match TypeScript: createMessageFromXml doesn't filter body, but addRoomMessage does
         // So we create message with body (even if empty), and it will be filtered in handleIncomingMessage
-        return Message(
+        var message = Message(
             id: d.id,
             user: user,
             date: d.date,
@@ -230,6 +230,18 @@ public final class MessageParser {
             xmppId: d.xmppId,
             xmppFrom: d.xmppFrom
         )
+        message.e2eeKeys = decodeE2eeKeys(d.dataAttrs["e2eeKeys"])
+        message.clientEncrypted = d.dataAttrs["clientEncrypted"] == "true"
+        return message
+    }
+
+    /// The `e2eeKeys` data attribute is a JSON array of base64 key materials.
+    static func decodeE2eeKeys(_ raw: String?) -> [String]? {
+        guard let raw, let data = raw.data(using: .utf8),
+              let keys = try? JSONSerialization.jsonObject(with: data) as? [String], !keys.isEmpty else {
+            return nil
+        }
+        return keys
     }
 
     private static func inferMimeType(from urlString: String) -> String? {

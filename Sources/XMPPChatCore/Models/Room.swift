@@ -117,6 +117,9 @@ public struct Room: Codable, Identifiable, Equatable {
     public var role: String?
     public var messageStats: MessageStats?
     public var historyComplete: Bool?
+    /// End-to-end encrypted room (OMEMO 2), as the backend reports it on GET /chats/my.
+    /// Set when the room is created and never changed.
+    public var e2ee: Bool?
     
     public init(
         id: String,
@@ -146,7 +149,8 @@ public struct Room: Codable, Identifiable, Equatable {
         noMessages: Bool? = nil,
         role: String? = nil,
         messageStats: MessageStats? = nil,
-        historyComplete: Bool? = nil
+        historyComplete: Bool? = nil,
+        e2ee: Bool? = nil
     ) {
         self.id = id
         self.jid = jid
@@ -176,6 +180,7 @@ public struct Room: Codable, Identifiable, Equatable {
         self.role = role
         self.messageStats = messageStats
         self.historyComplete = historyComplete
+        self.e2ee = e2ee
     }
 }
 
@@ -201,6 +206,7 @@ public struct ApiRoom: Codable {
     public var updatedAt: String?
     public var __v: Int?  // Changed from String? to Int? based on API response showing 0
     public var reported: Bool?
+    public var e2ee: Bool?
     
     // Explicit CodingKeys to ensure proper decoding
     enum CodingKeys: String, CodingKey {
@@ -218,6 +224,7 @@ public struct ApiRoom: Codable {
         case updatedAt
         case __v
         case reported
+        case e2ee
     }
 }
 
@@ -282,7 +289,8 @@ public extension Room {
             noMessages: nil,
             role: nil,
             messageStats: nil,
-            historyComplete: nil
+            historyComplete: nil,
+            e2ee: apiRoom.e2ee
         )
     }
 }

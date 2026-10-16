@@ -13,7 +13,9 @@ import SwiftUI
 public class ConfigStore: ObservableObject {
     public static let shared = ConfigStore()
     
-    @Published public var config: ChatConfig
+    @Published public var config: ChatConfig {
+        didSet { E2EERuntime.setEnabled(config.e2ee?.enabled == true) }
+    }
     
     private let userDefaults = UserDefaults.standard
     private let configKey = "ethora_chat_config"
@@ -29,6 +31,7 @@ public class ConfigStore: ObservableObject {
         } else {
             self.config = ChatConfig()
         }
+        E2EERuntime.setEnabled(config.e2ee?.enabled == true)
     }
     
     /// Update configuration
@@ -193,6 +196,9 @@ public class ConfigStore: ObservableObject {
         if let push = partialConfig.push {
             config.push = push
         }
+        if let e2ee = partialConfig.e2ee {
+            config.e2ee = e2ee
+        }
         
         saveConfig()
     }
@@ -233,6 +239,7 @@ extension ChatConfig: Codable {
         case disableTypingIndicator, disableChatInfo, chatHeaderSettings
         case useStoreConsoleEnabled
         case push
+        case e2ee
     }
     
     public init(from decoder: Decoder) throws {
@@ -275,6 +282,7 @@ extension ChatConfig: Codable {
         self.chatHeaderSettings = try container.decodeIfPresent(ChatHeaderSettingsConfig.self, forKey: .chatHeaderSettings)
         self.useStoreConsoleEnabled = try container.decodeIfPresent(Bool.self, forKey: .useStoreConsoleEnabled)
         self.push = try container.decodeIfPresent(PushNotificationConfig.self, forKey: .push)
+        self.e2ee = try container.decodeIfPresent(E2EEConfig.self, forKey: .e2ee)
         
         // Non-codable properties initialized to nil
         self.customLogin = nil
@@ -334,5 +342,6 @@ extension ChatConfig: Codable {
         try container.encodeIfPresent(chatHeaderSettings, forKey: .chatHeaderSettings)
         try container.encodeIfPresent(useStoreConsoleEnabled, forKey: .useStoreConsoleEnabled)
         try container.encodeIfPresent(push, forKey: .push)
+        try container.encodeIfPresent(e2ee, forKey: .e2ee)
     }
 }

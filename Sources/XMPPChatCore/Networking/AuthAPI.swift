@@ -476,7 +476,8 @@ public struct AuthAPI {
         fileName: String,
         mimeType: String,
         baseURL: URL? = nil,
-        token: String
+        token: String,
+        clientEncrypted: Bool = false
     ) async throws -> UploadResponse {
         let resolvedBaseURL = try await AppConfig.resolveBaseURL(baseURL)
         let url = resolvedBaseURL.appendingPathComponent("files/")
@@ -500,6 +501,11 @@ public struct AuthAPI {
         body.append("Content-Type: \(mimeType)\r\n\r\n".data(using: .utf8)!)
         body.append(fileData)
         body.append("\r\n".data(using: .utf8)!)
+        if clientEncrypted {
+            // The payload is ciphertext the caller sealed: store it verbatim (no thumbnail, no probe).
+            body.append("--\(boundary)\r\n".data(using: .utf8)!)
+            body.append("Content-Disposition: form-data; name=\"clientEncrypted\"\r\n\r\ntrue\r\n".data(using: .utf8)!)
+        }
         body.append("--\(boundary)--\r\n".data(using: .utf8)!)
         
         request.httpBody = body

@@ -55,6 +55,10 @@ public struct Message: Codable, Identifiable, Equatable {
     public var xmppId: String?
     public var xmppFrom: String?
     public var waveForm: String? // Waveform data for audio messages
+    /// End-to-end encryption: the attachment keys of a sealed media message (E2EE rooms).
+    public var e2eeKeys: [String]?
+    /// True when the attachments of this message are sealed (client-side encrypted).
+    public var clientEncrypted: Bool?
     
     public init(
         id: String,

@@ -1738,6 +1738,21 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
                     return
                 }
                 
+                // E2EE: in an e2ee room the file is sealed before it leaves the device. The server
+                // gets opaque bytes under a random name, and the key rides in the encrypted message.
+                var sealedKeys: [String]?
+                if await E2EE.isRoomEncrypted(room.jid) {
+                    let sealed = try E2EE.sealFileForUpload(
+                        bytes: finalData,
+                        mimetype: finalMimeType,
+                        originalName: finalFileName
+                    )
+                    finalData = sealed.ciphertext
+                    finalMimeType = "application/octet-stream"
+                    finalFileName = sealed.filename
+                    sealedKeys = [sealed.keyMaterial]
+                }
+
                 let uploadBaseURL: URL
                 do {
                     uploadBaseURL = try Self.resolvedUploadBaseURL()
@@ -1762,7 +1777,8 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
                         fileName: finalFileName,
                         mimeType: finalMimeType,
                         baseURL: uploadBaseURL,
-                        token: token
+                        token: token,
+                        clientEncrypted: sealedKeys != nil
                     )
                 }
                 
@@ -1803,7 +1819,7 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
                     expiresAtString = nil
                 }
                 
-                let mediaData = MediaMessageData(
+                var mediaData = MediaMessageData(
                     firstName: user.firstName ?? "",
                     lastName: user.lastName ?? "",
                     walletAddress: user.walletAddress ?? "",
@@ -1825,6 +1841,7 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
                     attachmentId: resultId,
                     roomJid: room.jid
                 )
+                mediaData.e2eeKeys = sealedKeys
                 
                 // Add optimistic media message immediately (web parity).
                 // This guarantees the user sees the image even if server echo is delayed.
