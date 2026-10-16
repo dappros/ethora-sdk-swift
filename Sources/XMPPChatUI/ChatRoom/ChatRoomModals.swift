@@ -19,7 +19,7 @@ struct FilePreviewModal: View {
             ZStack {
                 Color.black.ignoresSafeArea()
                 
-                if let mimeType = message.mimetype, let fileURL = message.location, let url = URL(string: fileURL) {
+                if let mimeType = message.mimetype, let fileURL = message.location, let url = SecureFileURL.currentURL(fileURL) {
                     Group {
                         if mimeType.starts(with: "image/") {
                             FullScreenImageView(imageURL: url, onClose: onClose)
@@ -91,7 +91,7 @@ struct FilePreviewModal: View {
     }
     
     private func downloadFile() {
-        guard let fileURL = message.location, let url = URL(string: fileURL) else { return }
+        guard let fileURL = message.location, let url = SecureFileURL.currentURL(fileURL) else { return }
         
         isDownloading = true
         
@@ -129,7 +129,7 @@ struct PDFViewerView: View {
     
     var body: some View {
         #if os(iOS)
-        if let url = URL(string: pdfURL) {
+        if let url = SecureFileURL.currentURL(pdfURL) {
             WebView(url: url)
         } else {
             Text("Unable to load PDF")

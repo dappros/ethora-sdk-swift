@@ -58,6 +58,11 @@ public struct Message: Codable, Identifiable, Equatable {
     /// XEP-0184 delivery receipts for an outgoing message: sender nickname to
     /// receipt time (ms). Empty or nil until someone else's client acks it.
     public var receivedBy: [String: Int64]?
+    /// Every file of a multi-file media message (the `attachments` attribute). Nil for text and for media
+    /// messages that carry one file in the flat fields; read `mediaAttachments` for the full list either way.
+    public var attachments: [MessageAttachment]?
+    /// Text typed with the files. Travels on the media message itself, never as a separate message.
+    public var caption: String?
     
     public init(
         id: String,
@@ -93,7 +98,9 @@ public struct Message: Codable, Identifiable, Equatable {
         xmppFrom: String? = nil,
         waveForm: String? = nil,
         wasEdited: Bool? = nil,
-        receivedBy: [String: Int64]? = nil
+        receivedBy: [String: Int64]? = nil,
+        attachments: [MessageAttachment]? = nil,
+        caption: String? = nil
     ) {
         self.id = id
         self.user = user
@@ -129,6 +136,8 @@ public struct Message: Codable, Identifiable, Equatable {
         self.xmppFrom = xmppFrom
         self.waveForm = waveForm
         self.receivedBy = receivedBy
+        self.attachments = attachments
+        self.caption = caption
     }
 }
 

@@ -44,19 +44,9 @@ private struct ChatRoomModalsModifier: ViewModifier {
     @ObservedObject var viewModel: ChatRoomViewModel
     @State private var imageURLResolveAttempts: Int = 0
     
+    /// Media URL with the signed-in user's `ft` token applied (secure files only).
     private func resolvedURL(_ raw: String?) -> URL? {
-        guard let raw, !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return nil
-        }
-        if let direct = URL(string: raw), direct.scheme != nil {
-            return direct
-        }
-        if let encoded = raw.addingPercentEncoding(withAllowedCharacters: .urlFragmentAllowed),
-           let encodedURL = URL(string: encoded),
-           encodedURL.scheme != nil {
-            return encodedURL
-        }
-        return nil
+        SecureFileURL.currentURL(raw)
     }
     
     private func freshestMediaMessage() -> Message? {
@@ -173,7 +163,7 @@ private struct ChatRoomModalsModifier: ViewModifier {
                 }
             }
             .sheet(isPresented: $showFullScreenVideo) {
-                if let message = selectedMediaMessage, let urlString = message.location, let url = URL(string: urlString) {
+                if let message = selectedMediaMessage, let urlString = message.location, let url = SecureFileURL.currentURL(urlString) {
                     #if os(iOS)
                     FullScreenVideoView(videoURL: url, onClose: {
                         showFullScreenVideo = false
@@ -185,7 +175,7 @@ private struct ChatRoomModalsModifier: ViewModifier {
                 }
             }
             .sheet(isPresented: $showFullScreenPDF) {
-                if let message = selectedMediaMessage, let urlString = message.location, let url = URL(string: urlString) {
+                if let message = selectedMediaMessage, let urlString = message.location, let url = SecureFileURL.currentURL(urlString) {
                     FullScreenPDFView(pdfURL: url, fileName: message.fileName ?? message.originalName ?? "Document.pdf", onClose: {
                         showFullScreenPDF = false
                         selectedMediaMessage = nil

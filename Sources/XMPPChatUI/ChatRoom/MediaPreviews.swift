@@ -58,7 +58,7 @@ struct ImagePreview: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Button(action: onTap) {
-                AsyncImage(url: URL(string: previewURL ?? imageURL)) { phase in
+                AsyncImage(url: SecureFileURL.currentURL(previewURL ?? imageURL)) { phase in
                     switch phase {
                     case .empty:
                         ProgressView()
@@ -101,7 +101,7 @@ struct VideoPreview: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Button(action: onTap) {
-                if let url = URL(string: videoURL) {
+                if let url = SecureFileURL.currentURL(videoURL) {
                     #if os(iOS)
                     VideoPlayer(player: AVPlayer(url: url))
                         .frame(width: 300, height: 200)
@@ -184,7 +184,7 @@ struct FilePreview: View {
     var body: some View {
         Button(action: onTap) {
             HStack {
-                if let previewURL = previewURL, let url = URL(string: previewURL) {
+                if let previewURL = previewURL, let url = SecureFileURL.currentURL(previewURL) {
                     AsyncImage(url: url) { phase in
                         switch phase {
                         case .empty:

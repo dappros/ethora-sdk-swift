@@ -35,6 +35,8 @@ public struct User: Codable, Identifiable, Equatable {
     public var isAssetsOpen: Bool?
     public var isAgreeWithTerms: Bool?
     public var isSuperAdmin: Bool?
+    /// Per-viewer token appended as `ft` to secure file URLs. Refreshed with the access token.
+    public var fileToken: String?
     
     public init(
         id: String,
@@ -61,7 +63,8 @@ public struct User: Codable, Identifiable, Equatable {
         isProfileOpen: Bool? = nil,
         isAssetsOpen: Bool? = nil,
         isAgreeWithTerms: Bool? = nil,
-        isSuperAdmin: Bool? = nil
+        isSuperAdmin: Bool? = nil,
+        fileToken: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -88,6 +91,7 @@ public struct User: Codable, Identifiable, Equatable {
         self.isAssetsOpen = isAssetsOpen
         self.isAgreeWithTerms = isAgreeWithTerms
         self.isSuperAdmin = isSuperAdmin
+        self.fileToken = fileToken
     }
     
     public var fullName: String {

@@ -1751,146 +1751,81 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
         )
     }
     
+    /// Sends one media message for a single file. Same wire form as before multi-file sends.
     public func sendMedia(data: Data, type: String, caption: String? = nil) {
-        print("📤 ChatRoomViewModel.sendMedia: Called with type: \(type), size: \(data.count) bytes, caption: \(caption?.isEmpty == false ? "yes" : "no")")
-        
+        sendMediaFiles([OutgoingMediaFile(data: data, mimeType: type)], caption: caption)
+    }
+
+    /// Sends one message carrying every file in `files`, in the order given, with `caption` on the message itself.
+    ///
+    /// Each file is uploaded on its own (secure route first, then the legacy one, as web does). The message is only
+    /// sent once every file is up: one failed upload stops the send rather than posting an incomplete album. Only a
+    /// multi-file message adds the `attachments` attribute; a single file goes out exactly as before.
+    public func sendMediaFiles(_ files: [OutgoingMediaFile], caption: String? = nil) {
+        let picked = Array(files.prefix(MessageAttachments.maxPerMessage))
+        print("📤 ChatRoomViewModel.sendMediaFiles: \(picked.count) file(s), caption: \(caption?.contains(where: { !$0.isWhitespace }) == true ? "yes" : "no")")
+        guard !picked.isEmpty else { return }
+
         guard let user = UserStore.shared.currentUser else {
-            print("❌ ChatRoomViewModel.sendMedia: No current user")
+            print("❌ ChatRoomViewModel.sendMediaFiles: No current user")
             return
         }
-        
+
+        let stamp = Int64(Date().timeIntervalSince1970 * 1000)
         // Generate unique message ID
-        let messageId = "send-media-message-\(Int64(Date().timeIntervalSince1970 * 1000))"
-        
+        let messageId = "send-media-message-\(stamp)"
+        // Web keeps the caption text as typed; it only drops a caption that is blank.
+        let captionText: String? = caption?.contains(where: { !$0.isWhitespace }) == true ? caption : nil
+
         Task {
             do {
-                // Convert HEIC to JPEG if needed
-                var finalData = data
-                var finalMimeType = type
-                var finalFileName = "media_\(Int64(Date().timeIntervalSince1970 * 1000))"
-                
-                #if os(iOS)
-                if type == "image/heic" || type == "image/heif" {
-                    print("🔄 ChatRoomViewModel.sendMedia: Converting HEIC to JPEG...")
-                    if let uiImage = UIImage(data: data) {
-                        if let jpegData = uiImage.jpegData(compressionQuality: 0.8) {
-                            finalData = jpegData
-                            finalMimeType = "image/jpeg"
-                            finalFileName = "\(finalFileName).jpg"
-                            print("✅ ChatRoomViewModel.sendMedia: Converted HEIC to JPEG (\(data.count) -> \(jpegData.count) bytes)")
-                        } else {
-                            print("❌ ChatRoomViewModel.sendMedia: Failed to convert HEIC to JPEG")
-                            return
-                        }
-                    } else {
-                        print("❌ ChatRoomViewModel.sendMedia: Failed to create UIImage from HEIC data")
-                        return
-                    }
-                } else {
-                    // Determine file extension from MIME type
-                    let fileExtension: String
-                    if type.starts(with: "image/") {
-                        if type.contains("png") {
-                            fileExtension = "png"
-                        } else if type.contains("gif") {
-                            fileExtension = "gif"
-                        } else {
-                            fileExtension = "jpg"
-                        }
-                    } else if type.starts(with: "video/") {
-                        fileExtension = "mp4"
-                    } else if type.contains("pdf") {
-                        fileExtension = "pdf"
-                    } else {
-                        fileExtension = "bin"
-                    }
-                    finalFileName = "\(finalFileName).\(fileExtension)"
-                }
-                #else
-                // For macOS, determine file extension from MIME type
-                let fileExtension: String
-                if type.starts(with: "image/") {
-                    if type.contains("png") {
-                        fileExtension = "png"
-                    } else if type.contains("gif") {
-                        fileExtension = "gif"
-                    } else {
-                        fileExtension = "jpg"
-                    }
-                } else if type.starts(with: "video/") {
-                    fileExtension = "mp4"
-                } else if type.contains("pdf") {
-                    fileExtension = "pdf"
-                } else {
-                    fileExtension = "bin"
-                }
-                finalFileName = "\(finalFileName).\(fileExtension)"
-                #endif
-
-                // Preprocess images to avoid backend payload limits (HTTP 413).
-                // Keep non-image files untouched.
-                if finalMimeType.hasPrefix("image/") {
-                    let targetMaxBytes = 1_900_000
-                    let optimized = optimizeImagePayload(
-                        data: finalData,
-                        mimeType: finalMimeType,
-                        maxBytes: targetMaxBytes
-                    )
-                    finalData = optimized.data
-                    finalMimeType = optimized.mimeType
-                    if !finalFileName.lowercased().hasSuffix(".jpg") && !finalFileName.lowercased().hasSuffix(".jpeg") {
-                        finalFileName = "\(finalFileName).jpg"
-                    }
-                }
-                
-                print("📤 ChatRoomViewModel.sendMedia: Final filename: \(finalFileName), MIME type: \(finalMimeType), size: \(finalData.count) bytes")
-                
-                // Upload file to server
                 guard let token = UserStore.shared.token else {
-                    print("❌ ChatRoomViewModel.sendMedia: No authentication token")
+                    print("❌ ChatRoomViewModel.sendMediaFiles: No authentication token")
                     return
                 }
-                
+
                 let uploadBaseURL: URL
                 do {
                     uploadBaseURL = try Self.resolvedUploadBaseURL()
                 } catch {
-                    print("❌ ChatRoomViewModel.sendMedia: \(error.localizedDescription)")
+                    print("❌ ChatRoomViewModel.sendMediaFiles: \(error.localizedDescription)")
                     return
                 }
 
-                print("📤 ChatRoomViewModel.sendMedia: Uploading file \(finalFileName) (\(finalData.count) bytes) to server...")
-                let uploadResponse: UploadResponse
-                if finalMimeType.hasPrefix("image/") {
-                    uploadResponse = try await uploadImageWith413Fallback(
-                        initialData: finalData,
-                        fileName: finalFileName,
-                        mimeType: finalMimeType,
+                // The secure route names the file store after the room, as web does (`chatName`).
+                let chatName = room.jid.split(separator: "@").first.map(String.init) ?? room.jid
+
+                var results: [UploadResult] = []
+                var attachments: [MessageAttachment] = []
+                for (index, file) in picked.enumerated() {
+                    guard let prepared = prepareUpload(file, index: index, stamp: stamp) else {
+                        print("❌ ChatRoomViewModel.sendMediaFiles: Could not prepare file \(index + 1) (\(file.mimeType))")
+                        return
+                    }
+                    print("📤 ChatRoomViewModel.sendMediaFiles: Uploading \(prepared.fileName) (\(prepared.data.count) bytes) to server...")
+                    let response = try await uploadPrepared(
+                        prepared,
                         baseURL: uploadBaseURL,
-                        token: token
+                        token: token,
+                        chatName: chatName
                     )
-                } else {
-                    uploadResponse = try await AuthAPI.uploadFile(
-                        fileData: finalData,
-                        fileName: finalFileName,
-                        mimeType: finalMimeType,
-                        baseURL: uploadBaseURL,
-                        token: token
-                    )
+                    guard let result = response.results.first,
+                          let attachment = MessageAttachments.fromUpload(result) else {
+                        print("❌ ChatRoomViewModel.sendMediaFiles: No upload result for file \(index + 1)")
+                        return
+                    }
+                    results.append(result)
+                    attachments.append(attachment)
                 }
-                
-                guard let uploadResult = uploadResponse.results.first else {
-                    print("❌ ChatRoomViewModel.sendMedia: No upload result in response")
-                    return
-                }
-                
+
+                guard let uploadResult = results.first else { return }
                 guard let resultId = uploadResult._id,
                       let resultFilename = uploadResult.filename,
                       let resultMimetype = uploadResult.mimetype,
                       let resultSize = uploadResult.size,
                       let resultLocation = uploadResult.location,
                       let resultCreatedAt = uploadResult.createdAt else {
-                    print("❌ ChatRoomViewModel.sendMedia: Missing required fields in upload result")
+                    print("❌ ChatRoomViewModel.sendMediaFiles: Missing required fields in upload result")
                     print("   _id: \(uploadResult._id ?? "nil")")
                     print("   filename: \(uploadResult.filename ?? "nil")")
                     print("   mimetype: \(uploadResult.mimetype ?? "nil")")
@@ -1899,15 +1834,17 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
                     print("   createdAt: \(uploadResult.createdAt ?? "nil")")
                     return
                 }
-                
-                print("✅ ChatRoomViewModel.sendMedia: File uploaded successfully")
+
+                print("✅ ChatRoomViewModel.sendMediaFiles: \(attachments.count) file(s) uploaded")
                 print("   Location: \(resultLocation)")
                 print("   ID: \(resultId)")
                 print("   Filename: \(resultFilename)")
                 print("   Size: \(resultSize) bytes")
-                
+
+                // Several files: the full list rides in `attachments`, the flat fields describe the first one.
+                let multiAttachments: [MessageAttachment]? = attachments.count > 1 ? attachments : nil
+
                 // Create media message data
-                // Convert size from Int to String for MediaMessageData
                 // Convert expiresAt from Int to String (0 means no expiration, or timestamp)
                 let expiresAtString: String?
                 if let expiresAt = uploadResult.expiresAt {
@@ -1915,8 +1852,8 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
                 } else {
                     expiresAtString = nil
                 }
-                
-                let mediaData = MediaMessageData(
+
+                var mediaData = MediaMessageData(
                     firstName: user.firstName ?? "",
                     lastName: user.lastName ?? "",
                     walletAddress: user.walletAddress ?? "",
@@ -1938,7 +1875,9 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
                     attachmentId: resultId,
                     roomJid: room.jid
                 )
-                
+                mediaData.attachments = multiAttachments
+                mediaData.caption = captionText
+
                 // Add optimistic media message immediately (web parity).
                 // This guarantees the user sees the image even if server echo is delayed.
                 let optimisticMediaMessage = Message(
@@ -1965,9 +1904,11 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
                     fileName: resultFilename,
                     originalName: uploadResult.originalname ?? resultFilename,
                     size: String(resultSize),
-                    xmppId: messageId
+                    xmppId: messageId,
+                    attachments: multiAttachments,
+                    caption: captionText
                 )
-                
+
                 if !messages.contains(where: { msg in
                     msg.id == optimisticMediaMessage.id ||
                     msg.xmppId == optimisticMediaMessage.xmppId
@@ -1976,34 +1917,131 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
                     room.messages = messages
                     MessageCache.shared.saveMessages(messages, forRoomJID: room.jid)
                 }
-                
-                print("📤 ChatRoomViewModel.sendMedia: Sending media message via XMPP to room: \(room.jid)")
-                
-                // Send media message via XMPP
+
+                print("📤 ChatRoomViewModel.sendMediaFiles: Sending media message via XMPP to room: \(room.jid)")
+
+                // Send media message via XMPP. The caption rides on this message; it is never sent as text of its own.
                 client.operations.sendMediaMessage(
                     roomJID: room.jid,
                     data: mediaData,
                     id: messageId
                 )
-                
-                print("✅ ChatRoomViewModel.sendMedia: Media message sent via XMPP")
+
+                print("✅ ChatRoomViewModel.sendMediaFiles: Media message sent via XMPP")
 
                 // In some server paths media echo/ack can be delayed or omitted.
                 // Avoid indefinite "sending..." state for successfully uploaded files.
                 scheduleMediaPendingResolution(messageId: messageId, timeoutSeconds: 8)
 
-                // If the user typed a caption alongside the attachment, send it as a
-                // separate text message AFTER the media stanza so order is preserved
-                // on the wire (media first, then text).
-                if let caption = caption?.trimmingCharacters(in: .whitespacesAndNewlines), !caption.isEmpty {
-                    self.sendMessage(caption)
-                }
-
             } catch {
-                print("❌ ChatRoomViewModel.sendMedia: Error - \(error.localizedDescription)")
+                print("❌ ChatRoomViewModel.sendMediaFiles: Error - \(error.localizedDescription)")
                 print("   Error details: \(error)")
             }
         }
+    }
+
+    /// One picked file as it goes on the wire: HEIC converted, images compressed, a name with an extension.
+    private struct PreparedUpload {
+        let data: Data
+        let mimeType: String
+        let fileName: String
+    }
+
+    private func prepareUpload(_ file: OutgoingMediaFile, index: Int, stamp: Int64) -> PreparedUpload? {
+        var data = file.data
+        var mimeType = file.mimeType
+        var fileName = file.fileName.map(Self.safeUploadFileName) ?? "media_\(stamp)_\(index)"
+
+        #if os(iOS)
+        if mimeType == "image/heic" || mimeType == "image/heif" {
+            print("🔄 ChatRoomViewModel.sendMediaFiles: Converting HEIC to JPEG...")
+            guard let uiImage = UIImage(data: data) else {
+                print("❌ ChatRoomViewModel.sendMediaFiles: Failed to create UIImage from HEIC data")
+                return nil
+            }
+            guard let jpegData = uiImage.jpegData(compressionQuality: 0.8) else {
+                print("❌ ChatRoomViewModel.sendMediaFiles: Failed to convert HEIC to JPEG")
+                return nil
+            }
+            data = jpegData
+            mimeType = "image/jpeg"
+            fileName = Self.replacingExtension(fileName, with: "jpg")
+            print("✅ ChatRoomViewModel.sendMediaFiles: Converted HEIC to JPEG (\(file.data.count) -> \(jpegData.count) bytes)")
+        }
+        #endif
+
+        if (fileName as NSString).pathExtension.isEmpty {
+            fileName = "\(fileName).\(Self.fileExtension(forMimeType: mimeType))"
+        }
+
+        // Preprocess images to avoid backend payload limits (HTTP 413).
+        // Keep non-image files untouched.
+        if mimeType.hasPrefix("image/") {
+            let optimized = optimizeImagePayload(
+                data: data,
+                mimeType: mimeType,
+                maxBytes: 1_900_000
+            )
+            data = optimized.data
+            mimeType = optimized.mimeType
+            if mimeType == "image/jpeg" {
+                let ext = (fileName as NSString).pathExtension.lowercased()
+                if ext != "jpg" && ext != "jpeg" {
+                    fileName = Self.replacingExtension(fileName, with: "jpg")
+                }
+            }
+        }
+
+        return PreparedUpload(data: data, mimeType: mimeType, fileName: fileName)
+    }
+
+    private func uploadPrepared(
+        _ prepared: PreparedUpload,
+        baseURL: URL,
+        token: String,
+        chatName: String
+    ) async throws -> UploadResponse {
+        if prepared.mimeType.hasPrefix("image/") {
+            return try await uploadImageWith413Fallback(
+                initialData: prepared.data,
+                fileName: prepared.fileName,
+                mimeType: prepared.mimeType,
+                baseURL: baseURL,
+                token: token,
+                chatName: chatName
+            )
+        }
+        return try await AuthAPI.uploadFile(
+            fileData: prepared.data,
+            fileName: prepared.fileName,
+            mimeType: prepared.mimeType,
+            baseURL: baseURL,
+            token: token,
+            chatName: chatName
+        )
+    }
+
+    private static func safeUploadFileName(_ name: String) -> String {
+        let cleaned = name
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "/", with: "_")
+        return cleaned.isEmpty ? "file" : cleaned
+    }
+
+    private static func fileExtension(forMimeType type: String) -> String {
+        if type.hasPrefix("image/") {
+            if type.contains("png") { return "png" }
+            if type.contains("gif") { return "gif" }
+            return "jpg"
+        }
+        if type.hasPrefix("video/") { return "mp4" }
+        if type.contains("pdf") { return "pdf" }
+        return "bin"
+    }
+
+    private static func replacingExtension(_ name: String, with ext: String) -> String {
+        let base = (name as NSString).deletingPathExtension
+        return "\(base.isEmpty ? name : base).\(ext)"
     }
 
     #if os(iOS)
@@ -2012,7 +2050,8 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
         fileName: String,
         mimeType: String,
         baseURL: URL,
-        token: String
+        token: String,
+        chatName: String
     ) async throws -> UploadResponse {
         // Try increasingly strict limits; this handles environments with low nginx body limits.
         let attemptCaps = [1_900_000, 1_200_000, 800_000, 500_000, 320_000, 200_000]
@@ -2028,7 +2067,8 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
                     fileName: fileName,
                     mimeType: candidate.mimeType,
                     baseURL: baseURL,
-                    token: token
+                    token: token,
+                    chatName: chatName
                 )
             } catch let AuthAPIError.httpError(statusCode, body) where statusCode == 413 {
                 lastError = AuthAPIError.httpError(statusCode, body)
