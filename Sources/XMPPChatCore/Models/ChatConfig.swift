@@ -60,6 +60,10 @@ public struct ChatConfig {
     
     // Translations
     public var translates: TranslationsConfig?
+
+    // Interface captions and account settings
+    public var i18n: I18nConfig?
+    public var settings: AccountSettingsConfig?
     
     // Features
     public var disableProfilesInteractions: Bool?

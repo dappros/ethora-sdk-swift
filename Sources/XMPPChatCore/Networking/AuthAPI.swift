@@ -49,6 +49,9 @@ public struct AuthAPI {
         public let xmppUsername: String?
         public let description: String?
         public let signupPlan: String?
+        /// Profile languages (`appLanguage`, `chatLanguage`), set from the language settings.
+        public let appLanguage: String?
+        public let chatLanguage: String?
     }
     
     public struct WalletResponse: Codable {

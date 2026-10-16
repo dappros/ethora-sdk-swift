@@ -24,7 +24,8 @@ public class XMPPOperations {
         isReply: Bool = false,
         showInChannel: Bool = false,
         mainMessage: String? = nil,
-        customId: String? = nil
+        customId: String? = nil,
+        translateSource: String? = nil
     ) {
         let id = customId ?? (isReply ? "send-reply-message-\(Int64(Date().timeIntervalSince1970 * 1000))" : "send-text-message-\(Int64(Date().timeIntervalSince1970 * 1000))")
         
@@ -57,19 +58,42 @@ public class XMPPOperations {
             ]
         )
         
-        let bodyStanza = XMPPStanza(name: "body", text: userMessage)
+        let messageStanza = Self.buildTextMessageStanza(
+            id: id,
+            roomJID: roomJID,
+            dataStanza: dataStanza,
+            userMessage: userMessage,
+            translateSource: translateSource
+        )
         
-        let messageStanza = XMPPStanza(
+        stream.send(messageStanza)
+    }
+
+    /// The groupchat stanza for a text send. `translateSource` adds
+    /// `<translate source="xx"/>`, which declares the sender's language so each
+    /// reader can get a translation (web sendTextMessageWithTranslateTag). It is
+    /// left out when nil, the plain send.
+    static func buildTextMessageStanza(
+        id: String,
+        roomJID: String,
+        dataStanza: XMPPStanza,
+        userMessage: String,
+        translateSource: String?
+    ) -> XMPPStanza {
+        let bodyStanza = XMPPStanza(name: "body", text: userMessage)
+        var children: [XMPPStanza] = [dataStanza, bodyStanza]
+        if let source = translateSource, !source.isEmpty {
+            children.append(XMPPStanza(name: "translate", attributes: ["source": source]))
+        }
+        return XMPPStanza(
             name: "message",
             attributes: [
                 "to": roomJID,
                 "type": "groupchat",
                 "id": id
             ],
-            children: [dataStanza, bodyStanza]
+            children: children
         )
-        
-        stream.send(messageStanza)
     }
     
     public func sendMediaMessage(

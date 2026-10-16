@@ -1043,7 +1043,8 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
             photo: photo,
             walletAddress: walletAddress,
             userMessage: text,
-            customId: messageId
+            customId: messageId,
+            translateSource: LanguagePreferences.shared.outgoingTranslateSource
         )
         
         // Add message optimistically to UI (will be confirmed when received from server)
@@ -1099,7 +1100,8 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
             walletAddress: walletAddress,
             userMessage: text,
             isReply: true,
-            mainMessage: messageId
+            mainMessage: messageId,
+            translateSource: LanguagePreferences.shared.outgoingTranslateSource
         )
         
         // If alsoSendToMain is true, send another message without mainMessage
@@ -1112,7 +1114,8 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
                 walletAddress: walletAddress,
                 userMessage: text,
                 isReply: false,
-                mainMessage: nil
+                mainMessage: nil,
+                translateSource: LanguagePreferences.shared.outgoingTranslateSource
             )
         }
         

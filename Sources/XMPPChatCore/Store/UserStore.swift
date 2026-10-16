@@ -46,6 +46,8 @@ public class UserStore: ObservableObject {
             username: loginResponse.user.username,
             xmppPassword: loginResponse.user.xmppPassword,
             xmppUsername: loginResponse.user.xmppUsername,
+            appLanguage: loginResponse.user.appLanguage,
+            chatLanguage: loginResponse.user.chatLanguage,
             isProfileOpen: loginResponse.user.isProfileOpen,
             isAssetsOpen: loginResponse.user.isAssetsOpen,
             isAgreeWithTerms: loginResponse.user.isAgreeWithTerms
@@ -62,6 +64,9 @@ public class UserStore: ObservableObject {
         if let userData = try? JSONEncoder().encode(user) {
             UserDefaults.standard.set(userData, forKey: "ethora_user_data")
         }
+
+        // The profile's languages win at session start (web and RN behaviour).
+        LanguagePreferences.shared.applyProfile(user)
         
         //print("✅ UserStore: User logged in - \(user.email ?? "unknown")")
     }

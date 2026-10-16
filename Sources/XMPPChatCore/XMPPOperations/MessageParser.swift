@@ -103,7 +103,9 @@ public final class MessageParser {
         let body = fullData.getChild("body")?.text
         let deleted = (fullData.getChild("deleted") != nil)
         
-        // translations
+        // translations: `<translations value='{"translates":[...]}'/>` as web sends it.
+        // Entries are keyed by their `language`, and an entry missing
+        // `translatedText`, `language` or `languageName` is dropped (see web getDataFromXml).
         var translations: [String: String]? = nil
         if let tNode = fullData.getChild("translations"),
            let raw = tNode.attributes["value"],
@@ -113,10 +115,10 @@ public final class MessageParser {
 
             var map: [String: String] = [:]
             for item in arr {
-                if let lang = item["lang"] as? String,
-                   let text = item["text"] as? String {
-                    map[lang] = text
-                }
+                guard let text = item["translatedText"] as? String,
+                      let language = item["language"] as? String,
+                      item["languageName"] is String else { continue }
+                map[language] = text
             }
             translations = map.isEmpty ? nil : map
         }

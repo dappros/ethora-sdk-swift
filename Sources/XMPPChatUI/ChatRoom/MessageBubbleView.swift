@@ -148,8 +148,9 @@ struct MessageBubbleView: View {
                 )
             } else {
                 if message.body.lowercased() != "media" {
-                    UniversalMarkdownTextView(
-                        text: message.body,
+                    TranslatableMessageText(
+                        message: message,
+                        isUser: isUser,
                         foregroundColor: messageTextColor
                     )
                     .fixedSize(horizontal: false, vertical: true)
