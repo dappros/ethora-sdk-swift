@@ -17,7 +17,9 @@ public class StanzaHandlers {
     var onReactionReceived: ((String, String, [String], String, [String: String]) -> Void)? // (roomJID, messageId, reactions, from, data)
     var onMessageDeleted: ((String, String) -> Void)? // (roomJID, messageId)
     var onMessageEdited: ((String, String, String) -> Void)? // (roomJID, messageId, newText)
-    var onComposingChanged: ((String, [String], Bool) -> Void)? // (roomJID, composingList, isComposing)
+    var onComposingChanged: ((String, String, String, Bool) -> Void)? // (roomJID, nickname, fullName, isComposing)
+    var onReceiptReceived: ((String, String, String, Int64) -> Void)? // (roomJID, messageId, fromXmppUsername, timestamp)
+    var onDisplayedMarkerReceived: ((String, String, String) -> Void)? // (roomJID, xmppUsername, messageId)
     var onPresenceInRoom: ((String, String) -> Void)? // (roomJID, role)
     var onChatInvite: ((String) -> Void)? // (roomJID)
     var onRoomKicked: ((String) -> Void)? // (roomJID)
@@ -65,6 +67,11 @@ public class StanzaHandlers {
         if stanzaId == "deleteMessageStanza" { return }
         if stanzaId.contains("message-reaction") { return }
         if stanzaId.contains("edit-message") { return }
+        // Receipts and read markers have their own handlers; typing frames
+        // carry a <data/> child and would otherwise parse as empty messages.
+        if stanzaId.contains("message-received") { return }
+        if stanzaId.contains("message-displayed") { return }
+        if XMPPChatStateStanzas.isChatState(stanza) { return }
 
         // Match TypeScript: try { const { data } = await getDataFromXml(stanza); } catch (error) { handleErrorMessageStanza(stanza); return; }
         guard let messageData = MessageParser.getDataFromStanza(stanza) else {
@@ -239,25 +246,46 @@ public class StanzaHandlers {
         onMessageEdited?(roomJID, messageId, newText)
     }
     
-    /// Handle composing (typing) indicator (handleComposing from TypeScript)
+    /// Handle composing (typing) indicator (handleComposing from TypeScript).
+    /// The display name comes from `<data fullName>`, as web sends it. Our own
+    /// echoes are dropped with web's comparison (case and underscores ignored).
     public func handleComposing(_ stanza: XMPPStanza, currentUser: String) {
-        let from = stanza.attributes["from"] ?? ""
-        let roomJID = from.components(separatedBy: "/").first ?? ""
-        
         let isComposing = stanza.getChild("composing") != nil
         let isPaused = stanza.getChild("paused") != nil
-        
-        // Extract composing users list (simplified)
-        var composingList: [String] = []
-        // In a real implementation, you'd track composing users per room
-        if isComposing {
-            let userWallet = from.components(separatedBy: "/").last ?? ""
-            if !userWallet.isEmpty && userWallet != currentUser {
-                composingList.append(userWallet)
-            }
-        }
-        
-        onComposingChanged?(roomJID, composingList, isComposing)
+        guard isComposing || isPaused else { return }
+
+        let from = stanza.attributes["from"] ?? ""
+        let roomJID = from.components(separatedBy: "/").first ?? ""
+        let nickname = from.range(of: "/").map { String(from[$0.upperBound...]) } ?? ""
+        guard !roomJID.isEmpty, !nickname.isEmpty else { return }
+        guard !ReceiptPolicy.isSameUser(nickname, currentUser) else { return }
+
+        let fullName = stanza.getChild("data")?.attributes["fullName"] ?? "User"
+        onComposingChanged?(roomJID, nickname, fullName, isComposing)
+    }
+
+    /// Handle an XEP-0184 receipt (onReceivedReceipt from TypeScript). The real
+    /// sender travels in `<received from>`, because the MUC rewrites the outer `from`.
+    public func handleReceivedReceipt(_ stanza: XMPPStanza) {
+        guard stanza.attributes["id"]?.contains("message-received") == true,
+              let received = stanza.getChild("received") else { return }
+        let messageId = received.attributes["id"] ?? ""
+        let fromXmppUsername = ReceiptPolicy.localPart(received.attributes["from"] ?? "")
+        let roomJID = (stanza.attributes["from"] ?? "").components(separatedBy: "/").first ?? ""
+        guard !messageId.isEmpty, !fromXmppUsername.isEmpty, !roomJID.isEmpty else { return }
+        onReceiptReceived?(roomJID, messageId, fromXmppUsername, Int64(Date().timeIntervalSince1970 * 1000))
+    }
+
+    /// Handle an XEP-0333 read marker (onDisplayedMarker from TypeScript). The
+    /// marker is a per-member watermark for the room, not a per-message flag.
+    public func handleDisplayedMarker(_ stanza: XMPPStanza) {
+        guard stanza.attributes["id"]?.contains("message-displayed") == true,
+              let displayed = stanza.getChild("displayed") else { return }
+        let messageId = displayed.attributes["id"] ?? ""
+        let xmppUsername = ReceiptPolicy.localPart(displayed.attributes["from"] ?? "")
+        let roomJID = (stanza.attributes["from"] ?? "").components(separatedBy: "/").first ?? ""
+        guard !messageId.isEmpty, !xmppUsername.isEmpty, !roomJID.isEmpty else { return }
+        onDisplayedMarkerReceived?(roomJID, xmppUsername, messageId)
     }
     
     /// Handle presence in room (onPresenceInRoom from TypeScript)

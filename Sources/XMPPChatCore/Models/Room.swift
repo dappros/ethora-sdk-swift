@@ -117,6 +117,9 @@ public struct Room: Codable, Identifiable, Equatable {
     public var role: String?
     public var messageStats: MessageStats?
     public var historyComplete: Bool?
+    /// XEP-0333 read watermark per member: nickname to the newest message id
+    /// that member has displayed in this room.
+    public var lastDisplayedByUser: [String: String]?
     
     public init(
         id: String,
@@ -146,7 +149,8 @@ public struct Room: Codable, Identifiable, Equatable {
         noMessages: Bool? = nil,
         role: String? = nil,
         messageStats: MessageStats? = nil,
-        historyComplete: Bool? = nil
+        historyComplete: Bool? = nil,
+        lastDisplayedByUser: [String: String]? = nil
     ) {
         self.id = id
         self.jid = jid
@@ -176,6 +180,7 @@ public struct Room: Codable, Identifiable, Equatable {
         self.role = role
         self.messageStats = messageStats
         self.historyComplete = historyComplete
+        self.lastDisplayedByUser = lastDisplayedByUser
     }
 }
 

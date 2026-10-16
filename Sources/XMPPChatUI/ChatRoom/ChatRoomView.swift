@@ -279,6 +279,7 @@ public struct ChatRoomView: View {
                                     onMediaTap: { mediaMessage in
                                         mediaPreview = MediaPreviewTarget(message: mediaMessage)
                                     },
+                                    receiptState: isUser ? viewModel.receiptState(for: message) : .none,
                                     onDiscard: isUser ? {
                                         viewModel.discardFailedMessage(message.id)
                                     } : nil

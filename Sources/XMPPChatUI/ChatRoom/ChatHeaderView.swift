@@ -108,7 +108,7 @@ struct ChatHeaderView: View {
         } else if names.count == 2 {
             return "\(names[0]) and \(names[1]) are typing"
         } else {
-            return "\(names[0]) and \(names.count - 1) others are typing"
+            return "\(names.count) people are typing"
         }
     }
 

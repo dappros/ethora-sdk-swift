@@ -18,6 +18,9 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
     @Published var messages: [Message] = []
     @Published var isTyping: Bool = false
     @Published var composingUsers: [String] = []
+    /// XEP-0333 read watermarks for this room: member nickname to the newest
+    /// message id they displayed. Drives the "seen" tick.
+    @Published var displayedWatermarks: [String: String] = [:]
     @Published var isEditing: Bool = false
     @Published var editText: String?
     @Published var editMessageId: String?
@@ -59,16 +62,23 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
     /// without touching the actor-isolated `room` property.
     private let ownedRoomJID: String
 
-    /// After this many seconds of `pending == true` without server echo,
-    /// an outgoing message is treated as failed (red ⓘ + Resend/Delete).
-    /// Stamped via `Message.pendingSince`, so this rule survives app
-    /// backgrounding / kill — see `markStalePendingsFailed`.
-    private static let failedThresholdSeconds: TimeInterval = 30
+    /// Web marks an unacknowledged text send as failed after 12 s
+    /// (SEND_FAILURE_TIMEOUT_MS). Stamped via `Message.pendingSince`, so the
+    /// rule survives app backgrounding / kill: see `markStalePendingsFailed`.
+    private static let textFailedThresholdSeconds: TimeInterval = 12
 
-    /// How often the failed-state tick runs while the chat room is on
-    /// screen. 5s is enough granularity that the user doesn't perceive
-    /// a delay past 30s.
-    private static let failedTickIntervalSeconds: TimeInterval = 5
+    /// Media keeps the longer window: an upload followed by a send takes longer
+    /// than a text round trip.
+    private static let mediaFailedThresholdSeconds: TimeInterval = 30
+
+    private static func failedThreshold(for message: Message) -> TimeInterval {
+        message.isMediafile == "true" ? mediaFailedThresholdSeconds : textFailedThresholdSeconds
+    }
+
+    /// How often the failed-state tick runs while the chat room is on screen.
+    /// A check over a few hundred messages is cheap, and 1 s keeps a 12 s
+    /// threshold close to exact.
+    private static let failedTickIntervalSeconds: TimeInterval = 1
 
     public init(room: Room, client: XMPPClient, currentUserId: String, config: ChatConfig? = nil) {
         self.room = room
@@ -76,6 +86,7 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
         self.currentUserId = currentUserId
         self.config = config
         self.ownedRoomJID = room.jid
+        self.displayedWatermarks = RoomStore.shared.rooms[room.jid]?.lastDisplayedByUser ?? [:]
 
         // Load cached messages immediately
         loadCachedMessages()
@@ -125,6 +136,29 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
             name: NSNotification.Name("XMPPComposingChanged"),
             object: nil
         )
+
+        // Delivery receipts (XEP-0184) and read markers (XEP-0333)
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleReceiptNotification(_:)),
+            name: NSNotification.Name("XMPPReceiptReceived"),
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleDisplayedMarkerNotification(_:)),
+            name: NSNotification.Name("XMPPDisplayedMarker"),
+            object: nil
+        )
+
+        // A read marker goes out once the list settles and the app is in front.
+        $messages
+            .dropFirst()
+            .sink { [weak self] _ in self?.scheduleDisplayedMarker() }
+            .store(in: &cancellables)
+        NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)
+            .sink { [weak self] _ in self?.scheduleDisplayedMarker() }
+            .store(in: &cancellables)
         
         // Observe history complete notifications
         NotificationCenter.default.addObserver(
@@ -345,6 +379,85 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
         handleIncomingMessage(message)
     }
     
+    // MARK: - Receipts and Read Markers
+
+    /// Tick state for one of our outgoing messages. Other people's messages
+    /// show no tick, so callers pass `.none` for them.
+    func receiptState(for message: Message) -> ReceiptState {
+        ReceiptState.resolve(
+            for: message,
+            in: messages,
+            watermarks: displayedWatermarks,
+            selfUsername: currentUserXmppUsername ?? currentUserId
+        )
+    }
+
+    private func isThisRoom(_ jid: String) -> Bool {
+        (jid.components(separatedBy: "/").first ?? jid) == (room.jid.components(separatedBy: "/").first ?? room.jid)
+    }
+
+    @objc private func handleReceiptNotification(_ notification: Notification) {
+        guard let userInfo = notification.userInfo,
+              let roomJID = userInfo["roomJID"] as? String,
+              let messageId = userInfo["messageId"] as? String,
+              let fromXmppUsername = userInfo["fromXmppUsername"] as? String,
+              let timestamp = userInfo["timestamp"] as? Int64,
+              isThisRoom(roomJID) else {
+            return
+        }
+        Task { @MainActor in
+            self.applyReceipt(messageId: messageId, from: fromXmppUsername, timestamp: timestamp)
+        }
+    }
+
+    private func applyReceipt(messageId: String, from: String, timestamp: Int64) {
+        guard let index = messages.firstIndex(where: { $0.id == messageId || $0.xmppId == messageId }) else {
+            return
+        }
+        var receipts = messages[index].receivedBy ?? [:]
+        receipts[from] = timestamp
+        messages[index].receivedBy = receipts
+        room.messages = messages
+        MessageCache.shared.saveMessages(messages, forRoomJID: room.jid)
+    }
+
+    @objc private func handleDisplayedMarkerNotification(_ notification: Notification) {
+        guard let userInfo = notification.userInfo,
+              let roomJID = userInfo["roomJID"] as? String,
+              let xmppUsername = userInfo["xmppUsername"] as? String,
+              let messageId = userInfo["messageId"] as? String,
+              isThisRoom(roomJID), !xmppUsername.isEmpty else {
+            return
+        }
+        Task { @MainActor in
+            self.displayedWatermarks[xmppUsername] = messageId
+        }
+    }
+
+    private var displayedMarkerTask: Task<Void, Never>?
+    private var lastDisplayedMarkerSent: String?
+
+    /// Web flushMarkRead: once the list has been still for 1 s, send a read
+    /// marker for the newest message, but only when someone else wrote it.
+    private func scheduleDisplayedMarker() {
+        displayedMarkerTask?.cancel()
+        displayedMarkerTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            guard !Task.isCancelled else { return }
+            self?.sendDisplayedMarkerIfNeeded()
+        }
+    }
+
+    private func sendDisplayedMarkerIfNeeded() {
+        guard UIApplication.shared.applicationState == .active else { return }
+        guard let latest = messages.last, latest.id != lastDisplayedMarkerSent else { return }
+        let me = currentUserXmppUsername ?? currentUserId
+        let sender = latest.user.xmppUsername ?? latest.user.id
+        guard !ReceiptPolicy.isSameUser(sender, me) else { return }
+        lastDisplayedMarkerSent = latest.id
+        client.sendDisplayedMarkerStanza(messageId: latest.id, roomJid: room.jid)
+    }
+
     @objc private func handleComposingNotification(_ notification: Notification) {
         guard let userInfo = notification.userInfo,
               let notificationRoomJID = userInfo["roomJID"] as? String,
@@ -2137,7 +2250,7 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
             // Fall back to message `date` if `pendingSince` is missing
             // (older cached messages without the new field).
             let since = m.pendingSince ?? m.date
-            if now.timeIntervalSince(since) > Self.failedThresholdSeconds {
+            if now.timeIntervalSince(since) > Self.failedThreshold(for: m) {
                 messages[index].pending = false
                 messages[index].failed = true
                 didChange = true
@@ -2289,6 +2402,9 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
     private var isTypingActive: Bool = false
     
     public func startTyping() {
+        // Typing is sent only when the host has not disabled the indicator.
+        guard config?.disableTypingIndicator != true else { return }
+
         // Cancel any existing stop typing timer
         stopTypingTimer?.cancel()
         stopTypingTimer = nil
@@ -2311,8 +2427,7 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
             let fullName = "\(user.firstName ?? "") \(user.lastName ?? "")".trimmingCharacters(in: .whitespaces)
             
             if !fullName.isEmpty {
-                //print("⌨️ ChatRoomViewModel: Sending typing indicator")
-                client.operations.sendTypingRequest(
+                client.sendTypingRequestStanza(
                     chatId: room.jid,
                     fullName: fullName,
                     start: true
@@ -2346,8 +2461,7 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
         let fullName = "\(user.firstName ?? "") \(user.lastName ?? "")".trimmingCharacters(in: .whitespaces)
         
         if !fullName.isEmpty {
-            //print("⌨️ ChatRoomViewModel: Sending stop typing indicator")
-            client.operations.sendTypingRequest(
+            client.sendTypingRequestStanza(
                 chatId: room.jid,
                 fullName: fullName,
                 start: false

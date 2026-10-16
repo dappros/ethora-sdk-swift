@@ -227,28 +227,7 @@ public class XMPPOperations {
         guard let stream = client?.xmppStream else { return }
         
         let id = start ? "typing-\(Int64(Date().timeIntervalSince1970 * 1000))" : "stop-typing-\(Int64(Date().timeIntervalSince1970 * 1000))"
-        
-        let composingStanza = XMPPStanza(
-            name: start ? "composing" : "paused",
-            attributes: ["xmlns": "http://jabber.org/protocol/chatstates"]
-        )
-        
-        let dataStanza = XMPPStanza(
-            name: "data",
-            attributes: ["fullName": fullName]
-        )
-        
-        let messageStanza = XMPPStanza(
-            name: "message",
-            attributes: [
-                "type": "groupchat",
-                "id": id,
-                "to": chatId
-            ],
-            children: [composingStanza, dataStanza]
-        )
-        
-        stream.send(messageStanza)
+        stream.send(XMPPChatStateStanzas.typing(chatId: chatId, fullName: fullName, start: start, id: id))
     }
 }
 
