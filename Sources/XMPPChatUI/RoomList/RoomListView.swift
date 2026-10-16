@@ -51,6 +51,7 @@ public struct RoomListView: View {
     @State private var pushNavActive: Bool = false
     @State private var pushNavRoomBareJID: String?
     @State private var roomPendingLeave: Room?
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     public init(viewModel: RoomListViewModel, singleRoomJID: String? = nil, hideRoomList: Bool = false) {
         self.viewModel = viewModel
@@ -59,7 +60,12 @@ public struct RoomListView: View {
     }
     
     public var body: some View {
-        NavigationView {
+        let sideBySide = !hideRoomList && ChatLayoutPolicy.usesSideBySide(
+            supportsTablet: ConfigStore.shared.config.supportsTablet,
+            isPad: ChatLayoutPolicy.isPad,
+            horizontalSizeClass: horizontalSizeClass
+        )
+        chatNavigationContainer(sideBySide: sideBySide) {
             Group {
                 if hideRoomList {
                     singleRoomContent
@@ -117,6 +123,23 @@ public struct RoomListView: View {
             } message: { room in
                 Text("You will leave \"\(room.title.isEmpty ? room.name : room.title)\" and stop receiving new messages from this chat.")
             }
+            if sideBySide {
+                ChatDetailPlaceholder()
+            }
+        }
+    }
+
+    /// Side-by-side uses the columns style: the list stays on the left and the
+    /// selected chat fills the right. Otherwise the default NavigationView is kept.
+    @ViewBuilder
+    private func chatNavigationContainer<Content: View>(
+        sideBySide: Bool,
+        @ViewBuilder _ content: () -> Content
+    ) -> some View {
+        if sideBySide {
+            NavigationView(content: content).navigationViewStyle(.columns)
+        } else {
+            NavigationView(content: content)
         }
     }
     
