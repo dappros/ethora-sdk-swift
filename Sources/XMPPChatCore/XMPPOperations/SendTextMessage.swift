@@ -69,6 +69,27 @@ public class XMPPOperations {
             translateSource: translateSource
         )
         
+        // E2EE: in an e2ee room the body is encrypted and <data> rides beside it in the clear.
+        // If encryption fails the message goes out in clear, as the web does.
+        if E2EERuntime.isEnabled {
+            let domain = E2EEManager.accountDomain(from: stream.jid)
+            let bodyStanza = XMPPStanza(name: "body", text: userMessage)
+            Task {
+                do {
+                    if let encrypted = try await self.e2eeEncryptedStanza(
+                        roomJID: roomJID, id: id, content: [bodyStanza], cleartext: [dataStanza], domain: domain
+                    ) {
+                        stream.send(encrypted)
+                        return
+                    }
+                } catch {
+                    print("[E2EE] sending \(roomJID) in clear: \(error.localizedDescription)")
+                }
+                stream.send(messageStanza)
+            }
+            return
+        }
+
         stream.send(messageStanza)
     }
 
@@ -123,6 +144,34 @@ public class XMPPOperations {
             children: [bodyStanza, storeStanza, dataStanza]
         )
         
+        // E2EE: a sealed attachment (keys present) only ever goes out encrypted. The keys ride
+        // in the encrypted <body>, and <data> carries clientEncrypted in the clear.
+        if let keys = data.e2eeKeys, !keys.isEmpty {
+            var sealedAttributes = dataAttributes
+            sealedAttributes["clientEncrypted"] = "true"
+            let sealedData = XMPPStanza(name: "data", attributes: sealedAttributes)
+            let payload = "{\"v\":1,\"keys\":[" + keys.map(E2EEFileEnvelope.jsonString).joined(separator: ",") + "]}"
+            let domain = E2EEManager.accountDomain(from: stream.jid)
+            Task {
+                do {
+                    guard let encrypted = try await self.e2eeEncryptedStanza(
+                        roomJID: roomJID,
+                        id: id,
+                        content: [XMPPStanza(name: "body", text: payload)],
+                        cleartext: [sealedData, storeStanza],
+                        domain: domain
+                    ) else {
+                        print("[E2EE] refusing to send sealed attachment to \(roomJID): room is not e2ee")
+                        return
+                    }
+                    stream.send(encrypted)
+                } catch {
+                    print("[E2EE] refusing to send sealed attachment to \(roomJID): \(error.localizedDescription)")
+                }
+            }
+            return
+        }
+
         stream.send(messageStanza)
     }
 
@@ -302,6 +351,8 @@ public struct MediaMessageData {
     public var showInChannel: Bool?
     public var mainMessage: String?
     public var roomJid: String?
+    /// E2EE: attachment keys of a sealed upload (see E2EEFileEnvelope). Set only in e2ee rooms.
+    public var e2eeKeys: [String]?
     /// Every file of a multi-file send (more than one entry adds the `attachments` attribute). The flat fields
     /// above describe the first entry.
     public var attachments: [MessageAttachment]?

@@ -1827,18 +1827,46 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
 
                 var results: [UploadResult] = []
                 var attachments: [MessageAttachment] = []
+                // E2EE: in an e2ee room every file is sealed before it leaves the device. The server
+                // gets opaque bytes under a random name, and the keys ride in the encrypted message.
+                let sealFiles = await E2EE.isRoomEncrypted(room.jid)
+                var sealedKeys: [String] = []
                 for (index, file) in picked.enumerated() {
-                    guard let prepared = prepareUpload(file, index: index, stamp: stamp) else {
+                    guard var prepared = prepareUpload(file, index: index, stamp: stamp) else {
                         print("❌ ChatRoomViewModel.sendMediaFiles: Could not prepare file \(index + 1) (\(file.mimeType))")
                         return
                     }
                     print("📤 ChatRoomViewModel.sendMediaFiles: Uploading \(prepared.fileName) (\(prepared.data.count) bytes) to server...")
-                    let response = try await uploadPrepared(
-                        prepared,
-                        baseURL: uploadBaseURL,
-                        token: token,
-                        chatName: chatName
-                    )
+                    let response: UploadResponse
+                    if sealFiles {
+                        let sealed = try E2EE.sealFileForUpload(
+                            bytes: prepared.data,
+                            mimetype: prepared.mimeType,
+                            originalName: prepared.fileName
+                        )
+                        prepared = PreparedUpload(
+                            data: sealed.ciphertext,
+                            mimeType: "application/octet-stream",
+                            fileName: sealed.filename
+                        )
+                        sealedKeys.append(sealed.keyMaterial)
+                        response = try await AuthAPI.uploadFile(
+                            fileData: prepared.data,
+                            fileName: prepared.fileName,
+                            mimeType: prepared.mimeType,
+                            baseURL: uploadBaseURL,
+                            token: token,
+                            chatName: chatName,
+                            clientEncrypted: true
+                        )
+                    } else {
+                        response = try await uploadPrepared(
+                            prepared,
+                            baseURL: uploadBaseURL,
+                            token: token,
+                            chatName: chatName
+                        )
+                    }
                     guard let result = response.results.first,
                           let attachment = MessageAttachments.fromUpload(result) else {
                         print("❌ ChatRoomViewModel.sendMediaFiles: No upload result for file \(index + 1)")
@@ -1907,6 +1935,7 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
                 )
                 mediaData.attachments = multiAttachments
                 mediaData.caption = captionText
+                mediaData.e2eeKeys = sealedKeys.isEmpty ? nil : sealedKeys
 
                 // Add optimistic media message immediately (web parity).
                 // This guarantees the user sees the image even if server echo is delayed.

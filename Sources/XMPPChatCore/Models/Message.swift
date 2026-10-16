@@ -66,6 +66,10 @@ public struct Message: Codable, Identifiable, Equatable {
     /// Set on call-log rows (call-state with log data). Rendered as a centered
     /// call entry, not a bubble. See CallLogFormatter.
     public var callLog: CallLogMeta? = nil
+    /// End-to-end encryption: the attachment keys of a sealed media message (E2EE rooms).
+    public var e2eeKeys: [String]?
+    /// True when the attachments of this message are sealed (client-side encrypted).
+    public var clientEncrypted: Bool?
     
     public init(
         id: String,

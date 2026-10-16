@@ -123,6 +123,9 @@ public struct Room: Codable, Identifiable, Equatable {
     /// XEP-0333 read watermark per member: nickname to the newest message id
     /// that member has displayed in this room.
     public var lastDisplayedByUser: [String: String]?
+    /// End-to-end encrypted room (OMEMO 2), as the backend reports it on GET /chats/my.
+    /// Set when the room is created and never changed.
+    public var e2ee: Bool?
     
     public init(
         id: String,
@@ -154,7 +157,8 @@ public struct Room: Codable, Identifiable, Equatable {
         messageStats: MessageStats? = nil,
         historyComplete: Bool? = nil,
         muted: Bool? = nil,
-        lastDisplayedByUser: [String: String]? = nil
+        lastDisplayedByUser: [String: String]? = nil,
+        e2ee: Bool? = nil
     ) {
         self.id = id
         self.jid = jid
@@ -186,6 +190,7 @@ public struct Room: Codable, Identifiable, Equatable {
         self.historyComplete = historyComplete
         self.muted = muted
         self.lastDisplayedByUser = lastDisplayedByUser
+        self.e2ee = e2ee
     }
 }
 
@@ -212,6 +217,7 @@ public struct ApiRoom: Codable {
     public var __v: Int?  // Changed from String? to Int? based on API response showing 0
     public var reported: Bool?
     public var muted: Bool?
+    public var e2ee: Bool?
     
     // Explicit CodingKeys to ensure proper decoding
     enum CodingKeys: String, CodingKey {
@@ -230,6 +236,7 @@ public struct ApiRoom: Codable {
         case __v
         case reported
         case muted
+        case e2ee
     }
 }
 
@@ -295,7 +302,8 @@ public extension Room {
             role: nil,
             messageStats: nil,
             historyComplete: nil,
-            muted: apiRoom.muted
+            muted: apiRoom.muted,
+            e2ee: apiRoom.e2ee
         )
     }
 }

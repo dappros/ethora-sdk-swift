@@ -252,7 +252,18 @@ public final class MessageParser {
             caption: caption
         )
         parsed.callLog = callLog
+        parsed.e2eeKeys = decodeE2eeKeys(d.dataAttrs["e2eeKeys"])
+        parsed.clientEncrypted = d.dataAttrs["clientEncrypted"] == "true"
         return parsed
+    }
+
+    /// The `e2eeKeys` data attribute is a JSON array of base64 key materials.
+    static func decodeE2eeKeys(_ raw: String?) -> [String]? {
+        guard let raw, let data = raw.data(using: .utf8),
+              let keys = try? JSONSerialization.jsonObject(with: data) as? [String], !keys.isEmpty else {
+            return nil
+        }
+        return keys
     }
 
     private static func inferMimeType(from urlString: String) -> String? {

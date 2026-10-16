@@ -82,6 +82,10 @@ public class XMPPClient {
     
     // XMPP Stream
     internal var xmppStream: XMPPStream?
+
+    // OMEMO (E2EE) IQ replies waiting for their id; see E2EEXMPPClient.swift
+    internal let e2eeIQLock = NSLock()
+    internal var e2eeIQWaiters: [String: CheckedContinuation<XMPPStanza, Error>] = [:]
     
     // Stanza handlers
     internal var stanzaHandlers: StanzaHandlers?
@@ -611,6 +615,9 @@ extension XMPPClient: XMPPStreamDelegate {
     }
     
     private func handleOnlineEvent(jid: String) async {
+        // E2EE: publish this device's OMEMO keys. A no-op unless encryption is enabled.
+        Task { await E2EEManager.shared.onOnline(transport: self, jid: jid) }
+
         // Match TypeScript: this.client.on('online', async (jid) => { ... })
         do {
             // Match TypeScript: this.resource = jid.resource || 'default';
@@ -873,6 +880,11 @@ extension XMPPClient: XMPPStreamDelegate {
         // Match TypeScript: this.client.on('stanza', (stanza) => { ... })
         // Match TypeScript: this.lastActivityTs = Date.now();
         lastActivityTs = Date().timeIntervalSince1970
+
+        // E2EE: an OMEMO PEP reply resolves its waiting IQ and goes no further.
+        if e2eeConsumeIQReply(stanza) {
+            return
+        }
         
         // Match TypeScript: try { if (this.lastPingId && isPong(stanza, this.lastPingId)) { this.handlePong(); } } catch {}
         do {
@@ -883,6 +895,23 @@ extension XMPPClient: XMPPStreamDelegate {
             // Ignore errors - match TypeScript empty catch
         }
         
+        // E2EE seam. Inert unless the host turned encryption on; when a stanza carries an
+        // OMEMO payload it is decrypted off the XMPP thread and then routed as usual.
+        if E2EERuntime.isEnabled, E2EEStanza.carrierPath(stanza) != nil {
+            let domain = E2EEManager.accountDomain(from: xmppStream?.jid)
+            Task {
+                let outcome = await E2EEStanza.decryptInPlace(stanza, domain: domain)
+                switch outcome {
+                case .drop:
+                    return
+                case .notEncrypted(let plain), .decrypted(let plain), .undecryptable(let plain):
+                    self.handleStanza(plain)
+                    self.delegate?.xmppClient(self, didReceiveStanza: plain)
+                }
+            }
+            return
+        }
+
         // Match TypeScript: handleStanza.bind(this, stanza, this)();
         handleStanza(stanza)
         

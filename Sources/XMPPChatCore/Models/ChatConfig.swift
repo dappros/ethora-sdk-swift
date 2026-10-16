@@ -125,6 +125,9 @@ public struct ChatConfig {
     // Store
     public var useStoreConsoleEnabled: Bool?
 
+    // End-to-end encryption (OMEMO 2). Off by default.
+    public var e2ee: E2EEConfig?
+    
     // Notifications
     public var messageNotifications: MessageNotificationConfig?
     public var push: PushNotificationConfig?

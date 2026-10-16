@@ -13,7 +13,9 @@ import SwiftUI
 public class ConfigStore: ObservableObject {
     public static let shared = ConfigStore()
     
-    @Published public var config: ChatConfig
+    @Published public var config: ChatConfig {
+        didSet { E2EERuntime.setEnabled(config.e2ee?.enabled == true) }
+    }
     
     private let userDefaults = UserDefaults.standard
     private let configKey = "ethora_chat_config"
@@ -29,6 +31,7 @@ public class ConfigStore: ObservableObject {
         } else {
             self.config = ChatConfig()
         }
+        E2EERuntime.setEnabled(config.e2ee?.enabled == true)
     }
     
     /// Update configuration
@@ -244,6 +247,9 @@ public class ConfigStore: ObservableObject {
         if let push = partialConfig.push {
             config.push = push
         }
+        if let e2ee = partialConfig.e2ee {
+            config.e2ee = e2ee
+        }
         
         saveConfig()
     }
@@ -288,6 +294,7 @@ extension ChatConfig: Codable {
         case useStoreConsoleEnabled
         case push, projectName
         case enableMessageSearch, disableMessageSearch
+        case e2ee
     }
     
     public init(from decoder: Decoder) throws {
@@ -345,6 +352,7 @@ extension ChatConfig: Codable {
         self.disableMessageSearch = try container.decodeIfPresent(Bool.self, forKey: .disableMessageSearch)
         self.push = try container.decodeIfPresent(PushNotificationConfig.self, forKey: .push)
         self.projectName = try container.decodeIfPresent(String.self, forKey: .projectName)
+        self.e2ee = try container.decodeIfPresent(E2EEConfig.self, forKey: .e2ee)
         
         // Non-codable properties initialized to nil
         self.customLogin = nil
@@ -419,5 +427,6 @@ extension ChatConfig: Codable {
         try container.encodeIfPresent(disableMessageSearch, forKey: .disableMessageSearch)
         try container.encodeIfPresent(push, forKey: .push)
         try container.encodeIfPresent(projectName, forKey: .projectName)
+        try container.encodeIfPresent(e2ee, forKey: .e2ee)
     }
 }
