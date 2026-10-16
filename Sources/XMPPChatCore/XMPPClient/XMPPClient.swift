@@ -1170,6 +1170,24 @@ extension XMPPClient: XMPPStreamDelegate {
             )
         }
         
+        // A paging page closed by its <fin>: move the archive cursor and the
+        // history-complete flag, then tell the open chat. Without this the chat
+        // never learns the archive is exhausted and keeps asking for older pages.
+        handlers.onHistoryPageFin = { [weak self] (roomJID: String, _: String, fin: MamCursor.Fin, before: Int64?) in
+            guard self != nil else { return }
+            Task { @MainActor in
+                RoomStore.shared.applyHistoryPage(roomJID: roomJID, before: before, fin: fin)
+            }
+            NotificationCenter.default.post(
+                name: NSNotification.Name("XMPPHistoryComplete"),
+                object: self,
+                userInfo: [
+                    "roomJID": roomJID,
+                    "historyComplete": fin.complete
+                ]
+            )
+        }
+
         // Set up reaction handler
         handlers.onReactionReceived = { [weak self] (roomJID: String, messageId: String, reactions: [String], from: String, data: [String: String]) in
             //print("👍 XMPPClient: Reaction received in room \(roomJID) for message \(messageId)")

@@ -25,6 +25,8 @@ public class StanzaHandlers {
     var onNewRoomCreated: ((String) -> Void)? // (roomJID)
     var onGetLastMessageArchive: ((String, Bool, Int64?, Int64?) -> Void)? // (roomJID, historyComplete, lastMessageTimestamp, firstMessageTimestamp)
     var onMessageError: ((String) -> Void)? // (roomJID)
+    /// A paging page (`get-history:` query) closed by its <fin>: (roomJID, queryId, fin, requestedBefore)
+    var onHistoryPageFin: ((String, String, MamCursor.Fin, Int64?) -> Void)?
     
     // Get-history collectors: queryId -> (stanza, roomJID) -> Void
     private var getHistoryCollectors: [String: (XMPPStanza, String) -> Void] = [:]
@@ -160,12 +162,37 @@ public class StanzaHandlers {
         
         // Match TypeScript: const message = await createMessageFromXml({ data, id, body, ...rest });
         let message = MessageParser.createMessageFromData(messageData)
+
+        // A row that answers a query someone awaits (jump window, time lookup)
+        // is handed to that query as well as to the cache.
+        if let queryId = firstChild.attributes["queryid"], !queryId.isEmpty {
+            client?.operations.mamQueries.append(message, queryId: queryId)
+        }
         
         // Match TypeScript: store.dispatch(addRoomMessage({ roomJID: stanza.attrs.from, message }))
         let roomJIDForMessage = stanza.attributes["from"] ?? ""
         onHistoryMessageReceived?(message, roomJIDForMessage)
     }
     
+    /// Handle the closing `<fin>` of a MAM query (an iq result, not a message).
+    /// Paging pages move the cursor through `onHistoryPageFin`. Every awaited
+    /// query is completed with its fin.
+    public func onMamFin(_ stanza: XMPPStanza) {
+        guard stanza.name == "iq",
+              stanza.attributes["type"] == "result",
+              let queryId = stanza.attributes["id"], !queryId.isEmpty,
+              let fin = MamCursor.parseFin(stanza) else {
+            return
+        }
+        let roomJID = (stanza.attributes["from"] ?? "").components(separatedBy: "/").first ?? ""
+        let registry = client?.operations.mamQueries
+        let before = registry?.takeRequestedBefore(queryId: queryId)
+        if queryId.hasPrefix("get-history:") {
+            onHistoryPageFin?(roomJID, queryId, fin, before)
+        }
+        registry?.complete(queryId: queryId, fin: fin)
+    }
+
     /// Handle reaction messages (onReactionMessage from TypeScript)
     public func onReactionMessage(_ stanza: XMPPStanza) {
         guard let id = stanza.attributes["id"],
@@ -356,8 +383,14 @@ public class StanzaHandlers {
         
         let id = stanza.attributes["id"] ?? ""
         let from = stanza.attributes["from"] ?? ""
+
+        // A refused awaited query resolves as failed, so its caller does not wait.
+        if !id.isEmpty {
+            client?.operations.mamQueries.fail(queryId: id)
+        }
         
         if id.hasPrefix("get-history:") {
+            _ = client?.operations.mamQueries.takeRequestedBefore(queryId: id)
             let roomJID = from.components(separatedBy: "/").first ?? from
             
             var errorType = "unknown"

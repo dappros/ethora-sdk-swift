@@ -74,6 +74,7 @@ public class HandleStanzas {
             stanzaHandlers.onPresenceInRoom(dispatchStanza)
             stanzaHandlers.onGetRoomInfo(dispatchStanza)
             stanzaHandlers.onGetLastMessageArchive(dispatchStanza)
+            stanzaHandlers.onMamFin(dispatchStanza)
 
         case "room-config":
             stanzaHandlers.onNewRoomCreated(dispatchStanza, client: client)
