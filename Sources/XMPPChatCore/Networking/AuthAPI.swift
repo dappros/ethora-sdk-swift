@@ -220,130 +220,69 @@ public struct AuthAPI {
     }
     
     // MARK: - Refresh Token
-    
-    /// Refresh user token (mirrors refresh in apiClient.ts)
-    /// POST /users/login/refresh
-    /// - Parameters:
-    ///   - refreshToken: Current refresh token
-    ///   - baseURL: API base URL
-    ///   - appToken: App token for Authorization header
-    /// - Returns: New token and refreshToken
+
+    /// Refresh the session (mirrors `refresh` in web `apiClient.ts` and RN `authRefresh.ts`).
+    /// POST /users/login/refresh, `Authorization` carries the refresh token itself.
+    /// Returns every token the response carries (`fileToken` and `xmppPassword` are optional).
+    /// Non-2xx responses throw `RefreshHTTPError`, which carries the body and the `x-error-code` header.
+    public static func refreshSession(
+        refreshToken: String,
+        baseURL: URL? = nil
+    ) async throws -> RefreshResult {
+        let resolvedBaseURL = try await AppConfig.resolveBaseURL(baseURL)
+        let url = resolvedBaseURL.appendingPathComponent("users/login/refresh")
+        let response = try await RESTTransport.send(
+            method: "POST",
+            url: url,
+            authorization: refreshToken,
+            body: Data("{}".utf8)
+        )
+        guard (200..<300).contains(response.statusCode) else {
+            throw RefreshHTTPError(
+                statusCode: response.statusCode,
+                body: response.data,
+                headerCode: response.headers["x-error-code"]
+            )
+        }
+
+        struct RefreshSessionResponse: Decodable {
+            let token: String?
+            let refreshToken: String?
+            let fileToken: String?
+            let xmppPassword: String?
+        }
+        let decoded: RefreshSessionResponse
+        do {
+            decoded = try JSONDecoder().decode(RefreshSessionResponse.self, from: response.data)
+        } catch {
+            throw AuthAPIError.decodeError(error.localizedDescription)
+        }
+        guard let token = decoded.token, !token.isEmpty,
+              let newRefreshToken = decoded.refreshToken, !newRefreshToken.isEmpty else {
+            throw AuthAPIError.decodeError("Refresh response did not contain both tokens")
+        }
+        return RefreshResult(
+            token: token,
+            refreshToken: newRefreshToken,
+            fileToken: decoded.fileToken,
+            xmppPassword: decoded.xmppPassword
+        )
+    }
+
+    /// Two-token form kept for source compatibility. Prefer `refreshSession` or `AuthRefresh.shared.refresh()`,
+    /// which also serialise concurrent rotations and persist the result.
     public static func refreshToken(
         refreshToken: String,
         baseURL: URL? = nil,
         appToken: String = AppConfig.appToken
     ) async throws -> (token: String, refreshToken: String) {
-        let resolvedBaseURL = try await AppConfig.resolveBaseURL(baseURL)
-        let url = resolvedBaseURL.appendingPathComponent("users/login/refresh")
-        print("🌐 AuthAPI.refreshToken: POST \(url.absoluteString)")
-
-        // Match React exactly (see ethora-chat-component/src/networking/
-        // apiClient.ts `refresh()`):
-        //   http.post('/users/login/refresh', {}, {
-        //     headers: { Authorization: user.refreshToken }
-        //   })
-        // The Authorization header carries the *refresh token itself* — NOT
-        // the app token, NOT the access token, and NOT wrapped in
-        // "Bearer "/"JWT ". The request body is an empty JSON object.
-        // Getting any of this wrong (e.g. putting appToken in Authorization
-        // or refreshToken in the body) causes the server to silently 401 —
-        // which is why previously the SessionRecoveryManager always ended
-        // up dropping the user on the login screen.
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue(refreshToken, forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.httpBody = "{}".data(using: .utf8)
-        _ = appToken // parameter kept for source compatibility; not used anymore
-        
-        let (data, response) = try await URLSession.shared.data(for: request)
-        
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw AuthAPIError.networkError("No HTTPURLResponse")
+        _ = appToken // parameter kept for source compatibility; not used
+        do {
+            let session = try await refreshSession(refreshToken: refreshToken, baseURL: baseURL)
+            return (session.token, session.refreshToken)
+        } catch let error as RefreshHTTPError {
+            throw AuthAPIError.httpError(error.statusCode, RESTTransport.bodyText(error.body))
         }
-        
-        // Log full API response to console - USING MULTIPLE METHODS TO ENSURE VISIBILITY
-        let separator = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        let statusText = HTTPURLResponse.localizedString(forStatusCode: httpResponse.statusCode)
-        
-        // Use //NSlog for guaranteed visibility in Xcode console
-        //NSlog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        //NSlog("📦 FULL API RESPONSE (/users/login/refresh):")
-        //NSlog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        //NSlog("Status: %d", httpResponse.statusCode)
-        //NSlog("Status Text: %@", statusText)
-        //NSlog("")
-        
-        // Log headers
-        //NSlog("Headers:")
-        for (key, value) in httpResponse.allHeaderFields {
-            if let keyString = key as? String, let valueString = value as? String {
-                //NSlog("  %@: %@", keyString, valueString)
-            }
-        }
-        //NSlog("")
-        
-        // Log response body
-        //NSlog("Full Response Data:")
-        if let responseBody = String(data: data, encoding: .utf8) {
-            if let jsonObject = try? JSONSerialization.jsonObject(with: data, options: []),
-               let prettyData = try? JSONSerialization.data(withJSONObject: jsonObject, options: [.prettyPrinted]),
-               let prettyString = String(data: prettyData, encoding: .utf8) {
-                //NSlog("%@", prettyString)
-            } else {
-                //NSlog("%@", responseBody)
-            }
-        } else {
-            //NSlog("⚠️ Could not decode response body as UTF-8")
-            //NSlog("   Response data size: %d bytes", data.count)
-        }
-        //NSlog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        
-        // Also use //print for good measure
-        //print(separator)
-        //print("📦 FULL API RESPONSE (/users/login/refresh):")
-        //print(separator)
-        //print("Status: \(httpResponse.statusCode)")
-        //print("Status Text: \(statusText)")
-        //print("")
-        //print("Headers:")
-        for (key, value) in httpResponse.allHeaderFields {
-            if let keyString = key as? String, let valueString = value as? String {
-                //print("  \(keyString): \(valueString)")
-            }
-        }
-        //print("")
-        //print("Full Response Data:")
-        if let responseBody = String(data: data, encoding: .utf8) {
-            if let jsonObject = try? JSONSerialization.jsonObject(with: data, options: []),
-               let prettyData = try? JSONSerialization.data(withJSONObject: jsonObject, options: [.prettyPrinted]),
-               let prettyString = String(data: prettyData, encoding: .utf8) {
-                //print(prettyString)
-            } else {
-                //print(responseBody)
-            }
-        } else {
-            //print("⚠️ Could not decode response body as UTF-8")
-            //print("   Response data size: \(data.count) bytes")
-        }
-        //print(separator)
-        
-        guard (200..<300).contains(httpResponse.statusCode) else {
-            let errorBody = String(data: data, encoding: .utf8) ?? "<no body>"
-            //print("❌ AuthAPI.refreshToken HTTP Error \(httpResponse.statusCode): \(errorBody)")
-            throw AuthAPIError.httpError(httpResponse.statusCode, errorBody)
-        }
-        
-        struct RefreshResponse: Codable {
-            let token: String
-            let refreshToken: String
-        }
-        
-        let decoder = JSONDecoder()
-        let refresh = try decoder.decode(RefreshResponse.self, from: data)
-        //print("✅ AuthAPI.refreshToken: Got new token prefix=\(refresh.token.prefix(20))...")
-        return (refresh.token, refresh.refreshToken)
     }
     
     // MARK: - Login Via JWT

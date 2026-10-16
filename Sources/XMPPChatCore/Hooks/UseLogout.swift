@@ -98,6 +98,7 @@ public final class LogoutManager {
         // 5. Tokens and user data. UserStore.clearUser() itself calls
         //    MessageCache.clearAll() — harmless that step 4 already did it.
         if options.clearUser {
+            AuthRefresh.shared.stopProactiveRefresh()
             UserStore.shared.clearUser()
         }
 

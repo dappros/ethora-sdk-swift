@@ -37,6 +37,14 @@ public class XMPPClient {
     private let reconnectDelay: TimeInterval = 2.0
     private var reconnecting: Bool = false
     private var reconnectTimer: Timer?
+
+    /// Re-mints credentials after a SASL `not-authorized` (the XMPP password is
+    /// short-lived). Defaults to `XMPPCredentialRecovery`. Port of web `setCredentialsProvider`.
+    private var credentialsProvider: (() async -> (username: String, password: String)?)? = {
+        await XMPPCredentialRecovery.shared.recover()
+    }
+    private var authRecoveryAttempts: Int = 0
+    private let maxAuthRecoveryAttempts: Int = 3
     private var offlineReconnectAttempts: Int = 0
     private let maxOfflineReconnectAttempts: Int = 10
     private let reconnectBaseDelayMs: TimeInterval = 1.0
@@ -113,6 +121,23 @@ public class XMPPClient {
     }
 
     // MARK: - Public Methods
+    /// Replace the credential provider. `nil` disables SASL recovery.
+    public func setCredentialsProvider(_ provider: (() async -> (username: String, password: String)?)?) {
+        credentialsProvider = provider
+    }
+
+    /// Apply credentials minted by a recovery. The next connect uses them.
+    func updateCredentials(username: String, password: String) {
+        self.username = username
+        self.password = password
+    }
+
+    /// A SASL failure reaches the client as `XMPPStream` error 401 (see `XMPPStream+Handlers`).
+    static func isSASLAuthenticationFailure(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        return nsError.domain == "XMPPStream" && nsError.code == 401
+    }
+
     public func checkOnline() -> Bool {
         return status == .online
     }
@@ -598,6 +623,7 @@ extension XMPPClient: XMPPStreamDelegate {
             
             // Match TypeScript: this.status = 'online';
             status = .online
+            authRecoveryAttempts = 0
             isConnecting = false // Connection successful, reset flag
             
             // Notify ConnectionManager
@@ -898,7 +924,33 @@ extension XMPPClient: XMPPStreamDelegate {
             object: nil,
             userInfo: userInfo
         )
+        if Self.isSASLAuthenticationFailure(error),
+           credentialsProvider != nil,
+           authRecoveryAttempts < maxAuthRecoveryAttempts {
+            authRecoveryAttempts += 1
+            logStep("auth-recovery:start:\(authRecoveryAttempts)")
+            recoverCredentialsThenReconnect()
+            return
+        }
         scheduleReconnect(reason: "event:error")
+    }
+
+    /// Fetch fresh credentials, store them, then reconnect with them.
+    /// A provider that returns nothing keeps the current credentials.
+    private func recoverCredentialsThenReconnect() {
+        guard let provider = credentialsProvider else { return }
+        Task { [weak self] in
+            let fresh = await provider()
+            guard let self else { return }
+            if let fresh, !fresh.password.isEmpty {
+                self.updateCredentials(
+                    username: fresh.username.isEmpty ? self.username : fresh.username,
+                    password: fresh.password
+                )
+            }
+            self.logStep("auth-recovery:credentials-ready")
+            self.scheduleReconnect(reason: "auth-recovery")
+        }
     }
     
     private func isPong(_ stanza: XMPPStanza, pingId: String) -> Bool {

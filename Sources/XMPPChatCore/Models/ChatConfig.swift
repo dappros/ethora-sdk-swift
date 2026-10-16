@@ -101,6 +101,9 @@ public struct ChatConfig {
     // Notifications
     public var messageNotifications: MessageNotificationConfig?
     public var push: PushNotificationConfig?
+    public var pushNotifications: PushNotificationsConfig?
+    /// Project name sent to a push gateway (`pushNotifications.apiUrl`).
+    public var projectName: String?
     
     // Event Handlers
     public var eventHandlers: ChatEventHandlers?
