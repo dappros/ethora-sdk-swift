@@ -332,6 +332,7 @@ public struct ChatRoomView: View {
                 messages: viewModel.messages,
                 currentUserId: viewModel.currentUserId,
                 currentUserXmppUsername: viewModel.currentUserXmppUsername,
+                videoCalls: ConfigStore.shared.config.videoCalls,
                 onBack: {
                     presentationMode.wrappedValue.dismiss()
                 },

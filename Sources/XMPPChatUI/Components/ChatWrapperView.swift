@@ -153,5 +153,7 @@ public struct ChatWrapperView: View {
             let count = rooms.values.reduce(0) { $0 + $1.unreadMessages }
             onUnreadCountChanged?(count)
         }
+        // Incoming and active calls are shown from any chat screen (web XmppProvider overlay).
+        .callOverlay(config: config.videoCalls)
     }
 }
