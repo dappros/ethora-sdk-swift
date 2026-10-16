@@ -191,6 +191,7 @@ public final class ChatHeadlessSession: ObservableObject {
             UserStore.shared.currentUser = configuredUser
             UserStore.shared.token = configuredUser.token
             UserStore.shared.refreshToken = configuredUser.refreshToken
+            UserStore.shared.fileToken = configuredUser.fileToken
             UserStore.shared.isAuthenticated = !((configuredUser.token ?? "").isEmpty)
             return true
         }

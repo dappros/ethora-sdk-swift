@@ -127,11 +127,11 @@ public final class SessionRecoveryManager {
         }
 
         do {
-            let (newToken, newRefreshToken) = try await AuthAPI.refreshToken(
+            let session = try await AuthAPI.refreshSession(
                 refreshToken: refreshToken,
                 baseURL: baseURL
             )
-            UserStore.shared.updateTokens(token: newToken, refreshToken: newRefreshToken)
+            UserStore.shared.updateTokens(token: session.token, refreshToken: session.refreshToken, fileToken: session.fileToken)
             print("[SessionRecovery] token refresh OK, retrying XMPP…")
 
             // Step 3: New access token is now in `UserStore`; XMPP password

@@ -8,7 +8,28 @@
 import Foundation
 import os.log
 
+/// Process-wide memory of whether `/v2/files/secure` is served by the backend. Set on the first real
+/// rejection, so later uploads go straight to the legacy route (web: `secureUploadUnavailable`).
+final class SecureUploadFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var unavailable = false
+
+    var isUnavailable: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return unavailable
+    }
+
+    func markUnavailable() {
+        lock.lock()
+        unavailable = true
+        lock.unlock()
+    }
+}
+
 public struct AuthAPI {
+    /// Shared across uploads for the whole process.
+    static let secureUploadFlag = SecureUploadFlag()
     // MARK: - Response Models
     
     public struct LoginResponse: Codable {
@@ -18,6 +39,8 @@ public struct AuthAPI {
         public let user: UserResponse
         public let app: AppResponse?
         public let isAllowedNewAppCreate: Bool?
+        /// Per-viewer token for secure file URLs (`?ft=`). Optional: older backends omit it.
+        public var fileToken: String? = nil
     }
     
     public struct UserResponse: Codable {
@@ -233,6 +256,30 @@ public struct AuthAPI {
         baseURL: URL? = nil,
         appToken: String = AppConfig.appToken
     ) async throws -> (token: String, refreshToken: String) {
+        let session = try await refreshSession(
+            refreshToken: refreshToken,
+            baseURL: baseURL,
+            appToken: appToken
+        )
+        return (session.token, session.refreshToken)
+    }
+
+    /// Tokens returned by `POST /users/login/refresh`, including the file token.
+    public struct RefreshedSession: Equatable {
+        public let token: String
+        public let refreshToken: String
+        /// Nil when the backend did not send one; the previous file token then stays in use.
+        public let fileToken: String?
+    }
+
+    /// Same call as `refreshToken(refreshToken:baseURL:appToken:)`, but also returns the
+    /// `fileToken` the response carries. Use this one when the caller stores tokens, so
+    /// secure media URLs keep working after the ~1 hour file token expires.
+    public static func refreshSession(
+        refreshToken: String,
+        baseURL: URL? = nil,
+        appToken: String = AppConfig.appToken
+    ) async throws -> RefreshedSession {
         let resolvedBaseURL = try await AppConfig.resolveBaseURL(baseURL)
         let url = resolvedBaseURL.appendingPathComponent("users/login/refresh")
         print("🌐 AuthAPI.refreshToken: POST \(url.absoluteString)")
@@ -338,12 +385,17 @@ public struct AuthAPI {
         struct RefreshResponse: Codable {
             let token: String
             let refreshToken: String
+            let fileToken: String?
         }
         
         let decoder = JSONDecoder()
         let refresh = try decoder.decode(RefreshResponse.self, from: data)
         //print("✅ AuthAPI.refreshToken: Got new token prefix=\(refresh.token.prefix(20))...")
-        return (refresh.token, refresh.refreshToken)
+        return RefreshedSession(
+            token: refresh.token,
+            refreshToken: refresh.refreshToken,
+            fileToken: refresh.fileToken.flatMap { $0.isEmpty ? nil : $0 }
+        )
     }
     
     // MARK: - Login Via JWT
@@ -384,6 +436,7 @@ public struct AuthAPI {
             let user: UserResponse
             let refreshToken: String
             let token: String
+            let fileToken: String?
         }
         
         let decoder = JSONDecoder()
@@ -397,7 +450,8 @@ public struct AuthAPI {
                 refreshToken: jwtResponse.refreshToken,
                 user: jwtResponse.user,
                 app: nil,
-                isAllowedNewAppCreate: nil
+                isAllowedNewAppCreate: nil,
+                fileToken: jwtResponse.fileToken
             )
             
             //print("✅ AuthAPI.loginViaJwt: SUCCESS!")
@@ -463,12 +517,15 @@ public struct AuthAPI {
     // MARK: - Upload File
     
     /// Upload file (mirrors uploadFile in auth.api.ts)
-    /// POST /files/
+    ///
+    /// - Parameter chatName: Room name (the room JID local part) for the secure route. When set, the upload
+    ///   goes to `POST /v2/files/secure` first and falls back to the legacy `POST /v1/files/` for the rest of
+    ///   the session if that route is not served, exactly like web. When nil, the legacy route is used as before.
     /// - Parameters:
     ///   - fileData: File data to upload
     ///   - fileName: Name of the file
     ///   - mimeType: MIME type of the file
-    ///   - baseURL: API base URL
+    ///   - baseURL: API base URL (`.../v1`)
     ///   - token: User token for Authorization header
     /// - Returns: UploadResponse with file information
     public static func uploadFile(
@@ -476,58 +533,132 @@ public struct AuthAPI {
         fileName: String,
         mimeType: String,
         baseURL: URL? = nil,
-        token: String
+        token: String,
+        chatName: String? = nil
     ) async throws -> UploadResponse {
         let resolvedBaseURL = try await AppConfig.resolveBaseURL(baseURL)
-        let url = resolvedBaseURL.appendingPathComponent("files/")
-        //print("🌐 AuthAPI.uploadFile: URL = \(url.absoluteString)")
-        //print("📁 Uploading file: \(fileName) (\(fileData.count) bytes, \(mimeType))")
-        
+
+        if let chatName = chatName, !chatName.isEmpty, !secureUploadFlag.isUnavailable {
+            do {
+                return try await postUploadFile(
+                    url: secureUploadURL(baseURL: resolvedBaseURL),
+                    fileData: fileData,
+                    fileName: fileName,
+                    mimeType: mimeType,
+                    token: token,
+                    chatName: chatName
+                )
+            } catch {
+                guard shouldFallBackToLegacyUpload(error) else { throw error }
+                secureUploadFlag.markUnavailable()
+                print("[AuthAPI] /v2/files/secure unavailable, falling back to /v1/files/ for this session: \(error)")
+            }
+        }
+
+        return try await postUploadFile(
+            url: resolvedBaseURL.appendingPathComponent("files/"),
+            fileData: fileData,
+            fileName: fileName,
+            mimeType: mimeType,
+            token: token,
+            chatName: nil
+        )
+    }
+
+    /// The secure upload route. `baseURL` is the configured `.../v1`; the version belongs to the path,
+    /// so it is stripped and `v2/files/secure` is appended to the host root (web `stripApiVersionSuffix`).
+    static func secureUploadURL(baseURL: URL) -> URL {
+        var root = baseURL
+        if ["v1", "v2"].contains(root.lastPathComponent.lowercased()) {
+            root = root.deletingLastPathComponent()
+        }
+        return root.appendingPathComponent("v2/files/secure")
+    }
+
+    /// Whether an upload error means "this route is not served here" (so the legacy route is tried).
+    /// Mirrors `canFallBackToLegacyUpload` in web auth.api.ts: a 401 belongs to the refresh path, a 413
+    /// fails the same way on either route, and transport-level failures say nothing about the route.
+    static func shouldFallBackToLegacyUpload(_ error: Error) -> Bool {
+        if let urlError = error as? URLError {
+            switch urlError.code {
+            case .timedOut, .cancelled, .networkConnectionLost, .notConnectedToInternet:
+                return false
+            default:
+                return true
+            }
+        }
+        if case AuthAPIError.httpError(let status, _) = error {
+            return status != 401 && status != 413
+        }
+        return true
+    }
+
+    /// Multipart body for an upload. `chatName` is only sent to the secure route.
+    static func makeUploadBody(
+        boundary: String,
+        fileData: Data,
+        fileName: String,
+        mimeType: String,
+        chatName: String?
+    ) -> Data {
+        var body = Data()
+        func append(_ text: String) {
+            body.append(Data(text.utf8))
+        }
+        if let chatName = chatName {
+            append("--\(boundary)\r\n")
+            append("Content-Disposition: form-data; name=\"chatName\"\r\n\r\n")
+            append("\(chatName)\r\n")
+        }
+        append("--\(boundary)\r\n")
+        append("Content-Disposition: form-data; name=\"files\"; filename=\"\(fileName)\"\r\n")
+        append("Content-Type: \(mimeType)\r\n\r\n")
+        body.append(fileData)
+        append("\r\n--\(boundary)--\r\n")
+        return body
+    }
+
+    private static func postUploadFile(
+        url: URL,
+        fileData: Data,
+        fileName: String,
+        mimeType: String,
+        token: String,
+        chatName: String?
+    ) async throws -> UploadResponse {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue("*/*", forHTTPHeaderField: "Accept")
-        
-        // Create multipart form data
+
         let boundary = "Boundary-\(UUID().uuidString)"
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
-        
-        var body = Data()
-        
-        // Add file field - try "files" first (as in original code, might be array)
-        body.append("--\(boundary)\r\n".data(using: .utf8)!)
-        body.append("Content-Disposition: form-data; name=\"files\"; filename=\"\(fileName)\"\r\n".data(using: .utf8)!)
-        body.append("Content-Type: \(mimeType)\r\n\r\n".data(using: .utf8)!)
-        body.append(fileData)
-        body.append("\r\n".data(using: .utf8)!)
-        body.append("--\(boundary)--\r\n".data(using: .utf8)!)
-        
+        let body = makeUploadBody(
+            boundary: boundary,
+            fileData: fileData,
+            fileName: fileName,
+            mimeType: mimeType,
+            chatName: chatName
+        )
         request.httpBody = body
-        
-        print("🌐 AuthAPI.uploadFile: Request details:")
-        print("   URL: \(url.absoluteString)")
-        print("   Method: POST")
-        print("   Boundary: \(boundary)")
-        print("   File name: \(fileName)")
-        print("   MIME type: \(mimeType)")
-        print("   File size: \(fileData.count) bytes")
-        print("   Body size: \(body.count) bytes")
-        
+
+        print("🌐 AuthAPI.uploadFile: POST \(url.absoluteString) (\(fileData.count) bytes, \(mimeType), body \(body.count) bytes)")
+
         let (data, response) = try await URLSession.shared.data(for: request)
-        
+
         guard let httpResponse = response as? HTTPURLResponse else {
             throw AuthAPIError.networkError("No HTTPURLResponse")
         }
-        
+
         guard (200..<300).contains(httpResponse.statusCode) else {
             let errorBody = String(data: data, encoding: .utf8) ?? "<no body>"
             print("❌ AuthAPI.uploadFile HTTP Error \(httpResponse.statusCode): \(errorBody)")
             throw AuthAPIError.httpError(httpResponse.statusCode, errorBody)
         }
-        
+
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
-        
+
         do {
             let uploadResponse = try decoder.decode(UploadResponse.self, from: data)
             print("✅ AuthAPI.uploadFile: SUCCESS! Uploaded \(uploadResponse.results.count) file(s)")
@@ -537,9 +668,6 @@ public struct AuthAPI {
             print("❌ AuthAPI.uploadFile Decode Error: \(error)")
             print("📄 Response body: \(jsonString)")
             print("📄 Response data length: \(data.count) bytes")
-            if let responseString = String(data: data, encoding: .utf8) {
-                print("📄 Response as string: \(responseString)")
-            }
             throw AuthAPIError.decodeError(error.localizedDescription)
         }
     }

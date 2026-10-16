@@ -181,6 +181,7 @@ public class ChatWrapperViewModel: ObservableObject {
             UserStore.shared.currentUser = configuredUser
             UserStore.shared.token = configuredUser.token
             UserStore.shared.refreshToken = configuredUser.refreshToken
+            UserStore.shared.fileToken = configuredUser.fileToken
             UserStore.shared.isAuthenticated = !((configuredUser.token ?? "").isEmpty)
         }
 
@@ -415,12 +416,12 @@ public class ChatWrapperViewModel: ObservableObject {
         }
         
         do {
-            let (newToken, newRefreshToken) = try await AuthAPI.refreshToken(
+            let session = try await AuthAPI.refreshSession(
                 refreshToken: refreshToken,
                 baseURL: baseURL
             )
             await MainActor.run {
-                UserStore.shared.updateTokens(token: newToken, refreshToken: newRefreshToken)
+                UserStore.shared.updateTokens(token: session.token, refreshToken: session.refreshToken, fileToken: session.fileToken)
             }
         } catch {
             // Ignore – regular API calls will surface refresh failures when needed.

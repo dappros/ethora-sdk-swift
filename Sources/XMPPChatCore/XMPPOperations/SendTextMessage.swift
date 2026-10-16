@@ -79,8 +79,35 @@ public class XMPPOperations {
     ) {
         guard let stream = client?.xmppStream else { return }
         
-        let dataAttributes: [String: String] = [
-            "senderJID": stream.jid ?? "",
+        let dataAttributes = Self.mediaDataAttributes(data: data, senderJID: stream.jid ?? "")
+        
+        let bodyStanza = XMPPStanza(name: "body", text: "media")
+        let storeStanza = XMPPStanza(name: "store", attributes: ["xmlns": "urn:xmpp:hints"])
+        let dataStanza = XMPPStanza(name: "data", attributes: dataAttributes)
+        
+        let messageStanza = XMPPStanza(
+            name: "message",
+            attributes: [
+                "id": id,
+                "type": "groupchat",
+                "from": stream.jid ?? "",
+                "to": roomJID
+            ],
+            children: [bodyStanza, storeStanza, dataStanza]
+        )
+        
+        stream.send(messageStanza)
+    }
+
+    /// The `<data>` attributes of a media message (web sendMediaMessage.xmpp.ts). Pure, so the wire shape can be
+    /// tested without a stream.
+    ///
+    /// Multi-file sends add `attachments` (JSON of every file, only when there is more than one, so single-file
+    /// stanzas stay as they were) and the flat fields keep describing attachment #0. The caption rides on the
+    /// media message as `caption`, never as a separate text message, and is omitted when blank.
+    public static func mediaDataAttributes(data: MediaMessageData, senderJID: String) -> [String: String] {
+        var attributes: [String: String] = [
+            "senderJID": senderJID,
             "senderFirstName": data.firstName,
             "senderLastName": data.lastName,
             "senderWalletAddress": data.walletAddress,
@@ -110,23 +137,14 @@ public class XMPPOperations {
             "mainMessage": data.mainMessage ?? "",
             "roomJid": data.roomJid ?? ""
         ]
-        
-        let bodyStanza = XMPPStanza(name: "body", text: "media")
-        let storeStanza = XMPPStanza(name: "store", attributes: ["xmlns": "urn:xmpp:hints"])
-        let dataStanza = XMPPStanza(name: "data", attributes: dataAttributes)
-        
-        let messageStanza = XMPPStanza(
-            name: "message",
-            attributes: [
-                "id": id,
-                "type": "groupchat",
-                "from": stream.jid ?? "",
-                "to": roomJID
-            ],
-            children: [bodyStanza, storeStanza, dataStanza]
-        )
-        
-        stream.send(messageStanza)
+
+        if let attachments = data.attachments, attachments.count > 1 {
+            attributes["attachments"] = MessageAttachments.serialize(attachments)
+        }
+        if let caption = data.caption, caption.contains(where: { !$0.isWhitespace }) {
+            attributes["caption"] = caption
+        }
+        return attributes
     }
     
     public func deleteMessage(room: String, msgId: String) {
@@ -278,6 +296,11 @@ public struct MediaMessageData {
     public var showInChannel: Bool?
     public var mainMessage: String?
     public var roomJid: String?
+    /// Every file of a multi-file send (more than one entry adds the `attachments` attribute). The flat fields
+    /// above describe the first entry.
+    public var attachments: [MessageAttachment]?
+    /// Text typed with the files, sent on the media message itself.
+    public var caption: String?
     
     public init(
         firstName: String,

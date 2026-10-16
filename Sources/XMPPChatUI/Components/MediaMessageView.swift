@@ -66,7 +66,7 @@ struct ImageMessageView: View {
     
     var body: some View {
         Group {
-            if let location = message.location, let url = URL(string: location) {
+            if let location = message.location, let url = SecureFileURL.currentURL(location) {
                 Button(action: {
                     onTap?()
                 }) {
@@ -90,7 +90,7 @@ struct ImageMessageView: View {
                     }
                 }
                 .buttonStyle(PlainButtonStyle())
-            } else if let locationPreview = message.locationPreview, let url = URL(string: locationPreview) {
+            } else if let locationPreview = message.locationPreview, let url = SecureFileURL.currentURL(locationPreview) {
                 Button(action: {
                     onTap?()
                 }) {
@@ -133,7 +133,7 @@ struct VideoMessageView: View {
     
     var body: some View {
         Group {
-            if let location = message.location, let url = URL(string: location) {
+            if let location = message.location, let url = SecureFileURL.currentURL(location) {
                 Button(action: {
                     onTap?()
                 }) {
@@ -191,7 +191,7 @@ struct AudioMessageView: View {
             
             VStack(alignment: .leading, spacing: 4) {
                 // Real waveform
-                if let location = message.location, let url = URL(string: location) {
+                if let location = message.location, let url = SecureFileURL.currentURL(location) {
                     AudioWaveformView(
                         audioURL: url,
                         waveformData: waveformData,
@@ -242,7 +242,7 @@ struct AudioMessageView: View {
     }
     
     private func setupPlayer() {
-        guard let location = message.location, let url = URL(string: location) else { return }
+        guard let location = message.location, let url = SecureFileURL.currentURL(location) else { return }
         
         player = AVPlayer(url: url)
         

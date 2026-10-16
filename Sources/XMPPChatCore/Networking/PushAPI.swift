@@ -115,20 +115,20 @@ public struct PushAPI {
                     }
 
                     do {
-                        let (newToken, newRefreshToken) = try await AuthAPI.refreshToken(
+                        let session = try await AuthAPI.refreshSession(
                             refreshToken: refreshToken,
                             baseURL: authURL
                         )
 
                         await MainActor.run {
-                            UserStore.shared.updateTokens(token: newToken, refreshToken: newRefreshToken)
+                            UserStore.shared.updateTokens(token: session.token, refreshToken: session.refreshToken, fileToken: session.fileToken)
                         }
 
                         return try await registerPushToken(
                             registrationToken: registrationToken,
                             deviceType: deviceType,
                             appId: finalAppId,
-                            token: newToken,
+                            token: session.token,
                             pushBaseURL: pushURL,
                             authBaseURL: authURL,
                             didRefresh: true

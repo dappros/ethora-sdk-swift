@@ -203,6 +203,13 @@ public final class MessageParser {
             //print("   size: \(size ?? "nil")")
         }
 
+        // Multi-file media: the `attachments` JSON attribute carries every file, the flat fields above
+        // describe the first one. Caption is the text typed with the files (blank means no caption).
+        let parsedAttachments = MessageAttachments.parse(d.dataAttrs["attachments"])
+        let caption = d.dataAttrs["caption"].flatMap { text -> String? in
+            text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : text
+        }
+
         // Match TypeScript: createMessageFromXml doesn't filter body, but addRoomMessage does
         // So we create message with body (even if empty), and it will be filtered in handleIncomingMessage
         return Message(
@@ -228,7 +235,9 @@ public final class MessageParser {
             originalName: originalName,
             size: size,
             xmppId: d.xmppId,
-            xmppFrom: d.xmppFrom
+            xmppFrom: d.xmppFrom,
+            attachments: parsedAttachments.isEmpty ? nil : parsedAttachments,
+            caption: caption
         )
     }
 

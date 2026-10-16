@@ -138,14 +138,32 @@ struct MessageBubbleView: View {
                     }
                 }()
                 
-                MediaMessagePreview(
-                    message: message,
-                    mimeType: mimeType,
-                    isUser: isUser,
-                    onMediaTap: { mediaMessage in
-                        onMediaTap?(mediaMessage)
+                VStack(alignment: .leading, spacing: 6) {
+                    if message.mediaAttachments.count > 1 {
+                        AttachmentAlbumView(
+                            attachments: message.mediaAttachments,
+                            onTap: { onMediaTap?(message) }
+                        )
+                    } else {
+                        MediaMessagePreview(
+                            message: message,
+                            mimeType: mimeType,
+                            isUser: isUser,
+                            onMediaTap: { mediaMessage in
+                                onMediaTap?(mediaMessage)
+                            }
+                        )
                     }
-                )
+
+                    // The caption typed with the files, shown under the media.
+                    if let caption = message.caption, caption.contains(where: { !$0.isWhitespace }) {
+                        Text(caption)
+                            .font(.body)
+                            .foregroundColor(messageTextColor)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .multilineTextAlignment(isUser ? .trailing : .leading)
+                    }
+                }
             } else {
                 if message.body.lowercased() != "media" {
                     UniversalMarkdownTextView(

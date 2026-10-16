@@ -55,6 +55,11 @@ public struct Message: Codable, Identifiable, Equatable {
     public var xmppId: String?
     public var xmppFrom: String?
     public var waveForm: String? // Waveform data for audio messages
+    /// Every file of a multi-file media message (the `attachments` attribute). Nil for text and for media
+    /// messages that carry one file in the flat fields; read `mediaAttachments` for the full list either way.
+    public var attachments: [MessageAttachment]?
+    /// Text typed with the files. Travels on the media message itself, never as a separate message.
+    public var caption: String?
     
     public init(
         id: String,
@@ -89,7 +94,9 @@ public struct Message: Codable, Identifiable, Equatable {
         xmppId: String? = nil,
         xmppFrom: String? = nil,
         waveForm: String? = nil,
-        wasEdited: Bool? = nil
+        wasEdited: Bool? = nil,
+        attachments: [MessageAttachment]? = nil,
+        caption: String? = nil
     ) {
         self.id = id
         self.user = user
@@ -124,6 +131,8 @@ public struct Message: Codable, Identifiable, Equatable {
         self.xmppId = xmppId
         self.xmppFrom = xmppFrom
         self.waveForm = waveForm
+        self.attachments = attachments
+        self.caption = caption
     }
 }
 

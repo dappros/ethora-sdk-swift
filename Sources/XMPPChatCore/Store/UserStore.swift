@@ -15,6 +15,8 @@ public class UserStore: ObservableObject {
     @Published public var currentUser: User?
     @Published public var token: String?
     @Published public var refreshToken: String?
+    /// Token for secure media URLs (`?ft=`). Kept apart from `token`, refreshed with it.
+    @Published public var fileToken: String?
     @Published public var isAuthenticated: Bool = false
     
     private init() {
@@ -25,6 +27,7 @@ public class UserStore: ObservableObject {
            let user = try? JSONDecoder().decode(User.self, from: savedUserData) {
             self.token = savedToken
             self.refreshToken = savedRefreshToken
+            self.fileToken = UserDefaults.standard.string(forKey: "ethora_user_file_token")
             self.currentUser = user
             self.isAuthenticated = true
         }
@@ -48,17 +51,20 @@ public class UserStore: ObservableObject {
             xmppUsername: loginResponse.user.xmppUsername,
             isProfileOpen: loginResponse.user.isProfileOpen,
             isAssetsOpen: loginResponse.user.isAssetsOpen,
-            isAgreeWithTerms: loginResponse.user.isAgreeWithTerms
+            isAgreeWithTerms: loginResponse.user.isAgreeWithTerms,
+            fileToken: loginResponse.fileToken
         )
         
         self.currentUser = user
         self.token = loginResponse.token
         self.refreshToken = loginResponse.refreshToken
+        self.fileToken = loginResponse.fileToken
         self.isAuthenticated = true
         
         // Persist to UserDefaults
         UserDefaults.standard.set(loginResponse.token, forKey: "ethora_user_token")
         UserDefaults.standard.set(loginResponse.refreshToken, forKey: "ethora_user_refresh_token")
+        setStoredFileToken(loginResponse.fileToken)
         if let userData = try? JSONEncoder().encode(user) {
             UserDefaults.standard.set(userData, forKey: "ethora_user_data")
         }
@@ -66,13 +72,25 @@ public class UserStore: ObservableObject {
         //print("✅ UserStore: User logged in - \(user.email ?? "unknown")")
     }
     
-    /// Update tokens after refresh
-    public func updateTokens(token: String, refreshToken: String) {
+    /// Update tokens after refresh. A nil or empty `fileToken` keeps the one already held.
+    public func updateTokens(token: String, refreshToken: String, fileToken: String? = nil) {
         self.token = token
         self.refreshToken = refreshToken
         UserDefaults.standard.set(token, forKey: "ethora_user_token")
         UserDefaults.standard.set(refreshToken, forKey: "ethora_user_refresh_token")
+        if let fileToken = fileToken, !fileToken.isEmpty {
+            self.fileToken = fileToken
+            setStoredFileToken(fileToken)
+        }
         //print("✅ UserStore: Tokens refreshed")
+    }
+
+    private func setStoredFileToken(_ value: String?) {
+        if let value = value, !value.isEmpty {
+            UserDefaults.standard.set(value, forKey: "ethora_user_file_token")
+        } else {
+            UserDefaults.standard.removeObject(forKey: "ethora_user_file_token")
+        }
     }
     
     /// Clear user data (logout)
@@ -81,10 +99,12 @@ public class UserStore: ObservableObject {
         self.currentUser = nil
         self.token = nil
         self.refreshToken = nil
+        self.fileToken = nil
         self.isAuthenticated = false
         
         UserDefaults.standard.removeObject(forKey: "ethora_user_token")
         UserDefaults.standard.removeObject(forKey: "ethora_user_refresh_token")
+        UserDefaults.standard.removeObject(forKey: "ethora_user_file_token")
         UserDefaults.standard.removeObject(forKey: "ethora_user_data")
         
         // Clear message cache on logout
