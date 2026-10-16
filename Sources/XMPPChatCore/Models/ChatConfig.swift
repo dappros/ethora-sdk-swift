@@ -39,6 +39,9 @@ public struct ChatConfig {
     public var disableRoomMenu: Bool?
     public var disableRoomConfig: Bool?
     public var disableNewChatButton: Bool?
+    public var disableRoomSwipeActions: Bool?
+    public var disableRoomMute: Bool?
+    public var disablePublicChatsDirectory: Bool?
     
     // Styling
     public var roomListStyles: [String: Any]?
@@ -89,6 +92,9 @@ public struct ChatConfig {
     public var botMessageAutoScroll: Bool?
     public var messageTextFilter: MessageTextFilterConfig?
     public var whitelistSystemMessage: [String]?
+    /// Senders allowed to push `ethora-event` headlines (full jid or localpart).
+    /// Unset or empty: any bare jid on the account's own XMPP domain.
+    public var trustedEventSenders: [String]?
     
     // Typing Indicator
     public var disableTypingIndicator: Bool?

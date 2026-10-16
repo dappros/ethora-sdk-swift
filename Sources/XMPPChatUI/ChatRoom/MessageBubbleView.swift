@@ -32,6 +32,11 @@ struct MessageBubbleView: View {
     @State private var showReactionPicker = false
     
     var body: some View {
+        // System messages (`isSystemMessage="true"`) render as a centered pill, not a bubble.
+        if message.isSystemMessage == "true" {
+            return AnyView(SystemMessagePill(text: message.body))
+        }
+
         if message.id == "delimiter-new" {
             return AnyView(
                 UnreadMessagesDelimiter()

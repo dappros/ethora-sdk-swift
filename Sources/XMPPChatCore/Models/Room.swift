@@ -91,8 +91,8 @@ public struct RoomMember: Codable, Identifiable, Equatable {
 public struct Room: Codable, Identifiable, Equatable {
     public let id: String
     public let jid: String
-    public let name: String
-    public let title: String
+    public var name: String
+    public var title: String
     public var usersCnt: Int
     public var messages: [Message]
     public var isLoading: Bool
@@ -117,6 +117,9 @@ public struct Room: Codable, Identifiable, Equatable {
     public var role: String?
     public var messageStats: MessageStats?
     public var historyComplete: Bool?
+    /// Per-chat mute preference from the backend (`/chats/my`). Nil when the
+    /// backend has not reported it, which hides the mute control (web `isSupported`).
+    public var muted: Bool?
     
     public init(
         id: String,
@@ -146,7 +149,8 @@ public struct Room: Codable, Identifiable, Equatable {
         noMessages: Bool? = nil,
         role: String? = nil,
         messageStats: MessageStats? = nil,
-        historyComplete: Bool? = nil
+        historyComplete: Bool? = nil,
+        muted: Bool? = nil
     ) {
         self.id = id
         self.jid = jid
@@ -176,6 +180,7 @@ public struct Room: Codable, Identifiable, Equatable {
         self.role = role
         self.messageStats = messageStats
         self.historyComplete = historyComplete
+        self.muted = muted
     }
 }
 
@@ -201,6 +206,7 @@ public struct ApiRoom: Codable {
     public var updatedAt: String?
     public var __v: Int?  // Changed from String? to Int? based on API response showing 0
     public var reported: Bool?
+    public var muted: Bool?
     
     // Explicit CodingKeys to ensure proper decoding
     enum CodingKeys: String, CodingKey {
@@ -218,6 +224,7 @@ public struct ApiRoom: Codable {
         case updatedAt
         case __v
         case reported
+        case muted
     }
 }
 
@@ -282,7 +289,8 @@ public extension Room {
             noMessages: nil,
             role: nil,
             messageStats: nil,
-            historyComplete: nil
+            historyComplete: nil,
+            muted: apiRoom.muted
         )
     }
 }
