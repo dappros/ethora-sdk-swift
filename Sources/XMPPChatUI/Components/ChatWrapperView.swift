@@ -154,5 +154,7 @@ public struct ChatWrapperView: View {
             onUnreadCountChanged?(count)
         }
         .chatTheme(config)
+        // Incoming and active calls are shown from any chat screen (web XmppProvider overlay).
+        .callOverlay(config: config.videoCalls)
     }
 }

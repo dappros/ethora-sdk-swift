@@ -63,6 +63,9 @@ public struct Message: Codable, Identifiable, Equatable {
     public var attachments: [MessageAttachment]?
     /// Text typed with the files. Travels on the media message itself, never as a separate message.
     public var caption: String?
+    /// Set on call-log rows (call-state with log data). Rendered as a centered
+    /// call entry, not a bubble. See CallLogFormatter.
+    public var callLog: CallLogMeta? = nil
     
     public init(
         id: String,

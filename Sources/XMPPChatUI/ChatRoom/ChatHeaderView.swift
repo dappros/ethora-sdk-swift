@@ -15,6 +15,8 @@ struct ChatHeaderView: View {
     let currentUserId: String
     let currentUserXmppUsername: String?
     let config: ChatConfig?
+    /// Call settings (`videoCalls`). The call buttons appear only when calls are available.
+    let videoCalls: VideoCallsConfig?
     let onBack: () -> Void
     let onInfo: (() -> Void)?
     var onSearch: (() -> Void)? = nil
@@ -25,6 +27,8 @@ struct ChatHeaderView: View {
         let translates = ConfigStore.shared.config.translates
         return translates?.enabled == true && translates?.showLanguageSelector != false
     }
+    /// Re-renders when a call starts or ends, so the buttons hide while busy.
+    @ObservedObject private var callStore: CallStore = .shared
     
     init(
         room: Room,
@@ -34,6 +38,7 @@ struct ChatHeaderView: View {
         currentUserId: String = "",
         currentUserXmppUsername: String? = nil,
         config: ChatConfig? = nil,
+        videoCalls: VideoCallsConfig? = nil,
         onBack: @escaping () -> Void,
         onInfo: (() -> Void)? = nil,
         onSearch: (() -> Void)? = nil
@@ -45,6 +50,7 @@ struct ChatHeaderView: View {
         self.currentUserId = currentUserId
         self.currentUserXmppUsername = currentUserXmppUsername
         self.config = config
+        self.videoCalls = videoCalls
         self.onBack = onBack
         self.onInfo = onInfo
         self.onSearch = onSearch
@@ -204,6 +210,27 @@ struct ChatHeaderView: View {
                         .foregroundColor(primaryColor)
                 }
                 .accessibilityLabel(UIStrings.t("language.select"))
+            }
+
+            if CallService.shared.canStartCall(room: room, config: videoCalls) {
+                if videoCalls?.enableAudioCalls == true {
+                    Button {
+                        Task { await CallService.shared.placeCall(room: room, kind: .audio) }
+                    } label: {
+                        Image(systemName: "phone.fill")
+                            .font(.title3)
+                            .foregroundColor(primaryColor)
+                    }
+                    .accessibilityLabel("Start audio call")
+                }
+                Button {
+                    Task { await CallService.shared.placeCall(room: room, kind: .video) }
+                } label: {
+                    Image(systemName: "video.fill")
+                        .font(.title3)
+                        .foregroundColor(primaryColor)
+                }
+                .accessibilityLabel("Start video call")
             }
 
             if config?.chatHeaderSettings?.chatInfoButtonDisabled != true, let onInfo = onInfo {

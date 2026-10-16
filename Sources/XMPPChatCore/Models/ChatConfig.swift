@@ -104,6 +104,9 @@ public struct ChatConfig {
     /// Unset or empty: any bare jid on the account's own XMPP domain.
     public var trustedEventSenders: [String]?
     
+    // Video and audio calls (off by default)
+    public var videoCalls: VideoCallsConfig?
+
     // Typing Indicator
     public var disableTypingIndicator: Bool?
     public var customTypingIndicator: CustomTypingIndicatorConfig?

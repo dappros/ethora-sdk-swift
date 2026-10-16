@@ -228,6 +228,17 @@ public class RoomStore: ObservableObject {
         if room.messages.contains(where: { $0.id == message.id }) {
             return
         }
+
+        // Call-log rows merge per callId. The local entry and the server copy
+        // collapse into one, and the longer duration wins.
+        if let meta = message.callLog, !meta.callId.isEmpty,
+           let index = room.messages.firstIndex(where: { $0.callLog?.callId == meta.callId }) {
+            guard (room.messages[index].callLog?.durationMs ?? 0) < meta.durationMs else { return }
+            room.messages[index] = message
+            rooms[roomJID] = room
+            saveToCache()
+            return
+        }
         
         let stored = applyPendingReactions(to: message, roomJID: roomJID)
         room.messages.append(stored)

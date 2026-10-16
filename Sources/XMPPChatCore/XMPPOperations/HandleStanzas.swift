@@ -61,6 +61,15 @@ public class HandleStanzas {
 
         switch dispatchStanza.name {
         case "message":
+            // Call signalling (call-token, call-invite, call-state) never reaches
+            // the chat handlers. Call-log rows pass through.
+            if CallStanzaRouter.handle(
+                inner: dispatchStanza,
+                outer: stanza,
+                selfXmppUsername: client?.username ?? ""
+            ) {
+                return
+            }
             stanzaHandlers.onMessageError(dispatchStanza, client: client)
             stanzaHandlers.onReactionMessage(dispatchStanza)
             stanzaHandlers.onReactionHistory(dispatchStanza)

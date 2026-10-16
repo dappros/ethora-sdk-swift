@@ -62,6 +62,10 @@ struct MessageBubbleView: View {
                 UnreadMessagesDelimiter()
             )
         }
+
+        if let callLog = message.callLog {
+            return AnyView(CallLogRowView(callLog: callLog))
+        }
         
         let isConsecutive = previousMessage?.user.id == message.user.id
         

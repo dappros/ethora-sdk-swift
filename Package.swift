@@ -18,6 +18,11 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/daltoniam/Starscream.git", from: "4.0.0"),
+        // LiveKit native SDK for 1:1 audio/video calls (XMPPChatUI only).
+        // Pinned to the 2.13 line: 2.13 declares swift-tools 5.9 and iOS 13,
+        // matching this package's toolchain floor. Newer LiveKit releases need
+        // swift-tools 6.x.
+        .package(url: "https://github.com/livekit/client-sdk-swift.git", .upToNextMinor(from: "2.13.0")),
     ],
     targets: [
         .target(
@@ -27,7 +32,10 @@ let package = Package(
             ]),
         .target(
             name: "XMPPChatUI",
-            dependencies: ["XMPPChatCore"]),
+            dependencies: [
+                "XMPPChatCore",
+                .product(name: "LiveKit", package: "client-sdk-swift"),
+            ]),
         .testTarget(
             name: "XMPPChatCoreTests",
             dependencies: ["XMPPChatCore"]),

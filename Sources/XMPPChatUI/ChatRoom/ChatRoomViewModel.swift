@@ -1315,6 +1315,15 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
         print("📥 ChatRoomViewModel.handleIncomingMessage: Received message with id: '\(message.id)', body: '\(message.body.prefix(50))', xmppId: '\(message.xmppId ?? "nil")'")
         print("   Current messages count: \(messages.count)")
         
+        // Call-log rows merge per callId (local entry and server copy), keeping the longer duration.
+        if let meta = message.callLog, !meta.callId.isEmpty,
+           let index = messages.firstIndex(where: { $0.callLog?.callId == meta.callId }) {
+            if (messages[index].callLog?.durationMs ?? 0) < meta.durationMs {
+                messages[index] = message
+            }
+            return
+        }
+
         // Match: pending message id === incoming message xmppId
         // CRITICAL: Also check for edited messages - same ID but different body
         if let existingIndex = messages.firstIndex(where: { msg in
