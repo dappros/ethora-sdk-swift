@@ -112,6 +112,15 @@ public class ConfigStore: ObservableObject {
         if let bubleMessage = partialConfig.bubleMessage {
             config.bubleMessage = bubleMessage
         }
+        if let colorScheme = partialConfig.colorScheme {
+            config.colorScheme = colorScheme
+        }
+        if let typography = partialConfig.typography {
+            config.typography = typography
+        }
+        if let supportsTablet = partialConfig.supportsTablet {
+            config.supportsTablet = supportsTablet
+        }
         if let headerLogo = partialConfig.headerLogo {
             config.headerLogo = headerLogo
         }
@@ -226,6 +235,7 @@ extension ChatConfig: Codable {
         case chatHeaderBurgerMenu, forceSetRoom, setRoomJidInPath
         case disableRoomMenu, disableRoomConfig, disableNewChatButton
         case backgroundChat, bubleMessage, headerLogo
+        case colorScheme, typography, supportsTablet
         case translates, disableProfilesInteractions, disableUserCount
         case clearStoreBeforeInit, disableSentLogic, initBeforeLoad
         case newArch, qrUrl, enableRoomsRetry
@@ -258,6 +268,9 @@ extension ChatConfig: Codable {
         self.disableNewChatButton = try container.decodeIfPresent(Bool.self, forKey: .disableNewChatButton)
         self.backgroundChat = try container.decodeIfPresent(BackgroundChatConfig.self, forKey: .backgroundChat)
         self.bubleMessage = try container.decodeIfPresent(MessageBubbleStyle.self, forKey: .bubleMessage)
+        self.colorScheme = try container.decodeIfPresent(ChatColorScheme.self, forKey: .colorScheme)
+        self.typography = try container.decodeIfPresent(TypographyConfig.self, forKey: .typography)
+        self.supportsTablet = try container.decodeIfPresent(Bool.self, forKey: .supportsTablet)
         self.headerLogo = try container.decodeIfPresent(String.self, forKey: .headerLogo)
         self.translates = try container.decodeIfPresent(TranslationsConfig.self, forKey: .translates)
         self.disableProfilesInteractions = try container.decodeIfPresent(Bool.self, forKey: .disableProfilesInteractions)
@@ -317,6 +330,9 @@ extension ChatConfig: Codable {
         try container.encodeIfPresent(disableNewChatButton, forKey: .disableNewChatButton)
         try container.encodeIfPresent(backgroundChat, forKey: .backgroundChat)
         try container.encodeIfPresent(bubleMessage, forKey: .bubleMessage)
+        try container.encodeIfPresent(colorScheme, forKey: .colorScheme)
+        try container.encodeIfPresent(typography, forKey: .typography)
+        try container.encodeIfPresent(supportsTablet, forKey: .supportsTablet)
         try container.encodeIfPresent(headerLogo, forKey: .headerLogo)
         try container.encodeIfPresent(translates, forKey: .translates)
         try container.encodeIfPresent(disableProfilesInteractions, forKey: .disableProfilesInteractions)

@@ -14,6 +14,7 @@ import AppKit
 import XMPPChatCore
 
 public struct URLPreviewCard: View {
+    @Environment(\.chatPalette) private var palette
     let url: String
     let isUserMessage: Bool
     
@@ -76,7 +77,7 @@ public struct URLPreviewCard: View {
                 .underline()
         }
         .padding(8)
-        .background(Color.white)
+        .background(Color(hex: palette.background))
         .cornerRadius(8)
         .overlay(
             RoundedRectangle(cornerRadius: 8)

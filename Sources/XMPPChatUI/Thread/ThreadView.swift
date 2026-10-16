@@ -9,6 +9,7 @@ import SwiftUI
 import XMPPChatCore
 
 public struct ThreadView: View {
+    @Environment(\.chatPalette) private var palette
     let activeMessage: Message
     let currentUser: User
     let onClose: () -> Void
@@ -144,7 +145,7 @@ public struct ThreadView: View {
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
-            .background(Color.white)
+            .background(Color(hex: palette.background))
             .cornerRadius(15, corners: [.topLeft, .topRight])
             .shadow(color: Color.black.opacity(0.05), radius: 8, x: 0, y: -2)
         }
@@ -164,6 +165,7 @@ public struct ThreadView: View {
 
 // MARK: - Thread Header
 struct ThreadHeaderView: View {
+    @Environment(\.chatPalette) private var palette
     let message: Message
     let replyCount: Int
     let onClose: () -> Void
@@ -188,7 +190,7 @@ struct ThreadHeaderView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
-        .background(Color.white)
+        .background(Color(hex: palette.background))
         .shadow(color: Color.black.opacity(0.05), radius: 2, x: 0, y: 2)
     }
 }
