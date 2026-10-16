@@ -205,11 +205,21 @@ public final class MessageParser {
 
         // Match TypeScript: createMessageFromXml doesn't filter body, but addRoomMessage does
         // So we create message with body (even if empty), and it will be filtered in handleIncomingMessage
-        return Message(
+        // Call-log rows (call-state with log data) get structured metadata.
+        // The fallback body keeps them from being dropped as empty messages.
+        let callLog: CallLogMeta? = d.dataAttrs["type"]?.lowercased() == "call-state"
+            ? CallSignaling.callLogMeta(fromAttributes: d.dataAttrs)
+            : nil
+        var bodyText = d.body ?? "" // Empty body will be filtered out in handleIncomingMessage
+        if bodyText.isEmpty, let callLog {
+            bodyText = CallLogFormatter.fallbackBody(for: callLog)
+        }
+
+        var parsed = Message(
             id: d.id,
             user: user,
             date: d.date,
-            body: d.body ?? "", // Empty body will be filtered out in handleIncomingMessage
+            body: bodyText,
             roomJid: d.roomJid,
             isSystemMessage: d.dataAttrs["isSystemMessage"],
             isMediafile: d.dataAttrs["isMediafile"],
@@ -230,6 +240,8 @@ public final class MessageParser {
             xmppId: d.xmppId,
             xmppFrom: d.xmppFrom
         )
+        parsed.callLog = callLog
+        return parsed
     }
 
     private static func inferMimeType(from urlString: String) -> String? {

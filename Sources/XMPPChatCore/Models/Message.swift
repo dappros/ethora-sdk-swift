@@ -55,6 +55,9 @@ public struct Message: Codable, Identifiable, Equatable {
     public var xmppId: String?
     public var xmppFrom: String?
     public var waveForm: String? // Waveform data for audio messages
+    /// Set on call-log rows (call-state with log data). Rendered as a centered
+    /// call entry, not a bubble. See CallLogFormatter.
+    public var callLog: CallLogMeta? = nil
     
     public init(
         id: String,

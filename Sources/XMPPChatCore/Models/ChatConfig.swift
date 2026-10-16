@@ -84,6 +84,9 @@ public struct ChatConfig {
     public var messageTextFilter: MessageTextFilterConfig?
     public var whitelistSystemMessage: [String]?
     
+    // Video and audio calls (off by default)
+    public var videoCalls: VideoCallsConfig?
+
     // Typing Indicator
     public var disableTypingIndicator: Bool?
     public var customTypingIndicator: CustomTypingIndicatorConfig?

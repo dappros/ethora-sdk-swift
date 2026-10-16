@@ -49,6 +49,9 @@ public class ConfigStore: ObservableObject {
         if let colors = partialConfig.colors {
             config.colors = colors
         }
+        if let videoCalls = partialConfig.videoCalls {
+            config.videoCalls = videoCalls
+        }
         if let googleLogin = partialConfig.googleLogin {
             config.googleLogin = googleLogin
         }
