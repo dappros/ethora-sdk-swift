@@ -25,6 +25,10 @@ public struct User: Codable, Identifiable, Equatable {
     public var fileToken: String?
     public var xmppUsername: String?
     public var langSource: String?
+    /// Profile interface language (`appLanguage`), set by the language settings.
+    public var appLanguage: String?
+    /// Profile chat language (`chatLanguage`), what messages are translated into.
+    public var chatLanguage: String?
     public var homeScreen: String?
     public var registrationChannelType: String?
     public var updatedAt: String?
@@ -54,6 +58,8 @@ public struct User: Codable, Identifiable, Equatable {
         xmppPassword: String? = nil,
         xmppUsername: String? = nil,
         langSource: String? = nil,
+        appLanguage: String? = nil,
+        chatLanguage: String? = nil,
         homeScreen: String? = nil,
         registrationChannelType: String? = nil,
         updatedAt: String? = nil,
@@ -81,6 +87,8 @@ public struct User: Codable, Identifiable, Equatable {
         self.xmppPassword = xmppPassword
         self.xmppUsername = xmppUsername
         self.langSource = langSource
+        self.appLanguage = appLanguage
+        self.chatLanguage = chatLanguage
         self.homeScreen = homeScreen
         self.registrationChannelType = registrationChannelType
         self.updatedAt = updatedAt

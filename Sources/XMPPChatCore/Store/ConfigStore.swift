@@ -160,6 +160,12 @@ public class ConfigStore: ObservableObject {
         if let translates = partialConfig.translates {
             config.translates = translates
         }
+        if let i18n = partialConfig.i18n {
+            config.i18n = i18n
+        }
+        if let settings = partialConfig.settings {
+            config.settings = settings
+        }
         if let disableProfilesInteractions = partialConfig.disableProfilesInteractions {
             config.disableProfilesInteractions = disableProfilesInteractions
         }
@@ -271,7 +277,7 @@ extension ChatConfig: Codable {
         case disableRoomSwipeActions, disableRoomMute, disablePublicChatsDirectory
         case backgroundChat, bubleMessage, headerLogo
         case colorScheme, typography, supportsTablet
-        case translates, disableProfilesInteractions, disableUserCount
+        case translates, i18n, settings, disableProfilesInteractions, disableUserCount
         case clearStoreBeforeInit, disableSentLogic, initBeforeLoad
         case newArch, qrUrl, enableRoomsRetry
         case botMessageAutoScroll, whitelistSystemMessage, trustedEventSenders
@@ -315,6 +321,8 @@ extension ChatConfig: Codable {
         self.supportsTablet = try container.decodeIfPresent(Bool.self, forKey: .supportsTablet)
         self.headerLogo = try container.decodeIfPresent(String.self, forKey: .headerLogo)
         self.translates = try container.decodeIfPresent(TranslationsConfig.self, forKey: .translates)
+        self.i18n = try container.decodeIfPresent(I18nConfig.self, forKey: .i18n)
+        self.settings = try container.decodeIfPresent(AccountSettingsConfig.self, forKey: .settings)
         self.disableProfilesInteractions = try container.decodeIfPresent(Bool.self, forKey: .disableProfilesInteractions)
         self.disableUserCount = try container.decodeIfPresent(Bool.self, forKey: .disableUserCount)
         self.clearStoreBeforeInit = try container.decodeIfPresent(Bool.self, forKey: .clearStoreBeforeInit)
@@ -387,6 +395,8 @@ extension ChatConfig: Codable {
         try container.encodeIfPresent(supportsTablet, forKey: .supportsTablet)
         try container.encodeIfPresent(headerLogo, forKey: .headerLogo)
         try container.encodeIfPresent(translates, forKey: .translates)
+        try container.encodeIfPresent(i18n, forKey: .i18n)
+        try container.encodeIfPresent(settings, forKey: .settings)
         try container.encodeIfPresent(disableProfilesInteractions, forKey: .disableProfilesInteractions)
         try container.encodeIfPresent(disableUserCount, forKey: .disableUserCount)
         try container.encodeIfPresent(clearStoreBeforeInit, forKey: .clearStoreBeforeInit)

@@ -18,6 +18,13 @@ struct ChatHeaderView: View {
     let onBack: () -> Void
     let onInfo: (() -> Void)?
     var onSearch: (() -> Void)? = nil
+    @State private var showLanguageSheet = false
+
+    /// The globe button shows when translation is on and the host has not hidden the selector.
+    private var showsLanguageButton: Bool {
+        let translates = ConfigStore.shared.config.translates
+        return translates?.enabled == true && translates?.showLanguageSelector != false
+    }
     
     init(
         room: Room,
@@ -188,6 +195,17 @@ struct ChatHeaderView: View {
                 .accessibilityLabel("Search messages")
             }
 
+            if showsLanguageButton {
+                Button {
+                    showLanguageSheet = true
+                } label: {
+                    Image(systemName: "globe")
+                        .font(.title3)
+                        .foregroundColor(primaryColor)
+                }
+                .accessibilityLabel(UIStrings.t("language.select"))
+            }
+
             if config?.chatHeaderSettings?.chatInfoButtonDisabled != true, let onInfo = onInfo {
                 Button(action: onInfo) {
                     Image(systemName: "info.circle")
@@ -197,6 +215,9 @@ struct ChatHeaderView: View {
             }
         }
         .padding()
+        .sheet(isPresented: $showLanguageSheet) {
+            TranslationLanguageSheet()
+        }
         #if os(iOS)
         .background(Color(uiColor: .systemBackground))
         #else

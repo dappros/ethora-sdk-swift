@@ -394,6 +394,7 @@ private struct RoomListModeModifier: ViewModifier {
     let hideRoomList: Bool
     @Binding var searchText: String
     @ObservedObject var viewModel: RoomListViewModel
+    @State private var showAccountSettings = false
 
     func body(content: Content) -> some View {
         if hideRoomList {
@@ -420,6 +421,14 @@ private struct RoomListModeModifier: ViewModifier {
                         }
                         .accessibilityIdentifier(RoomListAccessibilityID.createRoomButton)
                     }
+                    ToolbarItem(placement: .navigationBarLeading) {
+                        Button(action: {
+                            showAccountSettings = true
+                        }) {
+                            Image(systemName: "gearshape")
+                        }
+                        .accessibilityLabel(UIStrings.t("settings.menu.title"))
+                    }
                     #else
                     ToolbarItem(placement: .automatic) {
                         Button(action: {
@@ -430,6 +439,11 @@ private struct RoomListModeModifier: ViewModifier {
                         .accessibilityIdentifier(RoomListAccessibilityID.createRoomButton)
                     }
                     #endif
+                }
+                .sheet(isPresented: $showAccountSettings) {
+                    if let user = UserStore.shared.currentUser {
+                        UserSettingsModal(user: user, onUpdate: { _ in }, onClose: { showAccountSettings = false })
+                    }
                 }
                 .sheet(isPresented: $viewModel.showNewChatModal) {
                     NewChatModal(

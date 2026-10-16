@@ -1183,7 +1183,8 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
             photo: photo,
             walletAddress: walletAddress,
             userMessage: text,
-            customId: messageId
+            customId: messageId,
+            translateSource: LanguagePreferences.shared.outgoingTranslateSource
         )
         
         // Add message optimistically to UI (will be confirmed when received from server)
@@ -1245,7 +1246,8 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
             userMessage: text,
             isReply: true,
             showInChannel: alsoSendToMain,
-            mainMessage: mainMessage
+            mainMessage: mainMessage,
+            translateSource: LanguagePreferences.shared.outgoingTranslateSource
         )
 
         let optimisticReply = Message(
