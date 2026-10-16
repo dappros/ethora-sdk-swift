@@ -120,6 +120,34 @@ public struct RoomListView: View {
         }
     }
     
+    /// Mutes or unmutes one chat: optimistic store update, REST call, rollback on failure.
+    private func toggleMute(_ room: Room) {
+        let chatName = (room.jid.components(separatedBy: "/").first ?? room.jid)
+            .components(separatedBy: "@").first ?? ""
+        guard !chatName.isEmpty else { return }
+        let previous = room.muted
+        let nextMuted = previous != true
+
+        var optimistic = PartialRoomUpdate()
+        optimistic.muted = nextMuted
+        RoomStore.shared.updateRoom(jid: room.jid, updates: optimistic)
+
+        Task {
+            do {
+                if nextMuted {
+                    _ = try await RoomsAPI.muteRoom(chatName: chatName)
+                } else {
+                    _ = try await RoomsAPI.unmuteRoom(chatName: chatName)
+                }
+            } catch {
+                var rollback = PartialRoomUpdate()
+                rollback.muted = previous
+                RoomStore.shared.updateRoom(jid: room.jid, updates: rollback)
+                print("[RoomList] mute toggle failed for \(chatName): \(error.localizedDescription)")
+            }
+        }
+    }
+
     @ViewBuilder
     private var roomListContent: some View {
         List {
@@ -148,10 +176,25 @@ public struct RoomListView: View {
                     }
                     .accessibilityIdentifier(RoomListAccessibilityID.roomRow)
                     .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                        Button(role: .destructive) {
-                            roomPendingLeave = room
-                        } label: {
-                            Label("Leave", systemImage: "rectangle.portrait.and.arrow.right")
+                        // Web/RN parity: disableRoomSwipeActions removes every row action.
+                        if ConfigStore.shared.config.disableRoomSwipeActions != true {
+                            // Mute only where the backend reports `muted` for the room (web isSupported).
+                            if room.muted != nil, ConfigStore.shared.config.disableRoomMute != true {
+                                Button {
+                                    toggleMute(room)
+                                } label: {
+                                    Label(
+                                        room.muted == true ? "Unmute" : "Mute",
+                                        systemImage: room.muted == true ? "bell" : "bell.slash"
+                                    )
+                                }
+                                .tint(.indigo)
+                            }
+                            Button(role: .destructive) {
+                                roomPendingLeave = room
+                            } label: {
+                                Label("Leave", systemImage: "rectangle.portrait.and.arrow.right")
+                            }
                         }
                     }
                 }
