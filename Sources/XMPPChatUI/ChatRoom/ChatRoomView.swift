@@ -99,6 +99,54 @@ public struct ChatRoomView: View {
         #endif
     }
     
+    /// Message search is opt-in (`enableMessageSearch` + `appId`), and `hideSearch` hides only the button.
+    private var messageSearchEnabled: Bool {
+        MessageSearchGate.isHeaderButtonVisible(viewModel.config ?? ConfigStore.shared.config)
+    }
+
+    /// Room members for the search sender filter.
+    private var searchSenders: [MessageSearchSender] {
+        (viewModel.room.members ?? []).map { member in
+            let name = [member.firstName, member.lastName]
+                .compactMap { $0 }
+                .joined(separator: " ")
+                .trimmingCharacters(in: .whitespaces)
+            return MessageSearchSender(id: member.id, name: name.isEmpty ? (member.xmppUsername ?? member.id) : name)
+        }
+    }
+
+    /// Overlay for a jump: the notice, and "Jump to latest" while a window is shown.
+    @ViewBuilder
+    private func jumpOverlay(proxy: ScrollViewProxy) -> some View {
+        VStack(spacing: 8) {
+            if let notice = viewModel.jumpNotice {
+                Text(notice)
+                    .font(.caption)
+                    .foregroundColor(.primary)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(Color.orange.opacity(0.15))
+                    .cornerRadius(8)
+            }
+            if viewModel.isShowingJumpWindow {
+                Button {
+                    viewModel.leaveJumpWindow()
+                    pinToBottom = true
+                    scrollToBottom(proxy: proxy)
+                } label: {
+                    Label("Jump to latest", systemImage: "arrow.down.circle.fill")
+                        .font(.caption.weight(.semibold))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(Color.blue)
+                        .clipShape(Capsule())
+                }
+            }
+        }
+        .padding(.bottom, 8)
+    }
+
     public init(viewModel: ChatRoomViewModel) {
         self.viewModel = viewModel
         self._connectionManager = ObservedObject(wrappedValue: ConnectionManager.shared)
@@ -155,7 +203,7 @@ public struct ChatRoomView: View {
                             // Filter messages - matches React Native MessageList.tsx logic exactly
                             // React Native: const nonDeletedMessages = addReplyMessages.filter((item: IMessage) => !item.deleted && !item.isDeleted);
                             // Then: item.showInChannel === "true" || ((!item.isReply || item.isReply === "false") && !item.mainMessage)
-                            let filteredMessages = viewModel.messages.filter { msg in
+                            let filteredMessages = viewModel.displayedMessages.filter { msg in
                                 // Match TypeScript: if (!message?.body) return;
                                 // Deleted messages stay as a tombstone placeholder (web DeletedMessage).
                                 guard !msg.body.isEmpty || msg.isDeleted == true else {
@@ -296,6 +344,7 @@ public struct ChatRoomView: View {
 //                                    } : nil
                             )
                             .id(message.id)
+                            .background(viewModel.highlightedMessageId == message.id ? Color.yellow.opacity(0.25) : Color.clear)
                             .onAppear {
                                 // Track when message becomes visible for scroll button
                                 // Use debounce to avoid excessive updates
@@ -368,8 +417,29 @@ public struct ChatRoomView: View {
                 },
                 onInfo: {
                     showRoomInfo = true
-                }
+                },
+                onSearch: messageSearchEnabled ? {
+                    showSearch = true
+                } : nil
             )
+            .sheet(isPresented: $showSearch) {
+                MessageSearchModal(
+                    model: MessageSearchModel(
+                        roomName: viewModel.room.jid.components(separatedBy: "@").first
+                    ),
+                    senders: searchSenders,
+                    onSelect: { hit in
+                        showSearch = false
+                        // The open chat fulfils the request (ChatRoomViewModel.observePendingJumps).
+                        RoomStore.shared.pendingJump = PendingJump(
+                            roomJID: viewModel.room.jid,
+                            ids: [hit.id, hit.stanzaId, hit.messageId],
+                            createdAt: hit.createdDate,
+                            body: hit.body
+                        )
+                    }
+                )
+            }
             
             // Off-Clinic Hours Banner
             OffClinicHoursBanner()
@@ -381,6 +451,22 @@ public struct ChatRoomView: View {
                         buildMessagesList(proxy: proxy)
                     }
                     .coordinateSpace(name: "messageScroll")
+                    .onChange(of: viewModel.jumpScrollTarget) { target in
+                        guard let target else { return }
+                        // The jump target is in a window: stop pinning the list to the bottom.
+                        pinToBottom = false
+                        Task { @MainActor in
+                            // Give the list a moment to lay out the window before scrolling.
+                            try? await Task.sleep(nanoseconds: 150_000_000)
+                            withAnimation {
+                                proxy.scrollTo(target, anchor: .center)
+                            }
+                            viewModel.jumpScrollTarget = nil
+                        }
+                    }
+                    .overlay(alignment: .bottom) {
+                        jumpOverlay(proxy: proxy)
+                    }
                     .sheet(isPresented: $showThread) {
                         if let message = selectedMessageForThread,
                            let currentUser = UserStore.shared.currentUser {

@@ -28,8 +28,16 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
     @Published var isLoadingMore: Bool = false  // For scroll-to-load
     @Published var isRefreshing: Bool = false  // For pull-to-refresh
     @Published var loadError: String? = nil  // Error message when loading fails
+    // Jump to an archived message (see ChatRoomViewModel+Jump.swift)
+    @Published var jumpWindow: [Message]? = nil  // Window shown instead of the live list
+    @Published var jumpScrollTarget: String? = nil  // Message id the list should scroll to
+    @Published var highlightedMessageId: String? = nil
+    @Published var jumpNotice: String? = nil
+    var pendingJumpSubscription: AnyCancellable?
+    var jumpTask: Task<Void, Never>?
+    var jumpNoticeTask: Task<Void, Never>?
     
-    private let client: XMPPClient
+    let client: XMPPClient
     public let currentUserId: String
     public let config: ChatConfig?
     
@@ -92,6 +100,7 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
         loadCachedMessages()
 
         setupObservers()
+        observePendingJumps()
 
         // Catch up on cache: any pending message older than the threshold
         // — including one left behind by a previous app launch that was
@@ -766,6 +775,8 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
             //print("⚠️ loadMoreMessages: SKIPPED - history complete")
             return
         }
+        // A jump window is not the live list, so there is no "oldest message" to page from.
+        guard !isShowingJumpWindow else { return }
         
         // Match web version EXACTLY: loadMoreMessages(firstMessage.roomJid, 30, Number(firstMessageId))
         // The 'before' parameter should be the message ID converted to number using Number()
@@ -774,6 +785,12 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
         // Use the beforeTimestamp passed from ChatRoomView (which already does Number(firstMessageId) conversion)
         // If not provided, find the first message and convert its ID
         let beforeMessageId: Int64? = {
+            // The archive cursor the server gave for the last page (web cursorRef /
+            // messageStats.firstMessageTimestamp) is the exact next page start.
+            if let stored = RoomStore.shared.rooms[room.jid]?.messageStats?.firstMessageTimestamp,
+               MamCursor.isArchiveCursor(stored) {
+                return stored
+            }
             // If beforeTimestamp was provided, use it (it's already converted from message.id)
             if let before = beforeTimestamp {
                 //print("📜 Using provided beforeTimestamp: \(before)")
@@ -1139,6 +1156,8 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
     }
     
     public func sendMessage(_ text: String) {
+        // Sending returns the chat to the live list, as web does.
+        leaveJumpWindow()
         guard !text.isEmpty else { return }
         
         //print("🔥🔥🔥 CHATROOMVIEWMODEL.SENDMESSAGE CALLED 🔥🔥🔥")

@@ -217,6 +217,12 @@ public class ConfigStore: ObservableObject {
         if let chatHeaderSettings = partialConfig.chatHeaderSettings {
             config.chatHeaderSettings = chatHeaderSettings
         }
+        if let enableMessageSearch = partialConfig.enableMessageSearch {
+            config.enableMessageSearch = enableMessageSearch
+        }
+        if let disableMessageSearch = partialConfig.disableMessageSearch {
+            config.disableMessageSearch = disableMessageSearch
+        }
         if let useStoreConsoleEnabled = partialConfig.useStoreConsoleEnabled {
             config.useStoreConsoleEnabled = useStoreConsoleEnabled
         }
@@ -272,6 +278,7 @@ extension ChatConfig: Codable {
         case disableTypingIndicator, disableChatInfo, chatHeaderSettings
         case useStoreConsoleEnabled
         case push, projectName
+        case enableMessageSearch, disableMessageSearch
     }
     
     public init(from decoder: Decoder) throws {
@@ -323,6 +330,8 @@ extension ChatConfig: Codable {
         self.disableChatInfo = try container.decodeIfPresent(DisableChatInfoConfig.self, forKey: .disableChatInfo)
         self.chatHeaderSettings = try container.decodeIfPresent(ChatHeaderSettingsConfig.self, forKey: .chatHeaderSettings)
         self.useStoreConsoleEnabled = try container.decodeIfPresent(Bool.self, forKey: .useStoreConsoleEnabled)
+        self.enableMessageSearch = try container.decodeIfPresent(Bool.self, forKey: .enableMessageSearch)
+        self.disableMessageSearch = try container.decodeIfPresent(Bool.self, forKey: .disableMessageSearch)
         self.push = try container.decodeIfPresent(PushNotificationConfig.self, forKey: .push)
         self.projectName = try container.decodeIfPresent(String.self, forKey: .projectName)
         
@@ -393,6 +402,8 @@ extension ChatConfig: Codable {
         try container.encodeIfPresent(disableChatInfo, forKey: .disableChatInfo)
         try container.encodeIfPresent(chatHeaderSettings, forKey: .chatHeaderSettings)
         try container.encodeIfPresent(useStoreConsoleEnabled, forKey: .useStoreConsoleEnabled)
+        try container.encodeIfPresent(enableMessageSearch, forKey: .enableMessageSearch)
+        try container.encodeIfPresent(disableMessageSearch, forKey: .disableMessageSearch)
         try container.encodeIfPresent(push, forKey: .push)
         try container.encodeIfPresent(projectName, forKey: .projectName)
     }

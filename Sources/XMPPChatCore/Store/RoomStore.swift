@@ -38,6 +38,10 @@ public class RoomStore: ObservableObject {
     
     // Loading text
     @Published public var loadingText: String?
+
+    /// A request to show one archived message in its room (from message search,
+    /// a notification or a link). The open chat fulfils it and clears it.
+    @Published public var pendingJump: PendingJump?
     
     // MARK: - Initialization
     
@@ -245,6 +249,24 @@ public class RoomStore: ObservableObject {
         saveToCache()
     }
     
+    /// Applies the closing `<fin>` of one paging page: moves the archive cursor
+    /// (`messageStats.firstMessageTimestamp`) and the `historyComplete` flag.
+    /// - Parameter before: the cursor the page was requested with (nil for a latest page).
+    public func applyHistoryPage(roomJID: String, before: Int64?, fin: MamCursor.Fin) {
+        guard let room = rooms[roomJID] else { return }
+        var stats = room.messageStats ?? MessageStats()
+        stats.firstMessageTimestamp = MamCursor.nextCursor(
+            current: stats.firstMessageTimestamp,
+            before: before,
+            fin: fin,
+            hadMessages: !room.messages.isEmpty
+        )
+        var update = PartialRoomUpdate()
+        update.messageStats = stats
+        update.historyComplete = fin.complete
+        updateRoom(jid: roomJID, updates: update)
+    }
+
     /// Set room messages
     public func setRoomMessages(roomJID: String, messages: [Message]) {
         guard var room = rooms[roomJID] else { return }

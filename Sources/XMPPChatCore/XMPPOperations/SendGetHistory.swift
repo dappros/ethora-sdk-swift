@@ -2,29 +2,42 @@
 //  SendGetHistory.swift
 //  XMPPChatCore
 //
-//  Sends get-history MAM query without collecting responses
-//  Messages will be handled by StanzaHandlers.onMessageHistory
+//  MAM page queries. Fire-and-forget paging (`sendGetHistory`) hands its rows to
+//  StanzaHandlers.onMessageHistory, and the closing <fin> moves the paging
+//  cursor. `fetchHistoryPage` waits for the answer, for a jump window or a time
+//  lookup. Translated from xmppClient.ts requestMamHistory and getHistory.xmpp.ts.
 //
 
 import Foundation
 
 extension XMPPOperations {
-    /// Send get-history MAM query
-    /// Messages will be handled automatically by StanzaHandlers.onMessageHistory
+
+    /// Sends a latest or older page query. Rows arrive through
+    /// StanzaHandlers.onMessageHistory; the `<fin>` moves the paging cursor.
     /// - Parameters:
-    ///   - chatJID: Room JID (e.g., "room@conference.example.com")
-    ///   - max: Maximum number of messages to retrieve
-    ///   - before: Optional message ID (Int64) to get messages before this message (matching TypeScript: Number(firstMessageId))
-    ///   - otherId: Optional custom ID for the request
+    ///   - chatJID: Room JID (or a bare room name, the domain is added)
+    ///   - max: Maximum number of rows to return
+    ///   - before: Archive id to page back from (exclusive). nil asks for the latest page.
+    ///   - otherId: Optional query id. Must start with `get-history:` for the paging state to follow it.
     public func sendGetHistory(
         chatJID: String,
         max: Int,
         before: Int64? = nil,
         otherId: String? = nil
     ) {
-        guard let stream = client?.xmppStream else {
-            print("❌ Cannot send get-history: not connected")
-            // Post notification for error handling
+        guard let client else { return }
+        let validBefore: Int64? = (before ?? 0) > 0 ? before : nil
+        let queryId = otherId ?? "get-history:\(UUID().uuidString)"
+        let query = MamQuery(
+            chatJID: fixedRoomJID(chatJID, client: client),
+            queryId: queryId,
+            max: max,
+            before: validBefore
+        )
+
+        mamQueries.noteRequest(queryId: queryId, before: validBefore)
+        guard let stream = client.xmppStream else {
+            mamQueries.noteRequest(queryId: queryId, before: nil)
             NotificationCenter.default.post(
                 name: NSNotification.Name("XMPPHistoryLoadFailed"),
                 object: nil,
@@ -32,96 +45,45 @@ extension XMPPOperations {
             )
             return
         }
-        
-        guard let client = client else {
-            print("❌ Cannot send get-history: client is nil")
-            NotificationCenter.default.post(
-                name: NSNotification.Name("XMPPHistoryLoadFailed"),
-                object: nil,
-                userInfo: ["error": "Client is nil", "roomJID": chatJID]
-            )
-            return
+        stream.send(query.stanza())
+        print("[XMPPOperations] get-history room=\(query.chatJID) max=\(max) before=\(validBefore.map(String.init) ?? "latest")")
+    }
+
+    /// Sends a page query and waits for its answer.
+    ///
+    /// Used for a jump window (`before` and `after` around a target) and for a
+    /// time lookup (`start`/`end`). The result never writes the paging cursor.
+    /// A refused, failed or silent query resolves with `fin == nil`.
+    public func fetchHistoryPage(
+        chatJID: String,
+        max: Int,
+        before: Int64? = nil,
+        after: Int64? = nil,
+        start: String? = nil,
+        end: String? = nil,
+        timeout: TimeInterval = 10
+    ) async -> MamQueryRegistry.PageResult {
+        guard let client else {
+            return MamQueryRegistry.PageResult(messages: [], fin: nil)
         }
-        
-        // Use 'before' parameter directly - match web version behavior
-        // Web version: before ? xml('before', {}, before.toString()) : xml('before')
-        // No validation - XMPP server will handle whether the value is valid
-        let validBefore: Int64? = {
-            guard let before = before else { return nil }
-            
-            // Only reject negative values or zero (invalid message IDs)
-            // Otherwise, use the value as-is (matching web version)
-            if before > 0 {
-                return before
-            }
-            
-            // Negative or zero values are invalid
-            return nil
-        }()
-        
-        let conferenceDomain = client.conference
-        let fixedChatJid = chatJID.contains("@") 
-            ? chatJID 
-            : "\(chatJID)@\(conferenceDomain)"
-        
-        let id = otherId ?? "get-history:\(UUID().uuidString)"
-        
-        // Build MAM query stanza
-        // xml('max', {}, max.toString())
-        let maxStanza = XMPPStanza(name: "max", text: "\(max)")
-        
-        // before ? xml('before', {}, before.toString()) : xml('before')
-        // Matching TypeScript: before is message ID converted to number (Number(firstMessageId))
-        let beforeStanza: XMPPStanza
-        if let validBefore = validBefore {
-            beforeStanza = XMPPStanza(name: "before", text: "\(validBefore)")
-        } else {
-            beforeStanza = XMPPStanza(name: "before")
+        let queryId = "window:\(UUID().uuidString)"
+        let query = MamQuery(
+            chatJID: fixedRoomJID(chatJID, client: client),
+            queryId: queryId,
+            max: max,
+            before: before,
+            after: after,
+            start: start,
+            end: end
+        )
+        return await mamQueries.run(queryId: queryId, timeout: timeout) {
+            guard let stream = client.xmppStream else { return false }
+            stream.send(query.stanza())
+            return true
         }
-        
-        // xml('set', { xmlns: 'http://jabber.org/protocol/rsm' }, ...)
-        let setStanza = XMPPStanza(
-            name: "set",
-            attributes: ["xmlns": "http://jabber.org/protocol/rsm"],
-            children: [maxStanza, beforeStanza]
-        )
-        
-        // xml('query', { xmlns: 'urn:xmpp:mam:2' }, ...)
-        let queryStanza = XMPPStanza(
-            name: "query",
-            attributes: ["xmlns": "urn:xmpp:mam:2"],
-            children: [setStanza]
-        )
-        
-        // xml('iq', { type: 'set', to: fixedChatJid, id: id }, ...)
-        let iqStanza = XMPPStanza(
-            name: "iq",
-            attributes: [
-                "type": "set",
-                "to": fixedChatJid,
-                "id": id
-            ],
-            children: [queryStanza]
-        )
-        
-        // Log the query being sent
-        let queryXML = iqStanza.toXML()
-        print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        print("📤 SENDING GET-HISTORY MAM QUERY:")
-        print("   Room: \(fixedChatJid)")
-        print("   Max: \(max)")
-        print("   Before (original): \(before?.description ?? "nil")")
-        print("   Before (validated): \(validBefore?.description ?? "nil (getting latest)")")
-        print("   Query ID: \(id)")
-        print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        print("📄 XML STRING THAT WILL BE SENT:")
-        print(queryXML)
-        print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        
-        stream.send(iqStanza)
-        
-        print("✅ Get-history query sent. Messages will be handled by StanzaHandlers.onMessageHistory")
-        print("⏳ Waiting for messages to arrive...")
+    }
+
+    private func fixedRoomJID(_ chatJID: String, client: XMPPClient) -> String {
+        chatJID.contains("@") ? chatJID : "\(chatJID)@\(client.conference)"
     }
 }
-

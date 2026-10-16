@@ -8,6 +8,9 @@ import Foundation
 
 public class XMPPOperations {
     internal weak var client: XMPPClient?
+
+    /// Awaited MAM answers (jump windows, time lookups), keyed by query id.
+    public let mamQueries = MamQueryRegistry()
     
     internal init(client: XMPPClient) {
         self.client = client

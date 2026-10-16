@@ -17,6 +17,7 @@ struct ChatHeaderView: View {
     let config: ChatConfig?
     let onBack: () -> Void
     let onInfo: (() -> Void)?
+    var onSearch: (() -> Void)? = nil
     
     init(
         room: Room,
@@ -27,7 +28,8 @@ struct ChatHeaderView: View {
         currentUserXmppUsername: String? = nil,
         config: ChatConfig? = nil,
         onBack: @escaping () -> Void,
-        onInfo: (() -> Void)? = nil
+        onInfo: (() -> Void)? = nil,
+        onSearch: (() -> Void)? = nil
     ) {
         self.room = room
         self.isTyping = isTyping
@@ -38,6 +40,7 @@ struct ChatHeaderView: View {
         self.config = config
         self.onBack = onBack
         self.onInfo = onInfo
+        self.onSearch = onSearch
     }
     
     // Get user names from composing user IDs
@@ -174,6 +177,17 @@ struct ChatHeaderView: View {
             
             Spacer()
             
+            // Message search (only when the host enabled it and did not hide the button).
+            if let onSearch {
+                Button(action: onSearch) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.title3)
+                        .foregroundColor(primaryColor)
+                }
+                .padding(.trailing, 8)
+                .accessibilityLabel("Search messages")
+            }
+
             if config?.chatHeaderSettings?.chatInfoButtonDisabled != true, let onInfo = onInfo {
                 Button(action: onInfo) {
                     Image(systemName: "info.circle")

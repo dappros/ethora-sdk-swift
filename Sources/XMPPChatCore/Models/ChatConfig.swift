@@ -111,9 +111,13 @@ public struct ChatConfig {
     public var disableChatInfo: DisableChatInfoConfig?
     public var chatHeaderSettings: ChatHeaderSettingsConfig?
     
+    // Message search (opt-in, see MessageSearchGate)
+    public var enableMessageSearch: Bool?
+    public var disableMessageSearch: Bool?
+
     // Store
     public var useStoreConsoleEnabled: Bool?
-    
+
     // Notifications
     public var messageNotifications: MessageNotificationConfig?
     public var push: PushNotificationConfig?
