@@ -19,6 +19,8 @@ struct MessageBubbleView: View {
     let onDelete: (() -> Void)?
     let onReport: (() -> Void)?
     let onMediaTap: ((Message) -> Void)?
+    /// Delivery tick for our own messages (see `ReceiptState`).
+    var receiptState: ReceiptState = .sent
     /// Local-only removal for messages that were flagged failed and never
     /// reached the server. Distinct from `onDelete`, which sends `<delete/>`
     /// to the server.
@@ -95,6 +97,7 @@ struct MessageBubbleView: View {
                     if isUser {
                         MessageStatusIndicatorView(
                             message: message,
+                            receiptState: receiptState,
                             onRetry: onRetry,
                             onDiscard: onDiscard
                         )
@@ -289,6 +292,7 @@ struct MessageBubbleView: View {
 
 struct MessageStatusIndicatorView: View {
     let message: Message
+    var receiptState: ReceiptState = .sent
     let onRetry: (() -> Void)?
     var onDiscard: (() -> Void)? = nil
 
@@ -319,24 +323,45 @@ struct MessageStatusIndicatorView: View {
                 ProgressView()
                     .scaleEffect(0.6)
                     .frame(width: 12, height: 12)
-            } else if message.xmppId != nil {
-                ZStack {
-                    Image(systemName: "checkmark")
-                        .font(.caption2)
-                        .foregroundColor(.green)
-                        .offset(x: 0, y: 0)
-                    Image(systemName: "checkmark")
-                        .font(.caption2)
-                        .foregroundColor(.green)
-                        .offset(x: 3, y: 0)
-                }
-                .frame(width: 16, height: 12)
             } else {
-                Image(systemName: "checkmark")
-                    .font(.caption2)
-                    .foregroundColor(.white.opacity(0.7))
+                tick
             }
         }
+    }
+
+    /// Web tick rules: one check for sent, two for delivered, two in the accent
+    /// colour once seen. Nothing for a pending or failed message.
+    @ViewBuilder
+    private var tick: some View {
+        switch receiptState {
+        case .none:
+            EmptyView()
+        case .sent:
+            doubleCheck(count: 1, color: .white.opacity(0.7))
+                .accessibilityLabel("Sent")
+        case .delivered:
+            doubleCheck(count: 2, color: .white.opacity(0.7))
+                .accessibilityLabel("Delivered")
+        case .seen:
+            doubleCheck(count: 2, color: Color(red: 0.49, green: 0.70, blue: 1.0))
+                .accessibilityLabel("Read")
+        }
+    }
+
+    private func doubleCheck(count: Int, color: Color) -> some View {
+        ZStack {
+            Image(systemName: "checkmark")
+                .font(.caption2)
+                .foregroundColor(color)
+                .offset(x: 0, y: 0)
+            if count > 1 {
+                Image(systemName: "checkmark")
+                    .font(.caption2)
+                    .foregroundColor(color)
+                    .offset(x: 3, y: 0)
+            }
+        }
+        .frame(width: 16, height: 12)
     }
 }
 

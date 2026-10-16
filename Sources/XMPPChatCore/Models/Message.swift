@@ -55,6 +55,9 @@ public struct Message: Codable, Identifiable, Equatable {
     public var xmppId: String?
     public var xmppFrom: String?
     public var waveForm: String? // Waveform data for audio messages
+    /// XEP-0184 delivery receipts for an outgoing message: sender nickname to
+    /// receipt time (ms). Empty or nil until someone else's client acks it.
+    public var receivedBy: [String: Int64]?
     
     public init(
         id: String,
@@ -89,7 +92,8 @@ public struct Message: Codable, Identifiable, Equatable {
         xmppId: String? = nil,
         xmppFrom: String? = nil,
         waveForm: String? = nil,
-        wasEdited: Bool? = nil
+        wasEdited: Bool? = nil,
+        receivedBy: [String: Int64]? = nil
     ) {
         self.id = id
         self.user = user
@@ -124,6 +128,7 @@ public struct Message: Codable, Identifiable, Equatable {
         self.xmppId = xmppId
         self.xmppFrom = xmppFrom
         self.waveForm = waveForm
+        self.receivedBy = receivedBy
     }
 }
 

@@ -66,6 +66,8 @@ public class HandleStanzas {
             stanzaHandlers.onReactionHistory(dispatchStanza)
             stanzaHandlers.onDeleteMessage(dispatchStanza)
             stanzaHandlers.onEditMessage(dispatchStanza)
+            stanzaHandlers.handleReceivedReceipt(dispatchStanza)
+            stanzaHandlers.handleDisplayedMarker(dispatchStanza)
             stanzaHandlers.onChatInvite(dispatchStanza, client: client)
             stanzaHandlers.onRealtimeMessage(dispatchStanza)
             stanzaHandlers.onMessageHistory(dispatchStanza)

@@ -89,6 +89,10 @@ public class XMPPClient {
     
     // Track rooms that have received presence responses (to avoid duplicate sends)
     private var roomsWithPresenceResponse: Set<String> = []
+    /// Typing state per room, expiring (see ComposingTracker).
+    private let composingTracker = ComposingTracker()
+    /// Receipts already sent for MAM catch-up messages (see HistoryReceiptLedger).
+    private var historyReceiptLedger = HistoryReceiptLedger()
 
     /// XMPP IQ / message operations (presence, history, MUC, media, …).
     public private(set) lazy var operations: XMPPOperations = XMPPOperations(client: self)
@@ -1158,6 +1162,7 @@ extension XMPPClient: XMPPStreamDelegate {
             // is idempotent (dedupe by id / xmppId), so calling it here is
             // safe for ChatRoomViewModel's own reconciliation as well.
             self.processIncomingMessage(message)
+            self.acknowledgeLiveMessage(message, roomJID: roomJID)
 
             // Unread recompute is handled inside `processIncomingMessage`
             // (above) once the cache + RoomStore are in sync. Doing it here
@@ -1198,6 +1203,7 @@ extension XMPPClient: XMPPStreamDelegate {
             // Process incoming message (save to cache, update room, etc.)
             // This ensures messages are available even if no ChatRoomViewModel is active
             self.processIncomingMessage(message)
+            self.acknowledgeHistoryMessage(message, roomJID: roomJID)
 
             // Notify delegate (for ChatRoomViewModel if active)
             //print("📤 XMPPClient: Notifying delegate about history message")
@@ -1351,20 +1357,71 @@ extension XMPPClient: XMPPStreamDelegate {
             )
         }
 
-        // Set up composing (typing) indicator handler
-        handlers.onComposingChanged = { [weak self] (roomJID: String, composingList: [String], isComposing: Bool) in
-            //print("⌨️ XMPPClient: Composing changed in room \(roomJID) - isComposing: \(isComposing), users: \(composingList)")
-            guard let self = self else { return }
-            // Post notification for composing change so ChatRoomViewModel can observe it
+        // Typing indicator. Every typer is kept (not just the last one) and
+        // expires when its "paused" is lost. ChatRoomViewModel and RoomListView
+        // read the list from this notification.
+        composingTracker.onChange = { [weak self] (roomJID: String, typers: [String], isComposing: Bool) in
             NotificationCenter.default.post(
                 name: NSNotification.Name("XMPPComposingChanged"),
                 object: self,
                 userInfo: [
                     "roomJID": roomJID,
-                    "composingList": composingList,
+                    "composingList": typers,
                     "isComposing": isComposing
                 ]
             )
+        }
+        handlers.onComposingChanged = { [weak self] (roomJID: String, nickname: String, fullName: String, isComposing: Bool) in
+            Task { @MainActor [weak self] in
+                self?.composingTracker.apply(
+                    roomJID: roomJID,
+                    nickname: nickname,
+                    fullName: fullName,
+                    isComposing: isComposing
+                )
+            }
+        }
+
+        // XEP-0184 delivered: a peer acked one of our messages.
+        handlers.onReceiptReceived = { (roomJID: String, messageId: String, fromXmppUsername: String, timestamp: Int64) in
+            Task { @MainActor in
+                RoomStore.shared.setReceivedReceipt(
+                    roomJID: roomJID,
+                    messageId: messageId,
+                    fromXmppUsername: fromXmppUsername,
+                    timestamp: timestamp
+                )
+                NotificationCenter.default.post(
+                    name: NSNotification.Name("XMPPReceiptReceived"),
+                    object: nil,
+                    userInfo: [
+                        "roomJID": roomJID,
+                        "messageId": messageId,
+                        "fromXmppUsername": fromXmppUsername,
+                        "timestamp": timestamp
+                    ]
+                )
+            }
+        }
+
+        // XEP-0333 seen: a peer displayed up to a message.
+        handlers.onDisplayedMarkerReceived = { (roomJID: String, xmppUsername: String, messageId: String) in
+            Task { @MainActor in
+                RoomStore.shared.setDisplayedMarker(
+                    roomJID: roomJID,
+                    xmppUsername: xmppUsername,
+                    messageId: messageId
+                )
+                NotificationCenter.default.post(
+                    name: NSNotification.Name("XMPPDisplayedMarker"),
+                    object: nil,
+                    userInfo: [
+                        "roomJID": roomJID,
+                        "xmppUsername": xmppUsername,
+                        "messageId": messageId
+                    ]
+                )
+            }
         }
         
         // Set up delete message handler
@@ -1416,6 +1473,41 @@ extension XMPPClient: XMPPStreamDelegate {
                 ]
             )
         }
+    }
+}
+
+// MARK: - Receipts, Markers and Typing
+
+extension XMPPClient {
+    /// XEP-0184 receipt for a message from another user.
+    public func sendReceivedReceiptStanza(messageId: String, roomJid: String) {
+        operations.sendReceivedReceipt(roomJID: roomJid, messageId: messageId)
+    }
+
+    /// XEP-0333 read marker: the newest message this client has displayed.
+    public func sendDisplayedMarkerStanza(messageId: String, roomJid: String) {
+        operations.sendDisplayedMarker(roomJID: roomJid, messageId: messageId)
+    }
+
+    /// Typing indicator. Sent only to a joined room on a live connection,
+    /// matching web sendTypingRequestStanza.
+    public func sendTypingRequestStanza(chatId: String, fullName: String, start: Bool) {
+        guard chatId.contains("@"), isFullyConnected(), hasPresenceResponseForRoom(chatId) else { return }
+        operations.sendTypingRequest(chatId: chatId, fullName: fullName, start: start)
+    }
+
+    /// Ack a live message from someone else (web onRealtimeMessage).
+    fileprivate func acknowledgeLiveMessage(_ message: Message, roomJID: String) {
+        guard ReceiptPolicy.shouldAcknowledge(message, selfUsername: username) else { return }
+        sendReceivedReceiptStanza(messageId: message.id, roomJid: roomJID)
+    }
+
+    /// Ack a MAM catch-up message once per room and message (web sendHistoryReceivedReceiptStanza).
+    fileprivate func acknowledgeHistoryMessage(_ message: Message, roomJID: String) {
+        guard ReceiptPolicy.shouldAcknowledge(message, selfUsername: username) else { return }
+        let bareRoomJID = roomJID.components(separatedBy: "/").first ?? roomJID
+        guard historyReceiptLedger.insert(roomJID: bareRoomJID, messageId: message.id) else { return }
+        sendReceivedReceiptStanza(messageId: message.id, roomJid: bareRoomJID)
     }
 }
 

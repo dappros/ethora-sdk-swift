@@ -386,6 +386,42 @@ public class RoomStore: ObservableObject {
         saveToCache()
     }
     
+    // MARK: - Receipts and Read Markers
+
+    /// Records a XEP-0184 delivery receipt on the matching message. Matches the
+    /// archive id or the sent id, since an outgoing message may be known by either.
+    /// Not written to the room cache on every receipt; the chat view model
+    /// persists its own copy, which carries the same field.
+    public func setReceivedReceipt(
+        roomJID: String,
+        messageId: String,
+        fromXmppUsername: String,
+        timestamp: Int64
+    ) {
+        guard !fromXmppUsername.isEmpty,
+              var room = rooms[roomJID],
+              let index = room.messages.firstIndex(where: { $0.id == messageId || $0.xmppId == messageId }) else {
+            return
+        }
+        var message = room.messages[index]
+        var receivedBy = message.receivedBy ?? [:]
+        receivedBy[fromXmppUsername] = timestamp
+        message.receivedBy = receivedBy
+        room.messages[index] = message
+        rooms[roomJID] = room
+    }
+
+    /// Records a XEP-0333 read marker: the newest message `xmppUsername` has
+    /// displayed in the room. One watermark per member, not one per message.
+    public func setDisplayedMarker(roomJID: String, xmppUsername: String, messageId: String) {
+        guard !xmppUsername.isEmpty, !messageId.isEmpty, var room = rooms[roomJID] else { return }
+        var watermarks = room.lastDisplayedByUser ?? [:]
+        watermarks[xmppUsername] = messageId
+        room.lastDisplayedByUser = watermarks
+        rooms[roomJID] = room
+        saveToCache()
+    }
+
     // MARK: - Edit Action
     
     /// Set edit action

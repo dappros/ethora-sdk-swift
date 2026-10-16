@@ -120,6 +120,9 @@ public struct Room: Codable, Identifiable, Equatable {
     /// Per-chat mute preference from the backend (`/chats/my`). Nil when the
     /// backend has not reported it, which hides the mute control (web `isSupported`).
     public var muted: Bool?
+    /// XEP-0333 read watermark per member: nickname to the newest message id
+    /// that member has displayed in this room.
+    public var lastDisplayedByUser: [String: String]?
     
     public init(
         id: String,
@@ -150,7 +153,8 @@ public struct Room: Codable, Identifiable, Equatable {
         role: String? = nil,
         messageStats: MessageStats? = nil,
         historyComplete: Bool? = nil,
-        muted: Bool? = nil
+        muted: Bool? = nil,
+        lastDisplayedByUser: [String: String]? = nil
     ) {
         self.id = id
         self.jid = jid
@@ -181,6 +185,7 @@ public struct Room: Codable, Identifiable, Equatable {
         self.messageStats = messageStats
         self.historyComplete = historyComplete
         self.muted = muted
+        self.lastDisplayedByUser = lastDisplayedByUser
     }
 }
 

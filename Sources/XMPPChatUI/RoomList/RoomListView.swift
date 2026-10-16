@@ -643,16 +643,16 @@ struct RoomListItemView: View {
         }
     }
     
-    // Generate typing text from user names
+    // Generate typing text from user names (same wording as web Composing)
     private func typingText(from names: [String]) -> String {
         if names.isEmpty {
-            return "Someone is typing..."
+            return "Someone is typing"
         } else if names.count == 1 {
-            return "\(names[0]) is typing..."
+            return "\(names[0]) is typing"
         } else if names.count == 2 {
-            return "\(names[0]) and \(names[1]) are typing..."
+            return "\(names[0]) and \(names[1]) are typing"
         } else {
-            return "\(names.count) people are typing..."
+            return "\(names.count) people are typing"
         }
     }
     
@@ -974,30 +974,8 @@ public class RoomListViewModel: ObservableObject {
                     // Update room's composing state
                     self.rooms[roomIndex].composing = true
                     self.rooms[roomIndex].composingList = filteredComposingList
-                    
-                    // Set timeout to clear composing state after 3 seconds
-                    let timer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: false) { [weak self] _ in
-                        Task { @MainActor in
-                            guard let self = self,
-                                  let roomIndex = self.rooms.firstIndex(where: { $0.jid == roomJIDKey }) else {
-                                return
-                            }
-                            
-                            // Clear composing state
-                            self.rooms[roomIndex].composing = false
-                            self.rooms[roomIndex].composingList = []
-                            
-                            // Update RoomStore
-                            var updates = PartialRoomUpdate()
-                            updates.composing = false
-                            updates.composingList = []
-                            RoomStore.shared.updateRoom(jid: roomJIDKey, updates: updates)
-                            
-                            // Trigger UI update
-                            self.objectWillChange.send()
-                        }
-                    }
-                    self.composingTimeouts[roomJIDKey] = timer
+                    // No local timer: ComposingTracker expires typers and
+                    // posts an empty list when the last one goes away.
                 } else {
                     // Clear composing state immediately
                     self.rooms[roomIndex].composing = false
