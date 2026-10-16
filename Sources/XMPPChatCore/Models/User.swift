@@ -21,6 +21,8 @@ public struct User: Codable, Identifiable, Equatable {
     public var profileImage: String?
     public var username: String?
     public var xmppPassword: String?
+    /// File-service token (`ft`), refreshed with the session. Optional.
+    public var fileToken: String?
     public var xmppUsername: String?
     public var langSource: String?
     public var homeScreen: String?

@@ -124,6 +124,12 @@ public class ConfigStore: ObservableObject {
         if let refreshTokens = partialConfig.refreshTokens {
             config.refreshTokens = refreshTokens
         }
+        if let pushNotifications = partialConfig.pushNotifications {
+            config.pushNotifications = pushNotifications
+        }
+        if let projectName = partialConfig.projectName {
+            config.projectName = projectName
+        }
         if let translates = partialConfig.translates {
             config.translates = translates
         }
@@ -232,7 +238,7 @@ extension ChatConfig: Codable {
         case botMessageAutoScroll, whitelistSystemMessage
         case disableTypingIndicator, disableChatInfo, chatHeaderSettings
         case useStoreConsoleEnabled
-        case push
+        case push, projectName
     }
     
     public init(from decoder: Decoder) throws {
@@ -275,6 +281,7 @@ extension ChatConfig: Codable {
         self.chatHeaderSettings = try container.decodeIfPresent(ChatHeaderSettingsConfig.self, forKey: .chatHeaderSettings)
         self.useStoreConsoleEnabled = try container.decodeIfPresent(Bool.self, forKey: .useStoreConsoleEnabled)
         self.push = try container.decodeIfPresent(PushNotificationConfig.self, forKey: .push)
+        self.projectName = try container.decodeIfPresent(String.self, forKey: .projectName)
         
         // Non-codable properties initialized to nil
         self.customLogin = nil
@@ -334,5 +341,6 @@ extension ChatConfig: Codable {
         try container.encodeIfPresent(chatHeaderSettings, forKey: .chatHeaderSettings)
         try container.encodeIfPresent(useStoreConsoleEnabled, forKey: .useStoreConsoleEnabled)
         try container.encodeIfPresent(push, forKey: .push)
+        try container.encodeIfPresent(projectName, forKey: .projectName)
     }
 }

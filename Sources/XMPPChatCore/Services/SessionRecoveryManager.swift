@@ -112,26 +112,14 @@ public final class SessionRecoveryManager {
 
         // Step 2: XMPP didn't come back — probably access token is stale /
         // sessions on the server side expired. Try to rotate tokens.
-        guard let refreshToken = UserStore.shared.refreshToken,
-              !refreshToken.isEmpty else {
+        guard UserStore.shared.refreshToken?.isEmpty == false else {
             await forceLogout()
             return
         }
 
-        let baseURL: URL
+        // Rotation goes through `AuthRefresh` (single flight, persisted before return).
         do {
-            baseURL = try AppConfig.requireBaseURL()
-        } catch {
-            print("[SessionRecovery] cannot refresh token: \(error.localizedDescription)")
-            return
-        }
-
-        do {
-            let (newToken, newRefreshToken) = try await AuthAPI.refreshToken(
-                refreshToken: refreshToken,
-                baseURL: baseURL
-            )
-            UserStore.shared.updateTokens(token: newToken, refreshToken: newRefreshToken)
+            _ = try await AuthRefresh.shared.refresh()
             print("[SessionRecovery] token refresh OK, retrying XMPP…")
 
             // Step 3: New access token is now in `UserStore`; XMPP password
@@ -154,21 +142,13 @@ public final class SessionRecoveryManager {
             // used to kick users from an open chat into the room list on
             // any outage longer than ~16 seconds.
             print("[SessionRecovery] XMPP still offline after refresh — leaving client to keep retrying")
+        } catch let fatal as RefreshFatalError {
+            // `AuthRefresh` already ran the logout hook for a dead session.
+            print("[SessionRecovery] refresh token rejected (\(fatal.code.rawValue)), session ended")
         } catch {
-            // Only force-logout when the server actually rejects the
-            // refresh token (401/403). Network failures (no WiFi, DNS,
-            // server unreachable, 5xx) leave the user's credentials
-            // valid — kicking them out would erase the chat just because
-            // they hit a flaky link. Treat anything that isn't an
-            // explicit auth rejection as transient and keep the
-            // session.
-            if case AuthAPIError.httpError(let code, _) = error,
-               code == 401 || code == 403 {
-                print("[SessionRecovery] refresh token rejected by server (\(code)) — logging out")
-                await forceLogout()
-            } else {
-                print("[SessionRecovery] refresh failed (transient): \(error.localizedDescription) — keeping session")
-            }
+            // Network failures, 5xx and 401s without a known code leave the
+            // session alone: the credentials may still be valid.
+            print("[SessionRecovery] refresh failed (transient): \(error.localizedDescription), keeping session")
         }
     }
 
@@ -198,7 +178,8 @@ public final class SessionRecoveryManager {
         return client.isFullyConnected()
     }
 
-    private func forceLogout() async {
+    /// Ends the session: posts `sessionUnrecoverableNotification`, then logs out.
+    func forceLogout() async {
         NotificationCenter.default.post(
             name: Self.sessionUnrecoverableNotification,
             object: self

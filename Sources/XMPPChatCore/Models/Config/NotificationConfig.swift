@@ -87,6 +87,34 @@ public struct MessageNotificationParams {
     }
 }
 
+/// `pushNotifications` config, same key names as the web and RN SDKs.
+public struct PushNotificationsConfig {
+    /// `false` switches push off (no registration, no room subscriptions). Unset means on.
+    public let enabled: Bool?
+    /// Push gateway base URL, version segment included (e.g. `https://push.example.com/api/v1`).
+    /// Unset: the SDK registers tokens directly with the Ethora backend. Needs `ChatConfig.projectName`.
+    public let apiUrl: String?
+    public let iconPath: String?
+    public let badgePath: String?
+    /// Host-supplied device tokens. Called once per signed-in user; each returned token is registered.
+    /// The iOS SDK has no Firebase dependency, so an FCM token comes from here (or `PushNotificationManager.registerPushToken`).
+    public let getPushTokens: (() async -> [PushTokenRegistration]?)?
+
+    public init(
+        enabled: Bool? = nil,
+        apiUrl: String? = nil,
+        iconPath: String? = nil,
+        badgePath: String? = nil,
+        getPushTokens: (() async -> [PushTokenRegistration]?)? = nil
+    ) {
+        self.enabled = enabled
+        self.apiUrl = apiUrl
+        self.iconPath = iconPath
+        self.badgePath = badgePath
+        self.getPushTokens = getPushTokens
+    }
+}
+
 public struct PushNotificationConfig: Codable, Equatable {
     public let enabled: Bool
     public let appId: String?

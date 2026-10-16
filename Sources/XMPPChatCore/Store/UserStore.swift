@@ -75,6 +75,47 @@ public class UserStore: ObservableObject {
         //print("✅ UserStore: Tokens refreshed")
     }
     
+    /// Persist the tokens of a rotation (see `AuthRefresh`). Runs before the
+    /// rotation's caller resumes, so a rotated refresh token is never lost.
+    /// An empty `refreshToken` keeps the stored one.
+    public func applyRefreshResult(
+        token: String,
+        refreshToken: String,
+        fileToken: String?,
+        xmppPassword: String?
+    ) {
+        self.token = token
+        UserDefaults.standard.set(token, forKey: "ethora_user_token")
+        if !refreshToken.isEmpty {
+            self.refreshToken = refreshToken
+            UserDefaults.standard.set(refreshToken, forKey: "ethora_user_refresh_token")
+        }
+        if var user = currentUser {
+            if let fileToken, !fileToken.isEmpty {
+                user.fileToken = fileToken
+            }
+            if let xmppPassword, !xmppPassword.isEmpty {
+                user.xmppPassword = xmppPassword
+            }
+            currentUser = user
+            persistUser(user)
+        }
+    }
+
+    /// Replace the XMPP password (re-issued by `POST /users/xmpp-token`).
+    public func setXmppPassword(_ password: String) {
+        guard !password.isEmpty, var user = currentUser else { return }
+        user.xmppPassword = password
+        currentUser = user
+        persistUser(user)
+    }
+
+    private func persistUser(_ user: User) {
+        if let data = try? JSONEncoder().encode(user) {
+            UserDefaults.standard.set(data, forKey: "ethora_user_data")
+        }
+    }
+
     /// Clear user data (logout)
     /// This removes all cached user data and tokens
     public func clearUser() {

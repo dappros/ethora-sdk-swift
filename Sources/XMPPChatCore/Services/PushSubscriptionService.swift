@@ -2,8 +2,9 @@
 //  PushSubscriptionService.swift
 //  XMPPChatCore
 //
-//  Mirrors RN pushSubscriptionService:
-//  backend push subscribe + XMPP MUC-SUB room subscriptions.
+//  Mirrors RN pushSubscriptionService: XMPP MUC-SUB room subscriptions, run
+//  with a bounded parallel pool (RN concurrency 8). Backend token
+//  registration lives in `PushNotificationManager`.
 //
 
 import Foundation
@@ -11,17 +12,19 @@ import Foundation
 public actor PushSubscriptionService {
     public static let shared = PushSubscriptionService()
 
+    /// Rooms subscribed in parallel per sweep (RN `concurrency = 8`).
+    public static let concurrency = 8
+
     private let subscribedRoomsKey = "ethora_push_subscribed_rooms"
     private var subscribedRooms: Set<String> = []
     private var initialized = false
 
     private init() {}
 
+    /// Kept for source compatibility. Forwards to `PushNotificationManager.registerPushToken`.
     public func subscribeToPush(fcmToken: String) async throws {
-        try await PushAPI.registerPushToken(
-            registrationToken: fcmToken,
-            deviceType: .ios
-        )
+        let manager = await MainActor.run { PushNotificationManager.shared }
+        _ = try await manager.registerPushToken(fcmToken)
     }
 
     public func subscribeToRoom(
@@ -52,6 +55,8 @@ public actor PushSubscriptionService {
         return success
     }
 
+    /// Subscribes `roomJIDs` in parallel batches of `concurrency`. Rooms that
+    /// fail get one more pass after a short pause.
     public func subscribeToRooms(
         client: XMPPClient,
         roomJIDs: [String],
@@ -59,24 +64,41 @@ public actor PushSubscriptionService {
     ) async {
         guard !roomJIDs.isEmpty else { return }
 
-        var failed: [String] = []
-        for roomJID in roomJIDs {
-            let ok = await subscribeToRoom(client: client, roomJID: roomJID, userNick: userNick)
-            if !ok {
-                failed.append(roomJID)
-            }
-            try? await Task.sleep(nanoseconds: 120_000_000)
-        }
-
-        if failed.isEmpty {
-            return
-        }
+        let failed = await subscribeBatch(client: client, roomJIDs: roomJIDs, userNick: userNick)
+        guard !failed.isEmpty else { return }
 
         try? await Task.sleep(nanoseconds: 1_000_000_000)
-        for roomJID in failed {
-            _ = await subscribeToRoom(client: client, roomJID: roomJID, userNick: userNick)
-            try? await Task.sleep(nanoseconds: 120_000_000)
+        _ = await subscribeBatch(client: client, roomJIDs: failed, userNick: userNick)
+    }
+
+    /// Returns the rooms that did not subscribe.
+    private func subscribeBatch(
+        client: XMPPClient,
+        roomJIDs: [String],
+        userNick: String?
+    ) async -> [String] {
+        var failed: [String] = []
+        var start = 0
+        while start < roomJIDs.count {
+            let end = min(start + Self.concurrency, roomJIDs.count)
+            let batch = Array(roomJIDs[start..<end])
+            let results = await withTaskGroup(of: (String, Bool).self) { group -> [(String, Bool)] in
+                for roomJID in batch {
+                    group.addTask {
+                        let ok = await self.subscribeToRoom(client: client, roomJID: roomJID, userNick: userNick)
+                        return (roomJID, ok)
+                    }
+                }
+                var collected: [(String, Bool)] = []
+                for await result in group {
+                    collected.append(result)
+                }
+                return collected
+            }
+            failed += results.filter { !$0.1 }.map { $0.0 }
+            start = end
         }
+        return failed
     }
 
     public func reset() {
