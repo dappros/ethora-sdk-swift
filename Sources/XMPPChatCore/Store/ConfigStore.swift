@@ -82,6 +82,15 @@ public class ConfigStore: ObservableObject {
         if let disableInteractions = partialConfig.disableInteractions {
             config.disableInteractions = disableInteractions
         }
+        if let disableReactions = partialConfig.disableReactions {
+            config.disableReactions = disableReactions
+        }
+        if let disableReplies = partialConfig.disableReplies {
+            config.disableReplies = disableReplies
+        }
+        if let reactions = partialConfig.reactions {
+            config.reactions = reactions
+        }
         if let chatHeaderBurgerMenu = partialConfig.chatHeaderBurgerMenu {
             config.chatHeaderBurgerMenu = chatHeaderBurgerMenu
         }
@@ -223,6 +232,7 @@ extension ChatConfig: Codable {
         case googleLogin, jwtLogin, userLogin
         case baseUrl, appId, customAppToken, xmppSettings
         case disableRooms, defaultLogin, disableInteractions
+        case disableReactions, disableReplies, reactions
         case chatHeaderBurgerMenu, forceSetRoom, setRoomJidInPath
         case disableRoomMenu, disableRoomConfig, disableNewChatButton
         case backgroundChat, bubleMessage, headerLogo
@@ -250,6 +260,9 @@ extension ChatConfig: Codable {
         self.disableRooms = try container.decodeIfPresent(Bool.self, forKey: .disableRooms)
         self.defaultLogin = try container.decodeIfPresent(Bool.self, forKey: .defaultLogin)
         self.disableInteractions = try container.decodeIfPresent(Bool.self, forKey: .disableInteractions)
+        self.disableReactions = try container.decodeIfPresent(Bool.self, forKey: .disableReactions)
+        self.disableReplies = try container.decodeIfPresent(Bool.self, forKey: .disableReplies)
+        self.reactions = try container.decodeIfPresent(ReactionsConfig.self, forKey: .reactions)
         self.chatHeaderBurgerMenu = try container.decodeIfPresent(Bool.self, forKey: .chatHeaderBurgerMenu)
         self.forceSetRoom = try container.decodeIfPresent(Bool.self, forKey: .forceSetRoom)
         self.setRoomJidInPath = try container.decodeIfPresent(Bool.self, forKey: .setRoomJidInPath)
@@ -309,6 +322,9 @@ extension ChatConfig: Codable {
         try container.encodeIfPresent(disableRooms, forKey: .disableRooms)
         try container.encodeIfPresent(defaultLogin, forKey: .defaultLogin)
         try container.encodeIfPresent(disableInteractions, forKey: .disableInteractions)
+        try container.encodeIfPresent(disableReactions, forKey: .disableReactions)
+        try container.encodeIfPresent(disableReplies, forKey: .disableReplies)
+        try container.encodeIfPresent(reactions, forKey: .reactions)
         try container.encodeIfPresent(chatHeaderBurgerMenu, forKey: .chatHeaderBurgerMenu)
         try container.encodeIfPresent(forceSetRoom, forKey: .forceSetRoom)
         try container.encodeIfPresent(setRoomJidInPath, forKey: .setRoomJidInPath)
