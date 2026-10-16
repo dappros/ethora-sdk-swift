@@ -153,5 +153,6 @@ public struct ChatWrapperView: View {
             let count = rooms.values.reduce(0) { $0 + $1.unreadMessages }
             onUnreadCountChanged?(count)
         }
+        .chatTheme(config)
     }
 }

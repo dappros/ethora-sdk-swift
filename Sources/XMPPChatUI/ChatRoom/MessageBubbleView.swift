@@ -24,6 +24,7 @@ struct MessageBubbleView: View {
     /// to the server.
     var onDiscard: (() -> Void)? = nil
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.chatPalette) private var palette
     
     private var bubbleStyle: MessageBubbleStyle? { ConfigStore.shared.config.bubleMessage }
     
@@ -244,18 +245,25 @@ struct MessageBubbleView: View {
         if let configured = bubbleStyle?.backgroundMessageUser, !configured.isEmpty {
             return Color(hex: configured)
         }
-        if let primary = ConfigStore.shared.config.colors?.primary, !primary.isEmpty {
-            let color = Color(hex: primary)
-            return colorScheme == .dark ? color.opacity(0.82) : color
+        if let own = ConfigStore.shared.config.colors?.ownMessageBackground, !own.isEmpty {
+            return Color(hex: own)
         }
-        return colorScheme == .dark
-            ? Color(red: 0.07, green: 0.42, blue: 0.84)
-            : Color.blue
+        // Dark: the palette's lifted primary keeps white text readable on a dark surface.
+        if palette.isDark {
+            return Color(hex: palette.primary)
+        }
+        if let primary = ConfigStore.shared.config.colors?.primary, !primary.isEmpty {
+            return Color(hex: primary)
+        }
+        return Color.blue
     }
     
     private func incomingBubbleBackground() -> Color {
         if let configured = bubbleStyle?.backgroundMessage, !configured.isEmpty {
             return Color(hex: configured)
+        }
+        if let other = ConfigStore.shared.config.colors?.otherMessageBackground, !other.isEmpty {
+            return Color(hex: other)
         }
         return chatIncomingBubbleBackground()
     }

@@ -7,6 +7,7 @@ import SwiftUI
 import XMPPChatCore
 
 struct ChatHeaderView: View {
+    @Environment(\.chatPalette) private var palette
     let room: Room
     let isTyping: Bool
     let composingUsers: [String]
@@ -124,7 +125,9 @@ struct ChatHeaderView: View {
     }
     
     var body: some View {
-        let primaryColor = config?.colors?.primaryColor ?? .blue
+        let primaryColor = palette.isDark
+            ? Color(hex: palette.primaryText)
+            : (config?.colors?.primaryColor ?? .blue)
         HStack {
             if config?.chatHeaderSettings?.backButtonDisabled != true {
                 Button(action: onBack) {

@@ -45,6 +45,12 @@ public struct ChatConfig {
     public var chatRoomStyles: [String: Any]?
     public var backgroundChat: BackgroundChatConfig?
     public var bubleMessage: MessageBubbleStyle?
+    /// Force the chat into light or dark, or follow the OS (nil or `.system`).
+    public var colorScheme: ChatColorScheme?
+    /// Font family, base size and web-only Google Fonts keys.
+    public var typography: TypographyConfig?
+    /// Side-by-side room list and chat on iPad. Nil or true enables it; false keeps the stacked layout.
+    public var supportsTablet: Bool?
     
     // Header
     public var headerLogo: String?
