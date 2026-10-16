@@ -8,13 +8,25 @@
 
 import Foundation
 
+/// One parsed `<reactions>` stanza (live or MAM). `reactorJID` is the full
+/// `from` of the `<reactions>` element; `emoji` empty means the reactor cleared
+/// their reaction on that message.
+struct ReactionUpdate: Equatable {
+    let roomJID: String
+    let messageId: String
+    let emoji: [String]
+    let reactorJID: String
+    let data: [String: String]
+    let timestamp: Int64?
+}
+
 public class StanzaHandlers {
     weak var client: XMPPClient?
     
     // Callbacks for different events
     var onMessageReceived: ((Message, String) -> Void)? // (message, roomJID)
     var onHistoryMessageReceived: ((Message, String) -> Void)? // (message, roomJID)
-    var onReactionReceived: ((String, String, [String], String, [String: String]) -> Void)? // (roomJID, messageId, reactions, from, data)
+    var onReactionReceived: ((ReactionUpdate) -> Void)?
     var onMessageDeleted: ((String, String) -> Void)? // (roomJID, messageId)
     var onMessageEdited: ((String, String, String) -> Void)? // (roomJID, messageId, newText)
     var onComposingChanged: ((String, String, String, Bool) -> Void)? // (roomJID, nickname, fullName, isComposing)
@@ -177,38 +189,50 @@ public class StanzaHandlers {
     public func onReactionMessage(_ stanza: XMPPStanza) {
         guard let id = stanza.attributes["id"],
               id.contains("message-reaction"),
-              let reactions = stanza.getChild("reactions"),
-              let stanzaId = stanza.getChild("stanza-id") else {
+              let update = Self.reactionUpdate(from: stanza) else {
             return
         }
-        
-        let roomJid = stanzaId.attributes["by"] ?? ""
-        let messageId = reactions.attributes["id"] ?? ""
-        let reactionsList = reactions.children.compactMap { $0.name }
-        let from = stanza.attributes["from"] ?? ""
-        let dataAttrs = reactions.attributes
-        
-        onReactionReceived?(roomJid, messageId, reactionsList, from, dataAttrs)
+        onReactionReceived?(update)
     }
-    
-    /// Handle reaction history (onReactionHistory from TypeScript)
+
+    /// Handle reaction history (onReactionHistory from TypeScript). The
+    /// reaction sits inside the MAM `<result><forwarded><message>` wrapper.
     public func onReactionHistory(_ stanza: XMPPStanza) {
-        // Similar to onReactionMessage but for history
         guard let result = stanza.getChild("result"),
               let forwarded = result.getChild("forwarded"),
               let message = forwarded.getChild("message"),
-              let reactions = message.getChild("reactions"),
-              let stanzaId = message.getChild("stanza-id") else {
+              let update = Self.reactionUpdate(from: message) else {
             return
         }
-        
-        let roomJid = stanzaId.attributes["by"] ?? ""
+        onReactionReceived?(update)
+    }
+
+    /// Reads one `<reactions>` stanza the way web `onReactionMessage` and
+    /// `onReactionHistory` do: target id and reactor from the `<reactions>`
+    /// element, shortcodes from its `<reaction>` children, name from `<data>`,
+    /// room and timestamp from `<stanza-id>`. Returns nil without a target.
+    static func reactionUpdate(from message: XMPPStanza) -> ReactionUpdate? {
+        guard let reactions = message.getChild("reactions") else { return nil }
         let messageId = reactions.attributes["id"] ?? ""
-        let reactionsList = reactions.children.compactMap { $0.name }
-        let from = message.attributes["from"] ?? ""
-        let dataAttrs = reactions.attributes
-        
-        onReactionReceived?(roomJid, messageId, reactionsList, from, dataAttrs)
+        guard !messageId.isEmpty else { return nil }
+
+        let reactor = reactions.attributes["from"] ?? ""
+        let emoji = reactions.getChildren("reaction")
+            .compactMap { $0.text }
+            .filter { !$0.isEmpty }
+        let data = message.getChild("data")?.attributes ?? [:]
+        let stanzaId = message.getChild("stanza-id")
+        let roomJID = stanzaId?.attributes["by"] ?? ""
+        let timestamp = stanzaId?.attributes["id"].flatMap { Int64($0) }
+
+        return ReactionUpdate(
+            roomJID: roomJID,
+            messageId: messageId,
+            emoji: emoji,
+            reactorJID: reactor,
+            data: data,
+            timestamp: timestamp
+        )
     }
     
     /// Handle delete message (onDeleteMessage from TypeScript)

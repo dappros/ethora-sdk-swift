@@ -25,11 +25,29 @@ struct MessageBubbleView: View {
     /// reached the server. Distinct from `onDelete`, which sends `<delete/>`
     /// to the server.
     var onDiscard: (() -> Void)? = nil
+    /// Thread context: the thread panel's own list. No quote and no reply pill,
+    /// and the "Reply" menu item is hidden (web `isReply`).
+    var inThread: Bool = false
+    /// Thread replies whose parent is this message, for the reply pill.
+    var threadReplies: [Message] = []
+    /// Localpart of the current user, the key reactions are stored under.
+    var currentReactorKey: String? = nil
+    /// Opens the thread this message belongs to (or the parent, for a reply).
+    var onOpenThread: (() -> Void)? = nil
+    /// Interactions switch (`disableInteractions`): no menu and no chip taps.
+    var interactionsDisabled: Bool = false
+    /// Reactions and replies switches, from ChatConfig.
+    var reactionsEnabled: Bool = true
+    var reactionPickerEnabled: Bool = true
+    var quickReactions: [String] = EmojiShortcodes.defaultQuickReactions
+    var repliesEnabled: Bool = true
+    var accentColor: Color = .blue
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.chatPalette) private var palette
     
+
     private var bubbleStyle: MessageBubbleStyle? { ConfigStore.shared.config.bubleMessage }
-    
+
     @State private var showContextMenu = false
     @State private var showReactionPicker = false
     
@@ -70,14 +88,61 @@ struct MessageBubbleView: View {
                         .foregroundColor(isUser ? .white.opacity(0.8) : .blue)
                 }
                 
-                buildMediaOrTextContent()
+                if !inThread, let quote = quotedText {
+                    Text(quote)
+                        .font(.caption)
+                        .foregroundColor(isUser ? .white.opacity(0.85) : .secondary)
+                        .lineLimit(2)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(Color.black.opacity(isUser ? 0.15 : 0.05))
+                        )
+                        .overlay(
+                            Rectangle()
+                                .fill(accentColor)
+                                .frame(width: 3),
+                            alignment: isUser ? .trailing : .leading
+                        )
+                        .contentShape(Rectangle())
+                        .onTapGesture { onOpenThread?() }
+                }
 
-                // Reactions temporarily disabled.
-                // if let reactions = message.reaction, !reactions.isEmpty {
-                //     ReactionBadgesView(reactions: reactions)
-                //         .padding(.top, 4)
-                // }
-                
+                if message.isDeleted == true {
+                    Text("This message was deleted")
+                        .font(.callout.italic())
+                        .foregroundColor(.secondary)
+                } else {
+                    buildMediaOrTextContent()
+                }
+
+                if message.wasEdited == true, message.isDeleted != true {
+                    Text("(edited)")
+                        .font(.caption2)
+                        .foregroundColor(isUser ? .white.opacity(0.7) : .secondary)
+                }
+
+                if !inThread, !threadReplies.isEmpty {
+                    ThreadReplyPill(
+                        replies: threadReplies,
+                        isUser: isUser,
+                        accentColor: accentColor,
+                        onTap: { onOpenThread?() }
+                    )
+                }
+
+                if message.isDeleted != true, reactionsEnabled {
+                    ReactionChipsView(
+                        reactions: message.reaction,
+                        currentReactorKey: currentReactorKey,
+                        accentColor: accentColor,
+                        interactive: !interactionsDisabled,
+                        onToggle: { emoji in onReactionTap?(emoji) }
+                    )
+                }
+
                 HStack(spacing: 4) {
                     if isUser, message.failed != true, let pending = message.pending, pending {
                         Text("sending...")
@@ -190,7 +255,14 @@ struct MessageBubbleView: View {
                                         },
                                         onEdit: onEdit,
                                         onDelete: onDelete,
-                                        onReport: onReport
+                                        onReport: onReport,
+                                        interactive: !interactionsDisabled && message.isDeleted != true,
+                                        showReply: !inThread && repliesEnabled,
+                                        showReactions: reactionsEnabled && message.isDeleted != true,
+                                        showPicker: reactionPickerEnabled,
+                                        quickReactions: quickReactions,
+                                        onReact: { emoji in onReactionTap?(emoji) },
+                                        onMoreReactions: { showReactionPicker = true }
                                     )
                                 }
                                 .onLongPressGesture {
@@ -215,7 +287,14 @@ struct MessageBubbleView: View {
                                         },
                                         onEdit: onEdit,
                                         onDelete: onDelete,
-                                        onReport: onReport
+                                        onReport: onReport,
+                                        interactive: !interactionsDisabled && message.isDeleted != true,
+                                        showReply: !inThread && repliesEnabled,
+                                        showReactions: reactionsEnabled && message.isDeleted != true,
+                                        showPicker: reactionPickerEnabled,
+                                        quickReactions: quickReactions,
+                                        onReact: { emoji in onReactionTap?(emoji) },
+                                        onMoreReactions: { showReactionPicker = true }
                                     )
                                 }
                                 .onLongPressGesture {
@@ -237,9 +316,24 @@ struct MessageBubbleView: View {
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 2)
+            .sheet(isPresented: $showReactionPicker) {
+                ReactionPickerSheet { emoji in
+                    onReactionTap?(emoji)
+                }
+            }
         )
     }
     
+    /// Quoted parent text for a message that answers another (web MessageReply).
+    private var quotedText: String? {
+        guard let parsed = ThreadReference.parse(message.mainMessage),
+              parsed.id != nil,
+              let text = parsed.text, !text.isEmpty else {
+            return nil
+        }
+        return text
+    }
+
     private func copyToClipboard(_ text: String) {
         #if os(iOS)
         UIPasteboard.general.string = text
@@ -373,6 +467,16 @@ struct MessageContextMenuItems: View {
     let onEdit: (() -> Void)?
     let onDelete: (() -> Void)?
     let onReport: (() -> Void)?
+    /// False when the host turned interactions off: the menu is empty.
+    var interactive: Bool = true
+    /// "Reply" is hidden inside a thread and when `disableReplies` is set.
+    var showReply: Bool = true
+    /// Reaction row (quick shortcodes, plus the full picker when `showPicker`).
+    var showReactions: Bool = false
+    var showPicker: Bool = false
+    var quickReactions: [String] = EmojiShortcodes.defaultQuickReactions
+    var onReact: ((String) -> Void)? = nil
+    var onMoreReactions: (() -> Void)? = nil
     
     private var isMediaMessage: Bool {
         let hasMediaFlag = message.isMediafile == "true"
@@ -382,21 +486,38 @@ struct MessageContextMenuItems: View {
 
     var body: some View {
         Group {
-            if let onCopy = onCopy {
-                Button(action: onCopy) {
-                    Label("Copy", systemImage: "doc.on.doc")
+            if interactive {
+                if showReactions, let onReact = onReact {
+                    ReactionQuickItems(
+                        shortcodes: quickReactions,
+                        showPicker: showPicker,
+                        onSelect: onReact,
+                        onMore: { onMoreReactions?() }
+                    )
                 }
-            }
 
-            if isUser, !isMediaMessage, let onEdit = onEdit {
-                Button(action: onEdit) {
-                    Label("Edit", systemImage: "pencil")
+                if showReply, let onReply = onReply {
+                    Button(action: onReply) {
+                        Label("Reply", systemImage: "arrowshape.turn.up.left")
+                    }
                 }
-            }
 
-            if isUser, let onDelete = onDelete {
-                Button(role: .destructive, action: onDelete) {
-                    Label("Delete", systemImage: "trash")
+                if let onCopy = onCopy {
+                    Button(action: onCopy) {
+                        Label("Copy", systemImage: "doc.on.doc")
+                    }
+                }
+
+                if isUser, !isMediaMessage, let onEdit = onEdit {
+                    Button(action: onEdit) {
+                        Label("Edit", systemImage: "pencil")
+                    }
+                }
+
+                if isUser, let onDelete = onDelete, message.isDeleted != true {
+                    Button(role: .destructive, action: onDelete) {
+                        Label("Delete", systemImage: "trash")
+                    }
                 }
             }
         }

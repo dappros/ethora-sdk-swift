@@ -225,7 +225,8 @@ public class RoomStore: ObservableObject {
             return
         }
         
-        room.messages.append(message)
+        let stored = applyPendingReactions(to: message, roomJID: roomJID)
+        room.messages.append(stored)
         room.messages.sort { ($0.timestamp ?? 0) < ($1.timestamp ?? 0) }
         
         // Update last message
@@ -247,7 +248,9 @@ public class RoomStore: ObservableObject {
     /// Set room messages
     public func setRoomMessages(roomJID: String, messages: [Message]) {
         guard var room = rooms[roomJID] else { return }
-        room.messages = messages.sorted { ($0.timestamp ?? 0) < ($1.timestamp ?? 0) }
+        room.messages = messages
+            .map { applyPendingReactions(to: $0, roomJID: roomJID) }
+            .sorted { ($0.timestamp ?? 0) < ($1.timestamp ?? 0) }
         rooms[roomJID] = room
         saveToCache()
     }
@@ -344,46 +347,104 @@ public class RoomStore: ObservableObject {
             originalName: originalMessage.originalName,
             size: originalMessage.size,
             xmppId: originalMessage.xmppId,
-            xmppFrom: originalMessage.xmppFrom
+            xmppFrom: originalMessage.xmppFrom,
+            waveForm: originalMessage.waveForm,
+            wasEdited: updates.wasEdited ?? originalMessage.wasEdited
         )
-        
+
         room.messages[index] = updatedMessage
         rooms[roomJID] = room
         saveToCache()
     }
-    
+
     // MARK: - Reactions
-    
-    /// Set reactions on a message
+
+    /// Set one reactor's reactions on a message (web `setReactions` reducer).
+    ///
+    /// `from` is the reactor JID; the key is its localpart. An empty
+    /// `reactions` list records a removal. A newer `timestamp` wins over an
+    /// older one for the same reactor. When the target message is not loaded
+    /// yet, the update is held and applied when that message is added.
     public func setReactions(
         roomJID: String,
         messageId: String,
         reactions: [String],
         from: String,
-        data: [String: String]
+        data: [String: String],
+        timestamp: Int64? = nil
     ) {
+        let reactorKey = MessageReactions.reactorKey(fromJID: from)
+        guard !reactorKey.isEmpty else { return }
+
         guard var room = rooms[roomJID],
               let index = room.messages.firstIndex(where: { $0.id == messageId }) else {
+            holdPendingReaction(
+                roomJID: roomJID,
+                messageId: messageId,
+                reactorKey: reactorKey,
+                update: PendingReaction(emoji: reactions, data: data, timestamp: timestamp)
+            )
             return
         }
-        
+
         var message = room.messages[index]
-        
-        if message.reaction == nil {
-            message.reaction = [:]
-        }
-        
-        let fromId = from.components(separatedBy: "@").first ?? from
-        
-        if reactions.isEmpty {
-            message.reaction?.removeValue(forKey: fromId)
-        } else {
-            message.reaction?[fromId] = ReactionMessage(emoji: reactions, data: data)
-        }
-        
+        message.reaction = MessageReactions.apply(
+            message.reaction,
+            reactorKey: reactorKey,
+            emoji: reactions,
+            data: data,
+            timestamp: timestamp
+        )
+
         room.messages[index] = message
         rooms[roomJID] = room
         saveToCache()
+    }
+
+    /// A reaction whose target message has not arrived yet.
+    struct PendingReaction {
+        let emoji: [String]
+        let data: [String: String]
+        let timestamp: Int64?
+    }
+
+    /// Reactions held per room and message until the target is added. Bounded
+    /// so a room with many unresolved targets cannot grow without limit.
+    private static let maxPendingReactionTargets = 500
+    private var pendingReactions: [String: [String: [String: PendingReaction]]] = [:]
+
+    private func holdPendingReaction(roomJID: String, messageId: String, reactorKey: String, update: PendingReaction) {
+        var perRoom = pendingReactions[roomJID] ?? [:]
+        if perRoom[messageId] == nil, perRoom.count >= Self.maxPendingReactionTargets {
+            return
+        }
+        var perMessage = perRoom[messageId] ?? [:]
+        if let stored = perMessage[reactorKey]?.timestamp, let incoming = update.timestamp, stored > incoming {
+            return
+        }
+        perMessage[reactorKey] = update
+        perRoom[messageId] = perMessage
+        pendingReactions[roomJID] = perRoom
+    }
+
+    /// Applies held reactions to a message that has just been added to a room.
+    private func applyPendingReactions(to message: Message, roomJID: String) -> Message {
+        guard var perRoom = pendingReactions[roomJID],
+              let held = perRoom.removeValue(forKey: message.id) else {
+            return message
+        }
+        pendingReactions[roomJID] = perRoom.isEmpty ? nil : perRoom
+        var result = message
+        for (reactorKey, update) in held {
+            result.reaction = MessageReactions.apply(
+                result.reaction,
+                reactorKey: reactorKey,
+                emoji: update.emoji,
+                data: update.data,
+                timestamp: update.timestamp
+            )
+        }
+        return result
     }
     
     // MARK: - Receipts and Read Markers
@@ -610,6 +671,7 @@ public class RoomStore: ObservableObject {
     /// Clear all rooms
     public func clearAll() {
         rooms.removeAll()
+        pendingReactions.removeAll()
         activeRoomJID = nil
         editAction = nil
         usersSet.removeAll()
@@ -675,6 +737,7 @@ public struct PartialMessageUpdate {
     public var body: String?
     public var isDeleted: Bool?
     public var reaction: [String: ReactionMessage]?
-    
+    public var wasEdited: Bool?
+
     public init() {}
 }

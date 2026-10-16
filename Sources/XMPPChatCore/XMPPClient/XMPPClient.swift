@@ -1229,32 +1229,37 @@ extension XMPPClient: XMPPStreamDelegate {
         }
         
         // Set up reaction handler
-        handlers.onReactionReceived = { [weak self] (roomJID: String, messageId: String, reactions: [String], from: String, data: [String: String]) in
-            //print("👍 XMPPClient: Reaction received in room \(roomJID) for message \(messageId)")
+        handlers.onReactionReceived = { [weak self] (update: ReactionUpdate) in
+            //print("👍 XMPPClient: Reaction received in room \(update.roomJID) for message \(update.messageId)")
             guard let self = self else { return }
-            
+
             // Update RoomStore (must be on MainActor)
             Task { @MainActor in
                 RoomStore.shared.setReactions(
-                    roomJID: roomJID,
-                    messageId: messageId,
-                    reactions: reactions,
-                    from: from,
-                    data: data
+                    roomJID: update.roomJID,
+                    messageId: update.messageId,
+                    reactions: update.emoji,
+                    from: update.reactorJID,
+                    data: update.data,
+                    timestamp: update.timestamp
                 )
             }
-            
+
             // Post notification so ChatRoomViewModel can update its local messages array
+            var userInfo: [String: Any] = [
+                "roomJID": update.roomJID,
+                "messageId": update.messageId,
+                "reactions": update.emoji,
+                "from": update.reactorJID,
+                "data": update.data
+            ]
+            if let timestamp = update.timestamp {
+                userInfo["timestamp"] = timestamp
+            }
             NotificationCenter.default.post(
                 name: NSNotification.Name("XMPPReactionReceived"),
                 object: self,
-                userInfo: [
-                    "roomJID": roomJID,
-                    "messageId": messageId,
-                    "reactions": reactions,
-                    "from": from,
-                    "data": data
-                ]
+                userInfo: userInfo
             )
         }
         
@@ -1455,6 +1460,8 @@ extension XMPPClient: XMPPStreamDelegate {
             Task { @MainActor in
                 var updates = PartialMessageUpdate()
                 updates.body = newText
+                // XEP-0308 edit: drives the "(edited)" label (web isEdited).
+                updates.wasEdited = true
                 RoomStore.shared.updateMessage(
                     roomJID: roomJID,
                     messageId: messageId,

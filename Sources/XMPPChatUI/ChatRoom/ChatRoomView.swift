@@ -157,12 +157,8 @@ public struct ChatRoomView: View {
                             // Then: item.showInChannel === "true" || ((!item.isReply || item.isReply === "false") && !item.mainMessage)
                             let filteredMessages = viewModel.messages.filter { msg in
                                 // Match TypeScript: if (!message?.body) return;
-                                guard !msg.body.isEmpty else {
-                                    return false
-                                }
-                                
-                                // Match TypeScript: if (message.deleted || message.isDeleted) return;
-                                guard msg.isDeleted != true else {
+                                // Deleted messages stay as a tombstone placeholder (web DeletedMessage).
+                                guard !msg.body.isEmpty || msg.isDeleted == true else {
                                     return false
                                 }
                                 
@@ -263,8 +259,7 @@ public struct ChatRoomView: View {
                                         viewModel.addReaction(messageId: message.id, emoji: emoji)
                                     },
                                     onReply: {
-                                        selectedMessageForThread = message
-                                        showThread = true
+                                        openThread(for: message)
                                     },
                                     onEdit: isUser ? {
                                         viewModel.isEditing = true
@@ -283,6 +278,18 @@ public struct ChatRoomView: View {
                                     onDiscard: isUser ? {
                                         viewModel.discardFailedMessage(message.id)
                                     } : nil
+                                    inThread: false,
+                                    threadReplies: threadRepliesByParent[message.id] ?? [],
+                                    currentReactorKey: viewModel.currentUserXmppUsername ?? viewModel.currentUserId,
+                                    onOpenThread: {
+                                        openThread(for: message)
+                                    },
+                                    interactionsDisabled: chatConfigSnapshot.disableInteractions == true,
+                                    reactionsEnabled: ReactionSettings.enabled(chatConfigSnapshot),
+                                    reactionPickerEnabled: ReactionSettings.pickerEnabled(chatConfigSnapshot),
+                                    quickReactions: ReactionSettings.quickShortcodes(chatConfigSnapshot),
+                                    repliesEnabled: ReactionSettings.repliesEnabled(chatConfigSnapshot),
+                                    accentColor: Color(hex: chatConfigSnapshot.colors?.primary ?? "#0052CD")
 //                                    onReport: !isUser ? {
 //                                        messageToReport = message
 //                                        showReportModal = true
@@ -318,6 +325,29 @@ public struct ChatRoomView: View {
         .padding()
     }
     
+    /// Config snapshot for the reaction and reply switches.
+    private var chatConfigSnapshot: ChatConfig { ConfigStore.shared.config }
+
+    /// Replies grouped by their parent id, for the reply pill under each root.
+    private var threadRepliesByParent: [String: [Message]] {
+        ThreadReference.repliesByParent(viewModel.messages)
+    }
+
+    /// Opens the thread for a message. A reply opens its parent's thread, as the
+    /// web handleReplyMessage does; the parent is a stub when not loaded.
+    private func openThread(for message: Message) {
+        let target: Message
+        if let parentId = ThreadReference.threadParentId(of: message) {
+            target = viewModel.messages.first { $0.id == parentId }
+                ?? ThreadReference.parentStub(for: message)
+                ?? message
+        } else {
+            target = message
+        }
+        selectedMessageForThread = target
+        showThread = true
+    }
+
     public var body: some View {
         VStack(spacing: 0) {
             // Connection Status
@@ -362,11 +392,18 @@ public struct ChatRoomView: View {
                                     selectedMessageForThread = nil
                                 },
                                 onSendMessage: { text, alsoSendToMain in
-                                    viewModel.sendReply(messageId: message.id, text: text, alsoSendToMain: alsoSendToMain)
+                                    viewModel.sendReply(to: message, text: text, alsoSendToMain: alsoSendToMain)
                                 },
                                 onSendMedia: { data, type in
                                     viewModel.sendMedia(data: data, type: type)
-                                }
+                                },
+                                customMessageComponent: nil,
+                                config: chatConfigSnapshot,
+                                source: viewModel,
+                                onReact: { messageId, emoji in
+                                    viewModel.addReaction(messageId: messageId, emoji: emoji)
+                                },
+                                currentReactorKey: viewModel.currentUserXmppUsername ?? viewModel.currentUserId
                             )
                         }
                     }

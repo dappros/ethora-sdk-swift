@@ -33,6 +33,10 @@ public struct ChatConfig {
     public var disableRooms: Bool?
     public var defaultLogin: Bool?
     public var disableInteractions: Bool?
+    /// RN-named switches for reactions and the "Reply" menu item (see ReactionsConfig).
+    public var disableReactions: Bool?
+    public var disableReplies: Bool?
+    public var reactions: ReactionsConfig?
     public var chatHeaderBurgerMenu: Bool?
     public var forceSetRoom: Bool?
     public var setRoomJidInPath: Bool?

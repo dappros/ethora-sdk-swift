@@ -556,21 +556,22 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
         //print("👍 ChatRoomViewModel: Reaction received for message \(messageId)")
         
         // Update local messages array
+        let timestamp = userInfo["timestamp"] as? Int64
         Task { @MainActor in
             if let index = messages.firstIndex(where: { $0.id == messageId }) {
                 var updatedMessage = messages[index]
-                if updatedMessage.reaction == nil {
-                    updatedMessage.reaction = [:]
-                }
-                let fromId = from.components(separatedBy: "@").first ?? from
-                if reactions.isEmpty {
-                    updatedMessage.reaction?.removeValue(forKey: fromId)
-                } else {
-                    updatedMessage.reaction?[fromId] = ReactionMessage(emoji: reactions, data: data)
-                }
+                // Same reducer as RoomStore.setReactions: reactor localpart key,
+                // empty list is a removal, newest timestamp wins.
+                updatedMessage.reaction = MessageReactions.apply(
+                    updatedMessage.reaction,
+                    reactorKey: MessageReactions.reactorKey(fromJID: from),
+                    emoji: reactions,
+                    data: data,
+                    timestamp: timestamp
+                )
                 messages[index] = updatedMessage
                 room.messages = messages
-                
+
                 // CRITICAL: Save updated message to cache immediately
                 MessageCache.shared.saveMessages(messages, forRoomJID: room.jid)
             }
@@ -917,6 +918,13 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
     
     /// Load message history from XMPP
     /// Sends get-history MAM query - messages will be received through onMessageHistory handler in StanzaHandlers
+    /// Requests one older archive page for a thread (web ThreadWrapper
+    /// loadMoreMessages). The page arrives through the normal history path, so
+    /// the thread panel sees it in `messages`.
+    public func loadThreadHistory(before: Int64, max: Int = 100) {
+        client.operations.sendGetHistory(chatJID: room.jid, max: max, before: before)
+    }
+
     public func loadMessages(max: Int = 30, before: Int64? = nil, forceReload: Bool = false) {
         // If messages are already loaded and we're not forcing a reload, just ensure they're displayed
         if messagesLoaded && !forceReload && !messages.isEmpty {
@@ -1190,20 +1198,25 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
         MessageCache.shared.saveMessages(messages, forRoomJID: room.jid)
     }
 
-    /// Send reply to a message
+    /// Send a thread reply to the message with `messageId`, when it is loaded.
     public func sendReply(messageId: String, text: String, alsoSendToMain: Bool) {
+        guard let parent = messages.first(where: { $0.id == messageId }) else { return }
+        sendReply(to: parent, text: text, alsoSendToMain: alsoSendToMain)
+    }
+
+    /// Send a thread reply (web ThreadWrapper sendMessage). One stanza: the
+    /// reply carries `isReply="true"`, `mainMessage` = the parent's JSON
+    /// (ThreadReference.mainMessageJSON) and `showInChannel` = "Also send to room".
+    public func sendReply(to parent: Message, text: String, alsoSendToMain: Bool) {
         guard !text.isEmpty else { return }
-        
-        //print("💬 ChatRoomViewModel: Sending reply to message \(messageId)")
-        
-        // Get current user info from UserStore
+
         let user = UserStore.shared.currentUser
         let firstName = user?.firstName ?? "User"
         let lastName = user?.lastName ?? "Name"
         let walletAddress = user?.walletAddress ?? ""
         let photo = user?.profileImage ?? ""
-        
-        // Send reply message with mainMessage set
+        let mainMessage = ThreadReference.mainMessageJSON(for: parent)
+
         client.operations.sendTextMessage(
             roomJID: room.jid,
             firstName: firstName,
@@ -1212,24 +1225,10 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
             walletAddress: walletAddress,
             userMessage: text,
             isReply: true,
-            mainMessage: messageId
+            showInChannel: alsoSendToMain,
+            mainMessage: mainMessage
         )
-        
-        // If alsoSendToMain is true, send another message without mainMessage
-        if alsoSendToMain {
-            client.operations.sendTextMessage(
-                roomJID: room.jid,
-                firstName: firstName,
-                lastName: lastName,
-                photo: photo,
-                walletAddress: walletAddress,
-                userMessage: text,
-                isReply: false,
-                mainMessage: nil
-            )
-        }
-        
-        // Add optimistic reply message to UI
+
         let optimisticReply = Message(
             id: "pending-reply-\(Int64(Date().timeIntervalSince1970 * 1000))",
             user: User(
@@ -1246,15 +1245,16 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
             pending: true,
             pendingSince: Date(),
             timestamp: Int64(Date().timeIntervalSince1970 * 1000),
+            showInChannel: alsoSendToMain ? "true" : "false",
             isReply: true,
-            mainMessage: messageId
+            mainMessage: mainMessage
         )
-        
+
         messages.append(optimisticReply)
-        
+
         // Update room's messages array
         room.messages = messages
-        
+
         // CRITICAL: Save pending message to cache immediately so it persists even if connection is lost
         MessageCache.shared.saveMessages(messages, forRoomJID: room.jid)
     }
@@ -2317,75 +2317,57 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
         RoomStore.shared.deleteMessage(roomJID: room.jid, messageId: messageId)
     }
     
-    /// Add reaction to a message
+    /// Toggle one shortcode on a message (web handleReactionMessage). Sends the
+    /// reactor's full resulting set, then updates the local copies at once.
     public func addReaction(messageId: String, emoji: String) {
-        // Get current user info
-        guard let user = UserStore.shared.currentUser else {
-            //print("❌ Cannot add reaction: user not found")
-            return
-        }
-        
+        guard let user = UserStore.shared.currentUser else { return }
+
         let firstName = user.firstName ?? "User"
         let lastName = user.lastName ?? "Name"
-        
-        // Get current reactions for this message to toggle
+        // Reactions are keyed by the reactor's XMPP localpart, as the web SDK
+        // keys them (user.xmppUsername). The echo uses the same key.
+        let reactorKey = currentUserXmppUsername ?? currentUserId
+
         let currentMessage = messages.first { $0.id == messageId }
-        let currentReactions = currentMessage?.reaction?[currentUserId]?.emoji ?? []
-        
-        // Toggle reaction: if already reacted with this emoji, remove it; otherwise add it
-        var newReactions = currentReactions
+        var newReactions = MessageReactions.emoji(for: reactorKey, in: currentMessage?.reaction)
         if let index = newReactions.firstIndex(of: emoji) {
             newReactions.remove(at: index)
         } else {
             newReactions.append(emoji)
         }
-        
-        // Create reaction data
+
         let reactionData = ReactionData(firstName: firstName, lastName: lastName)
-        
-        // Send reaction via XMPP
         client.operations.sendMessageReaction(
             messageId: messageId,
             roomJid: room.jid,
             reactionsList: newReactions,
             data: reactionData
         )
-        
-        // Update local state optimistically
-        // Get JID from client - avoid accessing xmppStream directly due to ambiguity
-        let fromJid: String = {
-            // Access via reflection or use a helper method
-            // For now, return empty string as JID is not critical for reactions
-            return ""
-        }()
+
         let dataDict: [String: String] = [
             "senderFirstName": firstName,
             "senderLastName": lastName
         ]
-        
         RoomStore.shared.setReactions(
             roomJID: room.jid,
             messageId: messageId,
             reactions: newReactions,
-            from: fromJid,
+            from: reactorKey,
             data: dataDict
         )
-        
-        // Update local messages array
+
         if let index = messages.firstIndex(where: { $0.id == messageId }) {
             var updatedMessage = messages[index]
-            if updatedMessage.reaction == nil {
-                updatedMessage.reaction = [:]
-            }
-            let fromId = fromJid.components(separatedBy: "@").first ?? fromJid
-            if newReactions.isEmpty {
-                updatedMessage.reaction?.removeValue(forKey: fromId)
-            } else {
-                updatedMessage.reaction?[fromId] = ReactionMessage(emoji: newReactions, data: dataDict)
-            }
+            updatedMessage.reaction = MessageReactions.apply(
+                updatedMessage.reaction,
+                reactorKey: reactorKey,
+                emoji: newReactions,
+                data: dataDict,
+                timestamp: nil
+            )
             messages[index] = updatedMessage
             room.messages = messages
-            
+
             // CRITICAL: Save updated message to cache immediately
             MessageCache.shared.saveMessages(messages, forRoomJID: room.jid)
         }

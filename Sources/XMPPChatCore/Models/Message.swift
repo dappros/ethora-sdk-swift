@@ -135,12 +135,18 @@ public struct Message: Codable, Identifiable, Equatable {
 public typealias Reply = Message
 
 public struct ReactionMessage: Codable, Equatable {
+    /// Shortcodes this reactor currently has on the message. An empty list is
+    /// kept as a removal marker so an older add arriving later cannot revive it.
     public let emoji: [String]
     public let data: [String: String]
+    /// Stanza timestamp (`<stanza-id id>`, nanoseconds) of the update that set
+    /// `emoji`. Newest timestamp wins per reactor (see `MessageReactions.apply`).
+    public var timestamp: Int64?
     
-    public init(emoji: [String], data: [String: String]) {
+    public init(emoji: [String], data: [String: String], timestamp: Int64? = nil) {
         self.emoji = emoji
         self.data = data
+        self.timestamp = timestamp
     }
 }
 
