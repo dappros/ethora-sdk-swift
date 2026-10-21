@@ -13,6 +13,17 @@ import Combine
 import LiveKit
 import XMPPChatCore
 
+/// One participant in a group call.
+struct CallParticipantTile: Identifiable {
+    let id: String
+    let name: String
+    let isLocal: Bool
+    let camera: VideoTrack?
+    let screen: VideoTrack?
+    let micMuted: Bool
+    let speaking: Bool
+}
+
 @MainActor
 final class CallSessionController: ObservableObject {
     @Published private(set) var remoteVideoTrack: VideoTrack?
@@ -25,7 +36,14 @@ final class CallSessionController: ObservableObject {
     /// Connection failure that ends the call (bad token, network).
     @Published private(set) var connectError: String?
 
-    /// Fired once, when the remote side leaves after having joined.
+    /// Everyone in the room, local participant first. Filled for group calls.
+    @Published private(set) var tiles: [CallParticipantTile] = []
+    /// Group room call: every participant is shown and the call stays alive
+    /// while other people remain.
+    var isGroup = false
+    @Published private(set) var isSpeakerOn = false
+
+    /// Fired once, when the remote side leaves after having joined (1:1 only).
     var onPeerLeft: (() -> Void)?
 
     private let room: LiveKit.Room
@@ -58,6 +76,7 @@ final class CallSessionController: ObservableObject {
     ) async {
         // Video calls use the loudspeaker, audio calls use the receiver (web parity).
         AudioManager.shared.isSpeakerOutputPreferred = kind == .video
+        isSpeakerOn = kind == .video
 
         do {
             try await room.connect(
@@ -86,12 +105,20 @@ final class CallSessionController: ObservableObject {
 
         isConnected = true
         refreshState()
+        // CallKit's mute button drives the microphone of this call.
+        CallMediaControls.shared.setMicrophoneMuted = { [weak self] muted in
+            Task { @MainActor in
+                try? await self?.room.localParticipant.setMicrophone(enabled: !muted)
+                self?.refreshState()
+            }
+        }
         CallStore.shared.markConnected()
     }
 
     /// Leaves the room. Suppresses the peer-left callback, since this side hung up.
     func disconnect() async {
         peerLeftFired = true
+        CallMediaControls.shared.setMicrophoneMuted = nil
         await room.disconnect()
         isConnected = false
     }
@@ -132,6 +159,12 @@ final class CallSessionController: ObservableObject {
         }
     }
 
+    /// Loudspeaker or receiver.
+    func toggleSpeaker() {
+        isSpeakerOn.toggle()
+        AudioManager.shared.isSpeakerOutputPreferred = isSpeakerOn
+    }
+
     func dismissDeviceError() {
         deviceError = nil
     }
@@ -151,12 +184,39 @@ final class CallSessionController: ObservableObject {
             .first { $0.source == .camera }?
             .track as? VideoTrack
 
+        if isGroup {
+            // A group call outlives any single participant: the user leaves it
+            // with the hang-up button (or the server ends the room).
+            tiles = ([local as Participant] + room.remoteParticipants.values.map { $0 as Participant })
+                .map { participant in
+                    CallParticipantTile(
+                        id: participant.identity?.stringValue ?? participant.sid?.stringValue ?? UUID().uuidString,
+                        name: Self.displayName(participant),
+                        isLocal: participant is LocalParticipant,
+                        camera: participant.videoTracks
+                            .first { $0.source == .camera && !$0.isMuted }?.track as? VideoTrack,
+                        screen: participant.videoTracks
+                            .first { $0.source == .screenShareVideo && !$0.isMuted }?.track as? VideoTrack,
+                        micMuted: !participant.isMicrophoneEnabled(),
+                        speaking: participant.isSpeaking
+                    )
+                }
+            return
+        }
+
         if remote != nil {
             hasHadRemoteParticipant = true
         } else if hasHadRemoteParticipant, !peerLeftFired {
             peerLeftFired = true
             onPeerLeft?()
         }
+    }
+
+    private static func displayName(_ participant: Participant) -> String {
+        let name = (participant.name ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if !name.isEmpty { return name }
+        let identity = participant.identity?.stringValue ?? ""
+        return participant is LocalParticipant ? "You" : (identity.isEmpty ? "Participant" : identity)
     }
 
     private static func humanize(_ error: Error) -> String {
@@ -194,6 +254,26 @@ private final class RoomEvents: NSObject, RoomDelegate, @unchecked Sendable {
     }
 
     func room(_ room: LiveKit.Room, participant: RemoteParticipant, didSubscribeTrack publication: RemoteTrackPublication) {
+        notify()
+    }
+
+    func room(_ room: LiveKit.Room, participant: RemoteParticipant, didPublishTrack publication: RemoteTrackPublication) {
+        notify()
+    }
+
+    func room(_ room: LiveKit.Room, participant: RemoteParticipant, didUnpublishTrack publication: RemoteTrackPublication) {
+        notify()
+    }
+
+    func room(_ room: LiveKit.Room, didUpdateSpeakingParticipants participants: [Participant]) {
+        notify()
+    }
+
+    func room(_ room: LiveKit.Room, participant: Participant, trackPublication: TrackPublication, didUpdateIsMuted isMuted: Bool) {
+        notify()
+    }
+
+    func room(_ room: LiveKit.Room, participant: Participant, didUpdateName name: String) {
         notify()
     }
 
