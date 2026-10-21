@@ -12,10 +12,13 @@ import Foundation
 public struct VideoCallsConfig: Equatable {
     /// Master switch. Calls are unavailable unless this is true.
     public var enabled: Bool
-    /// LiveKit server URL (wss://...). Required; without it the call buttons
-    /// show a configuration error.
+    /// LiveKit server URL (wss://...). Used for LiveKit calls when the server
+    /// does not send its own `livekitUrl` on the call-token. Peer to peer 1:1
+    /// calls do not need it.
     public var livekitUrl: String
-    /// Room types that can place calls. Only "private" (1:1) is supported.
+    /// Room types that can place and receive calls: "private" (1:1) and "group"
+    /// (members-only group chats, always LiveKit). Default is both; pass
+    /// `["private"]` to keep calls 1:1 only. Public rooms never call.
     public var allowedRoomTypes: [String]
     /// Show an audio-only call button next to the video button.
     public var enableAudioCalls: Bool
@@ -24,10 +27,12 @@ public struct VideoCallsConfig: Equatable {
     /// Publish the microphone as soon as a call connects. Default true.
     public var startWithMicOn: Bool
 
+    public static let defaultAllowedRoomTypes = ["private", "group"]
+
     public init(
         enabled: Bool = false,
         livekitUrl: String = "",
-        allowedRoomTypes: [String] = ["private"],
+        allowedRoomTypes: [String] = VideoCallsConfig.defaultAllowedRoomTypes,
         enableAudioCalls: Bool = false,
         startWithCameraOn: Bool = true,
         startWithMicOn: Bool = true
@@ -41,10 +46,19 @@ public struct VideoCallsConfig: Equatable {
     }
 
     /// True when calls can be placed at all: enabled, a LiveKit URL is set,
-    /// and private rooms are allowed.
+    /// and private rooms are allowed. The URL stays required for now (same rule
+    /// as the web and React Native SDKs) because group calls run on LiveKit,
+    /// even though a peer to peer 1:1 call itself does not use it.
     public var isCallingAvailable: Bool {
         enabled
             && !livekitUrl.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && allowedRoomTypes.contains("private")
+            && (allowedRoomTypes.contains("private") || allowedRoomTypes.contains("group"))
+    }
+
+    /// Whether a room of this type may start and receive calls under
+    /// `allowedRoomTypes`. Public rooms (and unknown types) never can.
+    public func allowsCalls(in type: RoomType?) -> Bool {
+        guard let type, type == .private || type == .group else { return false }
+        return allowedRoomTypes.contains(type.rawValue)
     }
 }

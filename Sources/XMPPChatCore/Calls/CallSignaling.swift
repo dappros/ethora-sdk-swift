@@ -23,6 +23,48 @@ public struct IncomingCallToken: Equatable, Sendable {
     public let callerName: String
     /// Call id from the JWT `metadata.callId` claim, when present.
     public let jwtCallId: String?
+    /// Transport chosen by the server. A server that sends no `mode` means
+    /// `.livekit`.
+    public let mode: CallMode
+    /// True for a call in a group room (always LiveKit).
+    public let group: Bool
+    /// Public LiveKit URL from the stanza, only kept when the sender is the
+    /// app's system account.
+    public let livekitUrl: String?
+    /// ICE servers for a p2p call, same trust rule as `livekitUrl`.
+    public let iceServers: [IceServerConfig]?
+    /// Caller name from the `callerName` attribute (system account only).
+    public let attrCallerName: String
+    /// Caller xmppUsername from the `caller` attribute (system account only).
+    public let callerXmppUsername: String?
+
+    public init(
+        token: String,
+        room: String,
+        stanzaKind: CallKind,
+        callId: String?,
+        callerName: String,
+        jwtCallId: String?,
+        mode: CallMode = .livekit,
+        group: Bool = false,
+        livekitUrl: String? = nil,
+        iceServers: [IceServerConfig]? = nil,
+        attrCallerName: String = "",
+        callerXmppUsername: String? = nil
+    ) {
+        self.token = token
+        self.room = room
+        self.stanzaKind = stanzaKind
+        self.callId = callId
+        self.callerName = callerName
+        self.jwtCallId = jwtCallId
+        self.mode = mode
+        self.group = group
+        self.livekitUrl = livekitUrl
+        self.iceServers = iceServers
+        self.attrCallerName = attrCallerName
+        self.callerXmppUsername = callerXmppUsername
+    }
 }
 
 /// What an incoming call stanza means for local state. Produced by
@@ -220,7 +262,8 @@ public enum CallSignaling {
     public static func parseIncoming(
         inner: XMPPStanza,
         outer: XMPPStanza,
-        now: Date = Date()
+        now: Date = Date(),
+        expectedDomain: String? = nil
     ) -> (swallow: Bool, event: CallSignalEvent?)? {
         guard inner.name == "message" else { return nil }
 
@@ -228,6 +271,11 @@ public enum CallSignaling {
             switch dataType(of: data) {
             case "call-state":
                 let attributes = data.attributes
+                // A callee's decline in a GROUP call never ends it for the rest.
+                if (attributes["state"] ?? "").lowercased() == "declined",
+                   CallModeParsing.isTrueish(attributes["group"]) {
+                    return (swallow: true, event: nil)
+                }
                 let fromRoom = localPart(of: String((outer.attributes["from"] ?? "").split(separator: "/").first ?? ""))
                 let event = CallSignalEvent.state(
                     state: (attributes["state"] ?? attributes["event"] ?? "").lowercased(),
@@ -236,6 +284,24 @@ public enum CallSignaling {
                     callLog: callLogMeta(fromAttributes: attributes)
                 )
                 return (swallow: !hasCallLogData(attributes), event: event)
+
+            case "call-state-declined":
+                // Server relay of a callee's decline. In a group call one member
+                // declining must not end the call for everybody (and this SDK
+                // has no group calls), so only 1:1 treats it as terminal.
+                if CallModeParsing.isTrueish(data.attributes["group"]) {
+                    return (swallow: true, event: nil)
+                }
+                var attributes = data.attributes
+                attributes["state"] = "declined"
+                let fromRoom = localPart(of: String((outer.attributes["from"] ?? "").split(separator: "/").first ?? ""))
+                let event = CallSignalEvent.state(
+                    state: "declined",
+                    callId: firstAttribute(attributes, keys: ["callId", "callid"]),
+                    room: firstAttribute(attributes, keys: ["room"]) ?? (fromRoom.isEmpty ? nil : fromRoom),
+                    callLog: nil
+                )
+                return (swallow: true, event: event)
 
             case "call-invite":
                 let kind: CallKind = (data.attributes["kind"] ?? "").lowercased() == "audio" ? .audio : .video
@@ -247,27 +313,52 @@ public enum CallSignaling {
                 return (swallow: true, event: event)
 
             case "call-token":
-                let token = (data.attributes["token"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-                let room = (data.attributes["room"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-                let stanzaKind: CallKind = (data.attributes["kind"] ?? "").lowercased() == "audio" ? .audio : .video
+                // Old servers send neither `mode` nor `group`: the parser maps
+                // that to a plain LiveKit 1:1 call.
+                var attrs = CallModeParsing.parseCallTokenAttrs(data.attributes)
+                let isP2P = attrs.mode == .p2p
+
+                // livekitUrl / ice decide where media goes, callerName / caller
+                // decide who the ring screen names, so they are honoured only
+                // from the app's system account.
+                let hasSteering = attrs.livekitUrl != nil || attrs.iceServers != nil
+                    || !attrs.callerName.isEmpty || attrs.caller != nil
+                if hasSteering, !CallModeParsing.isSystemAccountSender(
+                    inner.attributes["from"] ?? outer.attributes["from"],
+                    expectedDomain: expectedDomain
+                ) {
+                    attrs.livekitUrl = nil
+                    attrs.iceServers = nil
+                    attrs.callerName = ""
+                    attrs.caller = nil
+                }
 
                 // Freshness is checked here, at arrival, like the web handler.
                 let stanzaIdValue = inner.getChild("stanza-id")?.attributes["id"]
                     ?? outer.getChild("stanza-id")?.attributes["id"]
-                guard !token.isEmpty, !room.isEmpty,
+                // A p2p token is intentionally empty (the media never touches
+                // LiveKit) and needs the callId instead.
+                let hasCredentials = isP2P ? attrs.callId != nil : !attrs.token.isEmpty
+                guard hasCredentials, !attrs.room.isEmpty,
                       isFreshCallToken(stanzaIdValue: stanzaIdValue, now: now) else {
                     return (swallow: true, event: nil)
                 }
 
-                let payload = decodeJwtPayload(token)
+                let payload = isP2P ? nil : decodeJwtPayload(attrs.token)
                 let event = CallSignalEvent.token(
                     IncomingCallToken(
-                        token: token,
-                        room: room,
-                        stanzaKind: stanzaKind,
-                        callId: firstAttribute(data.attributes, keys: ["callId", "callid"]),
+                        token: attrs.token,
+                        room: attrs.room,
+                        stanzaKind: attrs.kind ?? .video,
+                        callId: attrs.callId,
                         callerName: callerDisplayName(fromJwt: payload),
-                        jwtCallId: callId(fromJwt: payload)
+                        jwtCallId: callId(fromJwt: payload),
+                        mode: attrs.mode,
+                        group: attrs.group,
+                        livekitUrl: attrs.livekitUrl,
+                        iceServers: attrs.iceServers,
+                        attrCallerName: attrs.callerName,
+                        callerXmppUsername: attrs.caller
                     )
                 )
                 return (swallow: true, event: event)

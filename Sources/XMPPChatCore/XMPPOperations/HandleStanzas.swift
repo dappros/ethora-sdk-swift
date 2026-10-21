@@ -66,7 +66,8 @@ public class HandleStanzas {
             if CallStanzaRouter.handle(
                 inner: dispatchStanza,
                 outer: stanza,
-                selfXmppUsername: client?.username ?? ""
+                selfXmppUsername: client?.username ?? "",
+                xmppDomain: client?.host
             ) {
                 return
             }

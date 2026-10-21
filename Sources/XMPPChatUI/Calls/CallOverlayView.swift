@@ -14,14 +14,42 @@ import XMPPChatCore
 /// Overlay that shows the call screen while a call is active. Use `callOverlay(config:)`.
 struct CallOverlayModifier: ViewModifier {
     @ObservedObject private var store: CallStore = .shared
+    @ObservedObject private var p2p: P2PCallCoordinator = .shared
+    #if canImport(CallKit)
+    @ObservedObject private var callKit: CallKitBridge = .shared
+    #endif
+    @State private var minimized = false
     let config: VideoCallsConfig?
 
     func body(content: Content) -> some View {
-        content.overlay {
-            if store.state.phase != .idle {
-                CallOverlayView(state: store.state, config: config)
+        content
+            .onAppear { P2PCallCoordinator.shared.start() }
+            // Every call starts expanded.
+            .onChange(of: store.state.callId) { _ in minimized = false }
+            .onChange(of: store.state.phase) { phase in
+                if phase == .idle || phase == .error || phase == .ringingIncoming { minimized = false }
             }
-        }
+            .overlay {
+                if store.state.phase != .idle && !systemRingHandlesCall {
+                    CallOverlayView(
+                        state: store.state,
+                        config: config,
+                        p2pController: p2p.controller,
+                        minimized: $minimized
+                    )
+                }
+            }
+    }
+}
+
+extension CallOverlayModifier {
+    /// With CallKit on, the system UI rings for an incoming call, so the in-app card stays hidden.
+    fileprivate var systemRingHandlesCall: Bool {
+        #if canImport(CallKit)
+        return store.state.phase == .ringingIncoming && callKit.handlesRinging(for: store.state.callId)
+        #else
+        return false
+        #endif
     }
 }
 
@@ -37,43 +65,114 @@ public extension View {
 struct CallOverlayView: View {
     let state: CallStore.State
     let config: VideoCallsConfig?
+    /// Controller of the current peer to peer call, nil for LiveKit calls.
+    var p2pController: P2PCallController?
+    /// The active call shrunk to a strip (the media session stays mounted).
+    @Binding var minimized: Bool
 
+    /// The URL the system account sent on the call-token wins over the host config.
     private var livekitUrl: String {
-        (config?.livekitUrl ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let fromCall = (state.livekitUrl ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if !fromCall.isEmpty { return fromCall }
+        return (config?.livekitUrl ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// The session is shown once a token exists and the call is connecting or in progress.
+    /// A p2p call is shown once its controller exists and the call is connecting
+    /// or in progress.
+    private var showsP2PSession: Bool {
+        state.mode == .p2p
+            && (state.phase == .connecting || state.phase == .inCall)
+            && p2pController != nil
+    }
+
+    /// The LiveKit session is shown once a token exists and the call is
+    /// connecting or in progress.
     private var showsSession: Bool {
-        (state.phase == .connecting || state.phase == .inCall)
+        state.mode != .p2p
+            && (state.phase == .connecting || state.phase == .inCall)
             && state.token != nil
             && !livekitUrl.isEmpty
     }
 
     private var kindWord: String {
-        state.kind == .audio ? "audio" : "video"
+        let base = state.kind == .audio ? "audio" : "video"
+        return state.isGroup ? "group \(base)" : base
     }
 
-    var body: some View {
-        ZStack {
-            Color.black.opacity(showsSession ? 1 : 0.6)
-                .ignoresSafeArea()
+    private var sessionVisible: Bool { showsSession || showsP2PSession }
 
-            if showsSession, let token = state.token {
-                ActiveCallView(
-                    kind: state.kind,
-                    url: livekitUrl,
-                    token: token,
-                    peerName: state.roomName ?? "",
-                    startWithMicOn: config?.startWithMicOn ?? true,
-                    startWithCameraOn: config?.startWithCameraOn ?? true
-                )
-                .id(state.callId ?? state.roomJid ?? token)
+    var body: some View {
+        ZStack(alignment: .top) {
+            if !(sessionVisible && minimized) {
+                Color.black.opacity(sessionVisible ? 1 : 0.6)
+                    .ignoresSafeArea()
+            }
+
+            if sessionVisible {
+                sessionContent
+                    // Minimized: keep the session alive but invisible; the strip
+                    // below is the only thing on screen.
+                    .frame(
+                        width: minimized ? 1 : nil,
+                        height: minimized ? 1 : nil
+                    )
+                    .opacity(minimized ? 0.01 : 1)
+                    .allowsHitTesting(!minimized)
+                    .clipped()
+
+                if minimized {
+                    CallMinimizedStrip(
+                        title: state.roomName ?? "",
+                        subtitle: state.phase == .inCall ? (state.kind == .audio ? "Audio" : "Video") : "Connecting...",
+                        connectedAt: state.connectedAt,
+                        onExpand: { minimized = false },
+                        onHangup: { CallService.shared.hangUp() }
+                    )
+                }
             } else {
                 ringingContent
                     .padding(24)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .accessibilityElement(children: .contain)
+    }
+
+    @ViewBuilder
+    private var sessionContent: some View {
+        if showsP2PSession, let p2pController {
+            P2PCallView(
+                controller: p2pController,
+                peerName: state.roomName ?? "",
+                connectedAt: state.connectedAt,
+                onMinimize: { minimized = true }
+            )
+            .id(state.callId ?? state.roomJid ?? "p2p")
+        } else if let token = state.token {
+            ActiveCallView(
+                kind: state.kind,
+                url: livekitUrl,
+                token: token,
+                peerName: state.roomName ?? "",
+                startWithMicOn: config?.startWithMicOn ?? true,
+                startWithCameraOn: config?.startWithCameraOn ?? true,
+                isGroup: state.isGroup,
+                connectedAt: state.connectedAt,
+                onMinimize: { minimized = true }
+            )
+            .id(state.callId ?? state.roomJid ?? token)
+        }
+    }
+
+    /// "<person> is calling in <room>" for a group once both are known.
+    private var incomingSubtitle: String {
+        let noun = state.kind == .audio ? "Audio call" : "Video call"
+        let label = state.isGroup ? "Group \(noun.lowercased())" : noun
+        if state.isGroup, let caller = state.callerName, !caller.isEmpty,
+           let room = state.roomName, !room.isEmpty {
+            return "\(caller) is calling in \(room)"
+        }
+        return label
     }
 
     @ViewBuilder
@@ -82,7 +181,7 @@ struct CallOverlayView: View {
         case .ringingIncoming:
             callCard(
                 title: "Incoming \(kindWord) call",
-                subtitle: state.kind == .audio ? "Audio call" : "Video call",
+                subtitle: incomingSubtitle,
                 roomName: state.roomName
             ) {
                 circleButton(
@@ -141,12 +240,10 @@ struct CallOverlayView: View {
                 .font(.title3.weight(.semibold))
                 .foregroundColor(.white)
                 .multilineTextAlignment(.center)
-            if let roomName, !roomName.isEmpty {
-                Text(roomName)
-                    .font(.headline)
-                    .foregroundColor(.white)
-                    .multilineTextAlignment(.center)
-            }
+            Text((roomName ?? "").isEmpty ? (state.direction == .incoming ? "Incoming call" : "Call") : roomName!)
+                .font(.headline)
+                .foregroundColor(.white)
+                .multilineTextAlignment(.center)
             Text(subtitle)
                 .font(.subheadline)
                 .foregroundColor(.white.opacity(0.75))

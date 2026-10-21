@@ -23,6 +23,11 @@ let package = Package(
         // matching this package's toolchain floor. Newer LiveKit releases need
         // swift-tools 6.x.
         .package(url: "https://github.com/livekit/client-sdk-swift.git", .upToNextMinor(from: "2.13.0")),
+        // The WebRTC build LiveKit already links. Declared directly so the 1:1
+        // peer to peer calls (RTCPeerConnection) use the same binary instead of
+        // shipping a second WebRTC. Must match the exact pin in LiveKit 2.13's
+        // own Package.swift.
+        .package(url: "https://github.com/livekit/webrtc-xcframework.git", exact: "144.7559.03"),
     ],
     targets: [
         .target(
@@ -35,6 +40,7 @@ let package = Package(
             dependencies: [
                 "XMPPChatCore",
                 .product(name: "LiveKit", package: "client-sdk-swift"),
+                .product(name: "LiveKitWebRTC", package: "webrtc-xcframework"),
             ]),
         .testTarget(
             name: "XMPPChatCoreTests",

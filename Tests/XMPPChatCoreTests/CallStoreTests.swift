@@ -130,7 +130,72 @@ final class CallStoreTests: XCTestCase {
         XCTAssertEqual(store.state.direction, .incoming)
         XCTAssertEqual(store.state.roomJid, "room1@conference.test")
         XCTAssertEqual(store.state.callId, "c-9")
-        XCTAssertEqual(store.state.roomName, "Bob")
+        // The caller's own name (from the token) wins over the room title.
+        XCTAssertEqual(store.state.roomName, "Alice")
+    }
+
+    func testIncomingP2PTokenRingsWithoutALiveKitToken() {
+        enableCalls()
+        RoomStore.shared.addRoom(makeRoom(jid: "room1@conference.test", name: "Bob"))
+        let store = CallStore(outgoingCallTimeout: 60)
+        let token = IncomingCallToken(
+            token: "", room: "room1", stanzaKind: .audio, callId: "c-p2p",
+            callerName: "", jwtCallId: nil, mode: .p2p, attrCallerName: "Alice"
+        )
+
+        store.apply(.token(token), selfXmppUsername: "alice")
+        XCTAssertEqual(store.state.phase, .ringingIncoming)
+        XCTAssertEqual(store.state.mode, .p2p)
+        XCTAssertEqual(store.state.callId, "c-p2p")
+        XCTAssertEqual(store.state.token, "")
+        XCTAssertEqual(store.state.roomName, "Alice")
+    }
+
+    func testGroupTokenRingsInAGroupRoomWithTheRoomAsTheName() {
+        enableCalls()
+        RoomStore.shared.addRoom(makeRoom(jid: "group7@conference.test", name: "Team", type: "group", usersCnt: 9))
+        let store = CallStore(outgoingCallTimeout: 60)
+        let token = IncomingCallToken(
+            token: "t.oken.sig", room: "group7", stanzaKind: .video, callId: "c-g",
+            callerName: "", jwtCallId: nil, group: true, attrCallerName: "Alice"
+        )
+
+        store.apply(.token(token), selfXmppUsername: "bob")
+        XCTAssertEqual(store.state.phase, .ringingIncoming)
+        XCTAssertTrue(store.state.isGroup)
+        XCTAssertEqual(store.state.roomName, "Team")
+        XCTAssertEqual(store.state.callerName, "Alice")
+        XCTAssertNil(store.state.peerXmppUsername)
+    }
+
+    func testGroupTokenIsIgnoredWhenGroupCallsAreNotAllowed() {
+        var patch = ChatConfig()
+        patch.videoCalls = VideoCallsConfig(enabled: true, livekitUrl: "wss://lk.test", allowedRoomTypes: ["private"])
+        ConfigStore.shared.mergeConfig(patch)
+        RoomStore.shared.addRoom(makeRoom(jid: "group8@conference.test", name: "Team", type: "group", usersCnt: 9))
+        let store = CallStore(outgoingCallTimeout: 60)
+        let token = IncomingCallToken(
+            token: "t.oken.sig", room: "group8", stanzaKind: .video, callId: "c-g2",
+            callerName: "", jwtCallId: nil, group: true
+        )
+        store.apply(.token(token), selfXmppUsername: "bob")
+        XCTAssertEqual(store.state.phase, .idle)
+        enableCalls()
+    }
+
+    func testOneGroupMemberDecliningDoesNotEndTheCall() {
+        enableCalls()
+        RoomStore.shared.addRoom(makeRoom(jid: "group9@conference.test", name: "Team", type: "group", usersCnt: 9))
+        let store = CallStore(outgoingCallTimeout: 60)
+        let token = IncomingCallToken(
+            token: "t.oken.sig", room: "group9", stanzaKind: .video, callId: "c-g3",
+            callerName: "", jwtCallId: nil, group: true
+        )
+        store.apply(.token(token), selfXmppUsername: "bob")
+        store.apply(.state(state: "declined", callId: "c-g3", room: "group9", callLog: nil), selfXmppUsername: "bob")
+        XCTAssertEqual(store.state.phase, .ringingIncoming)
+        store.apply(.state(state: "ended", callId: "c-g3", room: "group9", callLog: nil), selfXmppUsername: "bob")
+        XCTAssertEqual(store.state.phase, .idle)
     }
 
     func testIncomingTokenInAGroupRoomIsIgnored() {

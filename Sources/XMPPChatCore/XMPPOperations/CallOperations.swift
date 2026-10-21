@@ -56,3 +56,30 @@ extension XMPPOperations {
         stream.send(stanza)
     }
 }
+
+extension XMPPOperations {
+    /// Sends one peer to peer call signal straight to the peer's bare JID.
+    /// Returns false when there is no live stream to send on.
+    @discardableResult
+    public func sendP2PSignal(
+        peerXmppUsername: String,
+        callId: String,
+        signal: P2PSignalName,
+        payload: P2PSignalPayload
+    ) -> Bool {
+        guard let stream = client?.xmppStream,
+              let host = client?.host, !host.isEmpty,
+              !peerXmppUsername.isEmpty else {
+            return false
+        }
+        let stanza = P2PSignalCodec.buildStanza(
+            to: CallSignaling.peerJid(peerXmppUsername, host: host),
+            callId: callId,
+            name: signal,
+            payload: payload,
+            messageId: "call-p2p-\(Int64(Date().timeIntervalSince1970 * 1000))-\(Int.random(in: 0..<1_000_000))"
+        )
+        stream.send(stanza)
+        return true
+    }
+}

@@ -19,15 +19,16 @@ public final class CallService {
     // MARK: - Eligibility
 
     /// Whether the call buttons for `room` should be shown and enabled. Needs
-    /// calls enabled with a LiveKit URL, a private room, and no active call.
+    /// calls enabled with a LiveKit URL, a 1:1 or group room allowed by
+    /// `allowedRoomTypes` (public rooms never call), and no active call.
     public func canStartCall(room: Room?, config: VideoCallsConfig?) -> Bool {
         guard let room, let config, config.isCallingAvailable else { return false }
-        return room.type?.rawValue == "private" && !CallStore.shared.isBusy
+        return config.allowsCalls(in: room.type) && !CallStore.shared.isBusy
     }
 
     // MARK: - Outgoing
 
-    /// Starts an outgoing call in a 1:1 room. Sends the invite, creates the call
+    /// Starts an outgoing call in a 1:1 or group room. Sends the invite (1:1 only), creates the call
     /// over REST, and records a failure on the call state.
     public func placeCall(room: Room, kind: CallKind) async {
         let videoCalls = ConfigStore.shared.config.videoCalls
@@ -36,8 +37,11 @@ public final class CallService {
         let chatName = CallSignaling.localPart(of: room.jid)
         guard !chatName.isEmpty else { return }
 
+        let isGroup = room.type == .group
         let selfLocal = CallSignaling.localPart(of: currentXmppUsername)
-        let peer = (room.members ?? []).first { member in
+        // A group call has no single peer to signal: the server rings every
+        // member and LiveKit carries the call.
+        let peer = isGroup ? nil : (room.members ?? []).first { member in
             let local = CallSignaling.localPart(of: member.xmppUsername ?? "")
             return !local.isEmpty && local != selfLocal
         }
@@ -52,15 +56,17 @@ public final class CallService {
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             return full.isEmpty ? (member.name ?? "") : full
         } ?? ""
-        let dialName = [isBadTitle ? peerDisplay : rawTitle, peerDisplay, chatName]
-            .first { !$0.isEmpty } ?? chatName
+        let dialName = isGroup
+            ? ([isBadTitle ? "" : rawTitle].first { !$0.isEmpty } ?? "Group call")
+            : ([isBadTitle ? peerDisplay : rawTitle, peerDisplay, chatName].first { !$0.isEmpty } ?? chatName)
 
         CallStore.shared.startOutgoingCall(
             roomJid: room.jid,
             roomName: dialName,
             roomBareName: chatName,
             kind: kind,
-            peerXmppUsername: peerXmppUsername
+            peerXmppUsername: peerXmppUsername,
+            isGroup: isGroup
         )
 
         // The server does not carry `kind` on the call-token, so tell the peer
@@ -73,8 +79,44 @@ public final class CallService {
             )
         }
 
+        let startedAt = CallStore.shared.state.startedAt
         do {
-            try await CallsAPI.createChatCall(chatName: chatName, kind: kind)
+            let result = try await CallsAPI.createChatCall(chatName: chatName, kind: kind)
+            let current = CallStore.shared.state
+            let stillCurrent = current.phase != .idle
+                && current.direction == .outgoing
+                && current.startedAt == startedAt
+            guard stillCurrent else {
+                // A p2p answer that lands after the user already cancelled: the
+                // server has already rung the callee and nothing else knows the
+                // callId, so clean it up here.
+                if result.mode == .p2p {
+                    CallsAPI.fireAndForget { await CallsAPI.reportCallState(.end, callId: result.callId) }
+                    if let peerXmppUsername, let callId = result.callId {
+                        ClientRegistry.shared.getGlobalXMPPClient()?.operations.sendCallState(
+                            state: .cancelled,
+                            peerXmppUsername: peerXmppUsername,
+                            callId: callId,
+                            roomBareName: chatName
+                        )
+                    }
+                }
+                return
+            }
+            if result.mode == .p2p, (peerXmppUsername ?? "").isEmpty {
+                // Nobody to signal. Ends the server side call too.
+                CallsAPI.fireAndForget { await CallsAPI.reportCallState(.end, callId: result.callId) }
+                CallStore.shared.setCallError("Cannot reach the other participant")
+                return
+            }
+            CallStore.shared.setOutgoingCallRoute(
+                startedAt: startedAt,
+                callId: result.callId,
+                mode: result.mode,
+                livekitUrl: result.livekitUrl,
+                iceServers: result.iceServers,
+                group: result.group
+            )
         } catch {
             CallStore.shared.setCallError(error.localizedDescription)
         }
@@ -95,12 +137,45 @@ public final class CallService {
     /// Declines the ringing incoming call and tells the caller.
     public func declineIncomingCall() {
         let snapshot = CallStore.shared.state
+        #if canImport(CallKit)
+        CallKitBridge.shared.localEnd(callId: snapshot.callId)
+        #endif
+        if snapshot.mode == .p2p {
+            // The server relays the decline to the caller (there is no LiveKit
+            // webhook for a p2p call).
+            CallsAPI.fireAndForget { await CallsAPI.reportCallState(.decline, callId: snapshot.callId) }
+        }
         sendSignal(.declined, from: snapshot)
+        CallStore.shared.resetCall()
+    }
+
+    /// A p2p call arrived while another call is active: tell the caller we are
+    /// busy.
+    func rejectBusyP2P(callId: String?, peerXmppUsername: String?, roomBareName: String) {
+        CallsAPI.fireAndForget { await CallsAPI.reportCallState(.decline, callId: callId) }
+        guard let peerXmppUsername, !peerXmppUsername.isEmpty, let callId, !callId.isEmpty else { return }
+        ClientRegistry.shared.getGlobalXMPPClient()?.operations.sendCallState(
+            state: .declined,
+            peerXmppUsername: peerXmppUsername,
+            callId: callId,
+            roomBareName: roomBareName
+        )
+    }
+
+    /// Glare: both sides dialled at once and the other call wins. Drop our own
+    /// outgoing call without writing a call-log row.
+    func abandonOutgoingForGlare() {
+        let snapshot = CallStore.shared.state
+        sendSignal(.cancelled, from: snapshot)
+        CallsAPI.fireAndForget { await CallsAPI.reportCallState(.end, callId: snapshot.callId) }
         CallStore.shared.resetCall()
     }
 
     /// Clears a failed call so the user can try again.
     public func dismissError() {
+        #if canImport(CallKit)
+        CallKitBridge.shared.localEnd(callId: CallStore.shared.state.callId)
+        #endif
         CallStore.shared.resetCall()
     }
 
@@ -116,6 +191,9 @@ public final class CallService {
     /// state. Order matches web terminateCall.
     private func endCall(signal: CallSignalState) {
         let snapshot = CallStore.shared.state
+        #if canImport(CallKit)
+        CallKitBridge.shared.localEnd(callId: snapshot.callId)
+        #endif
 
         let hasCallId = !(snapshot.callId ?? "").isEmpty
         if let roomJid = snapshot.roomJid, hasCallId || snapshot.connectedAt != nil {

@@ -31,6 +31,20 @@ public final class CallStore: ObservableObject {
         public var callId: String?
         public var peerXmppUsername: String?
         public var token: String?
+        /// Transport of this call. The server picks it; `.livekit` unless the
+        /// call-token said `mode=p2p`.
+        public var mode: CallMode = .livekit
+        /// Group room call (always LiveKit): more than two participants, so the
+        /// session must not end when one remote participant leaves.
+        public var isGroup = false
+        /// LiveKit URL sent on the call-token by the system account, if any.
+        /// Wins over `config.videoCalls.livekitUrl`.
+        public var livekitUrl: String?
+        /// ICE servers sent on a p2p call-token (system account only).
+        public var iceServers: [IceServerConfig]?
+        /// Caller display name from the call-token, when known.
+        public var callerName: String?
+        public var callerXmppUsername: String?
         public var error: String?
         public var startedAt: Date?
         /// When the call connected. Used for the local call-log duration.
@@ -59,10 +73,12 @@ public final class CallStore: ObservableObject {
         roomName: String?,
         roomBareName: String?,
         kind: CallKind,
-        peerXmppUsername: String?
+        peerXmppUsername: String?,
+        isGroup: Bool = false
     ) {
         let startedAt = Date()
         var next = State()
+        next.isGroup = isGroup
         next.phase = .requesting
         next.direction = .outgoing
         next.kind = kind
@@ -82,10 +98,22 @@ public final class CallStore: ObservableObject {
         token: String,
         kind: CallKind,
         callId: String?,
-        peerXmppUsername: String?
+        peerXmppUsername: String?,
+        mode: CallMode = .livekit,
+        livekitUrl: String? = nil,
+        iceServers: [IceServerConfig]? = nil,
+        callerName: String? = nil,
+        callerXmppUsername: String? = nil,
+        isGroup: Bool = false
     ) {
         cancelTimeout()
         var next = State()
+        next.isGroup = isGroup
+        next.callerXmppUsername = callerXmppUsername
+        next.mode = mode
+        next.livekitUrl = livekitUrl
+        next.iceServers = iceServers
+        next.callerName = callerName
         next.phase = .ringingIncoming
         next.direction = .incoming
         next.kind = kind
@@ -97,20 +125,56 @@ public final class CallStore: ObservableObject {
         next.token = token
         next.startedAt = Date()
         state = next
+        if mode == .p2p {
+            // The ring screen is up: let the server (and so the caller) know.
+            CallsAPI.fireAndForget { await CallsAPI.reportCallState(.ringing, callId: callId) }
+        }
     }
 
     /// Attaches the token to the outgoing call. Ignored unless an outgoing call
     /// for the same room is waiting (web setOutgoingCallToken).
-    public func setOutgoingCallToken(roomJid: String, token: String, callId: String?) {
+    public func setOutgoingCallToken(roomJid: String, token: String, callId: String?, livekitUrl: String? = nil) {
         guard state.direction == .outgoing else { return }
         if let current = state.roomJid, current != roomJid { return }
         cancelTimeout()
         state.phase = .connecting
         state.roomJid = roomJid
         state.token = token
+        if let livekitUrl, !livekitUrl.isEmpty { state.livekitUrl = livekitUrl }
         if let callId, !callId.isEmpty { state.callId = callId }
         state.error = nil
         state.startedAt = state.startedAt ?? Date()
+    }
+
+    /// The create response told the caller how the call is carried. Applied only
+    /// to the very call that asked (`startedAt` must match), so a late response
+    /// for a call the user already cancelled cannot leak into the next one.
+    public func setOutgoingCallRoute(
+        startedAt: Date?,
+        callId: String?,
+        mode: CallMode,
+        livekitUrl: String?,
+        iceServers: [IceServerConfig]?,
+        group: Bool? = nil
+    ) {
+        guard state.direction == .outgoing, state.startedAt == startedAt else { return }
+        // The LiveKit call-token can overtake the HTTP response, so a livekit
+        // route may still be applied once the phase moved on to `connecting`.
+        // A p2p route only makes sense while still dialling.
+        if state.phase != .requesting {
+            guard state.phase == .connecting, mode == .livekit else { return }
+        }
+        state.mode = mode
+        if let group { state.isGroup = group }
+        if let callId, !callId.isEmpty { state.callId = callId }
+        state.livekitUrl = livekitUrl
+        state.iceServers = mode == .p2p ? (iceServers ?? []) : nil
+    }
+
+    /// The p2p offer/answer exchange completed on the caller side.
+    public func markNegotiated() {
+        guard state.phase == .requesting else { return }
+        state.phase = .connecting
     }
 
     public func acceptIncomingCall() {
@@ -182,6 +246,9 @@ public final class CallStore: ObservableObject {
     private func applyCallState(rawState: String, callId: String?, room: String?, isCallLog: Bool) {
         guard state.phase != .idle else { return }
 
+        // One member declining a group call must not end it for everybody.
+        if state.isGroup, rawState == "declined" { return }
+
         let roomAttr = room ?? ""
         let roomMatches = !roomAttr.isEmpty && (
             state.roomJid == roomAttr
@@ -193,11 +260,18 @@ public final class CallStore: ObservableObject {
             && (state.callId ?? "").isEmpty == false
             && state.callId == callId
 
+        // A signal naming a DIFFERENT call than the one on screen (e.g. the
+        // server log of the previous call in the same room arriving late) must
+        // not tear down the current one just because the room matches.
+        let callIdConflicts = (callId ?? "").isEmpty == false
+            && (state.callId ?? "").isEmpty == false
+            && state.callId != callId
+
         let isTerminal = CallSignaling.isTerminalState(rawState)
         // A server call-log with no explicit state means the session concluded.
         let isServerCallLog = rawState.isEmpty && isCallLog
 
-        if (roomMatches || callIdMatches) && (isTerminal || isServerCallLog) {
+        if (callIdMatches || (roomMatches && !callIdConflicts)) && (isTerminal || isServerCallLog) {
             resetCall()
         }
     }
@@ -210,44 +284,116 @@ public final class CallStore: ObservableObject {
         let resolvedRoom = resolveRoom(byStanzaRoom: token.room)
         let usersCnt = resolvedRoom?.usersCnt ?? 0
         let isOneToOneLike = usersCnt > 0 && usersCnt <= 2
-        let isPrivateAllowed = videoCalls.allowedRoomTypes.contains("private")
 
-        // Room type gate. Only 1:1 rooms (private, or two members) can ring.
-        if let type = resolvedRoom?.type, type.rawValue != "private", !isOneToOneLike {
-            return
-        }
-        if resolvedRoom?.type?.rawValue == "private", !isPrivateAllowed {
-            return
-        }
-        if resolvedRoom?.type == nil, !token.room.contains("@"), !isOneToOneLike {
-            return
+        if token.group {
+            // Group room call (always LiveKit). The host may opt out through
+            // allowedRoomTypes; a room we know to be private contradicts `group`
+            // and a public room never rings.
+            guard videoCalls.allowsCalls(in: .group) else { return }
+            if let type = resolvedRoom?.type, type != .group { return }
+        } else {
+            let isPrivateAllowed = videoCalls.allowsCalls(in: .private)
+            // Room type gate. Only 1:1 rooms (private, or two members) can ring.
+            if let type = resolvedRoom?.type, type.rawValue != "private", !isOneToOneLike {
+                return
+            }
+            if resolvedRoom?.type?.rawValue == "private", !isPrivateAllowed {
+                return
+            }
+            if resolvedRoom?.type == nil, !token.room.contains("@"), !isOneToOneLike {
+                return
+            }
         }
 
         let roomJid = resolvedRoom?.jid ?? (token.room.contains("@") ? token.room : "")
         guard !roomJid.isEmpty else { return }
 
-        // Prefer the caller's name over a sentinel room title such as "deleted".
+        // What the call is called on screen. The caller's own name wins; a
+        // sentinel room title ("deleted") or a raw chat name (two joined JIDs)
+        // is never shown. An empty result makes the UI show a neutral label.
         let resolvedTitle = (resolvedRoom?.name ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let titleLooksBad = resolvedTitle.isEmpty
             || ["deleted", "deleted user", "unknown", "null"].contains(resolvedTitle.lowercased())
-        let preferred = (!token.callerName.isEmpty && titleLooksBad) ? token.callerName : resolvedTitle
+            || CallModeParsing.looksLikeRawRoomName(resolvedTitle)
+        // In a group the ring names the ROOM; the person calling is carried
+        // separately ("<person> is calling in <room>").
+        let jwtName = token.group ? "" : CallModeParsing.sanitizeCallName(token.callerName)
+        let goodTitle = titleLooksBad ? "" : resolvedTitle
         let incomingRoomName: String
-        if !preferred.isEmpty {
-            incomingRoomName = preferred
-        } else if !token.callerName.isEmpty {
-            incomingRoomName = token.callerName
+        if token.group {
+            incomingRoomName = [goodTitle, CallModeParsing.sanitizeCallName(token.room)].first { !$0.isEmpty } ?? ""
         } else {
-            incomingRoomName = token.room
+            incomingRoomName = [
+                token.attrCallerName,
+                jwtName,
+                goodTitle,
+                CallModeParsing.sanitizeCallName(token.room),
+            ].first { !$0.isEmpty } ?? ""
         }
+        let callerName = [token.attrCallerName, jwtName].first { !$0.isEmpty }
 
         // A call-invite hint overrides the stanza kind (the server does not
         // carry it on the token). Consumed only after the gates above pass.
         let kind = consumeKindHint([token.room, token.callId]) ?? token.stanzaKind
         let callId = token.callId ?? token.jwtCallId
-        let peer = CallSignaling.derivePeerXmppUsername(
+        // A group has no single peer; a "<a>-<b>" name there is a coincidence.
+        let peer = token.group ? nil : (CallSignaling.derivePeerXmppUsername(
             bareRoomName: token.room,
             selfXmppUsername: selfXmppUsername
-        )
+        ) ?? token.callerXmppUsername)
+
+        if token.mode == .p2p || state.mode == .p2p {
+            // Peer to peer (or an active p2p call): one call at a time, decided
+            // by callId. The legacy LiveKit-over-LiveKit path below is untouched.
+            let decision = CallModeDecision.incomingWhileBusy(
+                current: CallModeDecision.Snapshot(
+                    // A failed call left on screen no longer blocks a new one.
+                    phase: state.phase == .error ? .idle : state.phase,
+                    direction: state.direction,
+                    mode: state.mode,
+                    callId: state.callId,
+                    roomBareName: state.roomBareName
+                ),
+                incomingMode: token.mode,
+                incomingCallId: callId,
+                incomingRoomBareName: token.room
+            )
+            switch decision {
+            case .duplicate, .glareKeep:
+                return
+            case .busy:
+                if token.mode == .p2p {
+                    CallService.shared.rejectBusyP2P(
+                        callId: callId,
+                        peerXmppUsername: peer,
+                        roomBareName: token.room
+                    )
+                }
+                return
+            case .glareYield:
+                // Both sides dialled at once and the other call has the smaller
+                // id: drop ours, then ring for theirs.
+                CallService.shared.abandonOutgoingForGlare()
+            case .accept, .replace:
+                break
+            }
+            if token.mode == .p2p {
+                guard (callId ?? "").isEmpty == false else { return }
+                setIncomingCallToken(
+                    roomJid: roomJid,
+                    roomName: incomingRoomName,
+                    roomBareName: token.room,
+                    token: "",
+                    kind: kind,
+                    callId: callId,
+                    peerXmppUsername: peer,
+                    mode: .p2p,
+                    iceServers: token.iceServers,
+                    callerName: callerName
+                )
+                return
+            }
+        }
 
         let isOutgoingMatch = state.direction == .outgoing && (
             state.roomJid == roomJid
@@ -255,7 +401,12 @@ public final class CallStore: ObservableObject {
                 || state.roomBareName == token.room
         )
         if isOutgoingMatch {
-            setOutgoingCallToken(roomJid: roomJid, token: token.token, callId: callId)
+            setOutgoingCallToken(
+                roomJid: roomJid,
+                token: token.token,
+                callId: callId,
+                livekitUrl: token.livekitUrl
+            )
             return
         }
 
@@ -269,8 +420,61 @@ public final class CallStore: ObservableObject {
             token: token.token,
             kind: kind,
             callId: callId,
-            peerXmppUsername: peer
+            peerXmppUsername: peer,
+            mode: token.mode,
+            livekitUrl: token.livekitUrl,
+            iceServers: token.iceServers,
+            callerName: callerName,
+            callerXmppUsername: token.callerXmppUsername,
+            isGroup: token.group
         )
+    }
+
+    // MARK: - Incoming call push
+
+    /// Rings for an incoming call delivered by push (APNs / FCM data payload),
+    /// for the app being backgrounded or closed when the XMPP call-token went
+    /// out. Hosts call this from their PushKit / CallKit or notification
+    /// handler (`CallPush.isCallPush` / `CallPush.parse` tell a call push from a
+    /// chat push). A p2p push carries no LiveKit token: the ring starts the same
+    /// way and the offer arrives over XMPP once the app is connected.
+    @discardableResult
+    public func applyPush(_ push: CallPush, selfXmppUsername: String) -> Bool {
+        guard let videoCalls = ConfigStore.shared.config.videoCalls, videoCalls.enabled else { return false }
+        if push.isGroup, !videoCalls.allowsCalls(in: .group) { return false }
+        if !push.isGroup, !videoCalls.allowsCalls(in: .private) { return false }
+        guard let bare = push.roomBareName, !bare.isEmpty else { return false }
+        if push.mode == .livekit, (push.token ?? "").isEmpty { return false }
+        if push.mode == .p2p, (push.callId ?? "").isEmpty { return false }
+        guard state.phase == .idle || state.phase == .error else { return false }
+
+        let resolvedRoom = resolveRoom(byStanzaRoom: bare)
+        let conference = ClientRegistry.shared.getGlobalXMPPClient()?.conference ?? ""
+        let roomJid = resolvedRoom?.jid
+            ?? (push.roomRef?.contains("@") == true ? push.roomRef! : (conference.isEmpty ? "" : "\(bare)@\(conference)"))
+        guard !roomJid.isEmpty else { return false }
+
+        let name = CallModeParsing.sanitizeCallName(push.callerName)
+        let peer = push.isGroup ? nil : (push.callerXmppUsername
+            ?? CallSignaling.derivePeerXmppUsername(bareRoomName: bare, selfXmppUsername: selfXmppUsername))
+        setIncomingCallToken(
+            roomJid: roomJid,
+            roomName: push.isGroup
+                ? (CallModeParsing.sanitizeCallName(resolvedRoom?.name).isEmpty
+                    ? CallModeParsing.sanitizeCallName(bare)
+                    : CallModeParsing.sanitizeCallName(resolvedRoom?.name))
+                : (name.isEmpty ? CallModeParsing.sanitizeCallName(bare) : name),
+            roomBareName: bare,
+            token: push.token ?? "",
+            kind: push.kind,
+            callId: push.callId,
+            peerXmppUsername: peer,
+            mode: push.mode,
+            callerName: name.isEmpty ? nil : name,
+            callerXmppUsername: push.callerXmppUsername,
+            isGroup: push.isGroup
+        )
+        return true
     }
 
     // MARK: - Lookups
