@@ -121,11 +121,14 @@ final class E2EEOmemoTests: XCTestCase {
         let (alice, bob) = try await makeEngines()
         let first = try await alice.encryptGroupMessage(roomJid: room, members: [bobJid], content: textContent("one"), id: "m1")
         let second = try await alice.encryptGroupMessage(roomJid: room, members: [bobJid], content: textContent("two"), id: "m2")
-        XCTAssertEqual(try await bob.decrypt(carrier: second, sender: aliceJid, roomJid: room)?.content, "<body>two</body>")
-        XCTAssertEqual(try await bob.decrypt(carrier: first, sender: aliceJid, roomJid: room)?.content, "<body>one</body>")
+        let decryptedSecond = try await bob.decrypt(carrier: second, sender: aliceJid, roomJid: room)
+        let decryptedFirst = try await bob.decrypt(carrier: first, sender: aliceJid, roomJid: room)
+        XCTAssertEqual(decryptedSecond?.content, "<body>two</body>")
+        XCTAssertEqual(decryptedFirst?.content, "<body>one</body>")
 
         let reply = try await bob.encryptGroupMessage(roomJid: room, members: [aliceJid], content: textContent("reply"), id: "m3")
-        XCTAssertEqual(try await alice.decrypt(carrier: reply, sender: bobJid, roomJid: room)?.content, "<body>reply</body>")
+        let decryptedReply = try await alice.decrypt(carrier: reply, sender: bobJid, roomJid: room)
+        XCTAssertEqual(decryptedReply?.content, "<body>reply</body>")
 
         // The room echoes our own message back. We cached the plaintext under its id.
         let echo = try await alice.decrypt(carrier: first, sender: aliceJid, roomJid: room)
@@ -165,7 +168,8 @@ final class E2EEOmemoTests: XCTestCase {
     func testStanzaWithoutOmemoPayloadIsIgnoredByDecrypt() async throws {
         let (_, bob) = try await makeEngines()
         let plain = XMPPStanza(name: "message", attributes: ["type": "groupchat"], children: textContent("plain"))
-        XCTAssertNil(try await bob.decrypt(carrier: plain, sender: aliceJid, roomJid: room))
+        let decrypted = try await bob.decrypt(carrier: plain, sender: aliceJid, roomJid: room)
+        XCTAssertNil(decrypted)
     }
 
     // MARK: - Stanza seam

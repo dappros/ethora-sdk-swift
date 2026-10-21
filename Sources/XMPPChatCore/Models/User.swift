@@ -21,7 +21,7 @@ public struct User: Codable, Identifiable, Equatable {
     public var profileImage: String?
     public var username: String?
     public var xmppPassword: String?
-    /// File-service token (`ft`), refreshed with the session. Optional.
+    /// File-service token (`ft`) appended to secure file URLs, refreshed with the access token. Optional.
     public var fileToken: String?
     public var xmppUsername: String?
     public var langSource: String?
@@ -39,8 +39,6 @@ public struct User: Codable, Identifiable, Equatable {
     public var isAssetsOpen: Bool?
     public var isAgreeWithTerms: Bool?
     public var isSuperAdmin: Bool?
-    /// Per-viewer token appended as `ft` to secure file URLs. Refreshed with the access token.
-    public var fileToken: String?
     
     public init(
         id: String,
