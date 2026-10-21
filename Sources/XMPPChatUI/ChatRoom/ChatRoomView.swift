@@ -318,14 +318,20 @@ public struct ChatRoomView: View {
                                     onDelete: isUser ? {
                                         viewModel.deleteMessage(message.id)
                                     } : nil,
-                                    onReport: nil,
+                                    onReport: !isUser ? {
+                                        messageToReport = message
+                                        showReportModal = true
+                                    } : nil,
                                     onMediaTap: { mediaMessage in
                                         mediaPreview = MediaPreviewTarget(message: mediaMessage)
+                                    },
+                                    onAlbumTap: { mediaMessage, index in
+                                        mediaPreview = MediaPreviewTarget(message: mediaMessage, startIndex: index)
                                     },
                                     receiptState: isUser ? viewModel.receiptState(for: message) : .none,
                                     onDiscard: isUser ? {
                                         viewModel.discardFailedMessage(message.id)
-                                    } : nil
+                                    } : nil,
                                     inThread: false,
                                     threadReplies: threadRepliesByParent[message.id] ?? [],
                                     currentReactorKey: viewModel.currentUserXmppUsername ?? viewModel.currentUserId,
@@ -338,10 +344,6 @@ public struct ChatRoomView: View {
                                     quickReactions: ReactionSettings.quickShortcodes(chatConfigSnapshot),
                                     repliesEnabled: ReactionSettings.repliesEnabled(chatConfigSnapshot),
                                     accentColor: Color(hex: chatConfigSnapshot.colors?.primary ?? "#0052CD")
-//                                    onReport: !isUser ? {
-//                                        messageToReport = message
-//                                        showReportModal = true
-//                                    } : nil
                             )
                             .id(message.id)
                             .background(viewModel.highlightedMessageId == message.id ? Color.yellow.opacity(0.25) : Color.clear)
@@ -528,8 +530,17 @@ public struct ChatRoomView: View {
                             members: viewModel.room.members ?? [],
                             onClose: { showRoomInfo = false },
                             onEdit: nil,
-                            onLeave: nil,
-                            onDelete: nil
+                            onLeave: {
+                                showRoomInfo = false
+                                Task {
+                                    await viewModel.leaveCurrentRoom()
+                                    presentationMode.wrappedValue.dismiss()
+                                }
+                            },
+                            onDelete: nil,
+                            onAddMember: viewModel.canManageMembers ? { name in try await viewModel.addMember(username: name) } : nil,
+                            onRemoveMember: viewModel.canManageMembers ? { member in try await viewModel.removeMember(member) } : nil,
+                            onReportRoom: { reason, details in try await viewModel.reportRoom(category: reason, text: details) }
                         )
                     }
                     .fullScreenCover(item: $mediaPreview) { target in
@@ -807,6 +818,11 @@ public struct ChatRoomView: View {
                     viewModel.stopTyping() // Stop typing when sending media
                     viewModel.sendMedia(data: data, type: type, caption: caption)
                 },
+                onSendMediaFiles: { files, caption in
+                    viewModel.stopTyping()
+                    viewModel.sendMediaFiles(files, caption: caption)
+                },
+                attachmentsConfig: chatConfigSnapshot.attachments,
                 isEditing: viewModel.isEditing,
                 editMessageId: viewModel.editMessageId,
                 onCancelEdit: {

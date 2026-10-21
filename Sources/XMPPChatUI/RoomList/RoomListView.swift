@@ -51,6 +51,7 @@ public struct RoomListView: View {
     @State private var pushNavActive: Bool = false
     @State private var pushNavRoomBareJID: String?
     @State private var roomPendingLeave: Room?
+    @State private var roomPendingReport: Room?
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     public init(viewModel: RoomListViewModel, singleRoomJID: String? = nil, hideRoomList: Bool = false) {
@@ -102,6 +103,23 @@ public struct RoomListView: View {
                 if !loading {
                     tryOpenRoomFromPendingPushNotification()
                 }
+            }
+            .sheet(item: $roomPendingReport) { room in
+                ReportModal(
+                    type: .room,
+                    onReport: { reason, details in
+                        let chatName = (room.jid.components(separatedBy: "/").first ?? room.jid)
+                            .components(separatedBy: "@").first ?? ""
+                        Task {
+                            _ = try? await RoomsAPI.postReportRoom(
+                                chatName: chatName,
+                                category: reason,
+                                text: details.isEmpty ? nil : details
+                            )
+                        }
+                    },
+                    onClose: { roomPendingReport = nil }
+                )
             }
             .alert(
                 "Leave chat?",
@@ -213,6 +231,12 @@ public struct RoomListView: View {
                                 }
                                 .tint(.indigo)
                             }
+                            Button {
+                                roomPendingReport = room
+                            } label: {
+                                Label("Report", systemImage: "exclamationmark.bubble")
+                            }
+                            .tint(.orange)
                             Button(role: .destructive) {
                                 roomPendingLeave = room
                             } label: {
@@ -421,6 +445,16 @@ private struct RoomListModeModifier: ViewModifier {
                         }
                         .accessibilityIdentifier(RoomListAccessibilityID.createRoomButton)
                     }
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        if ConfigStore.shared.config.disablePublicChatsDirectory != true {
+                            Button(action: {
+                                viewModel.showPublicChats = true
+                            }) {
+                                Image(systemName: "globe")
+                            }
+                            .accessibilityLabel("Public chats")
+                        }
+                    }
                     ToolbarItem(placement: .navigationBarLeading) {
                         Button(action: {
                             showAccountSettings = true
@@ -444,6 +478,16 @@ private struct RoomListModeModifier: ViewModifier {
                     if let user = UserStore.shared.currentUser {
                         UserSettingsModal(user: user, onUpdate: { _ in }, onClose: { showAccountSettings = false })
                     }
+                }
+                .sheet(isPresented: $viewModel.showPublicChats) {
+                    PublicChatsView(
+                        joinedNames: viewModel.joinedRoomNames,
+                        onOpen: { chat in
+                            viewModel.showPublicChats = false
+                            viewModel.openPublicChat(chat)
+                        },
+                        onClose: { viewModel.showPublicChats = false }
+                    )
                 }
                 .sheet(isPresented: $viewModel.showNewChatModal) {
                     NewChatModal(
@@ -735,6 +779,7 @@ struct RoomListItemView: View {
 public class RoomListViewModel: ObservableObject {
     @Published var rooms: [Room] = []
     @Published var showNewChatModal: Bool = false
+    @Published var showPublicChats: Bool = false
     @Published var isLoading: Bool = false
     @Published var errorMessage: String?
     
@@ -1367,6 +1412,27 @@ public class RoomListViewModel: ObservableObject {
         }
     }
     
+    /// Names (JID local parts) of the chats the user is already in.
+    var joinedRoomNames: Set<String> {
+        Set(rooms.map { ($0.jid.components(separatedBy: "/").first ?? $0.jid).components(separatedBy: "@").first ?? "" })
+    }
+
+    /// Joins a public chat from the directory and queues it to be opened as soon as it is in
+    /// the list (the same hand-over a tapped push uses). A chat already joined just opens.
+    func openPublicChat(_ chat: PublicChat) {
+        let bareJid = "\(chat.name)@\(conferenceDomain)"
+        PendingNotificationJidStore.store(jid: bareJid)
+        guard !joinedRoomNames.contains(chat.name) else {
+            objectWillChange.send()
+            rooms = rooms // re-publish so the pending jid is picked up
+            return
+        }
+        Task {
+            await client.joinRoomsAndWait(roomJIDs: [bareJid])
+            loadRooms()
+        }
+    }
+
     public func createPrivateRoom(with user: User) async throws {
         guard let token = UserStore.shared.token else {
             throw NSError(domain: "RoomListViewModel", code: 401, userInfo: [NSLocalizedDescriptionKey: "Not authenticated"])
