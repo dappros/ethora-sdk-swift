@@ -41,7 +41,8 @@ enum AttachmentAlbumLayout {
 
 struct AttachmentAlbumView: View {
     let attachments: [MessageAttachment]
-    let onTap: () -> Void
+    /// Called with the index of the tapped file in `attachments`.
+    let onTap: (Int) -> Void
 
     private let gap: CGFloat = 3
 
@@ -86,7 +87,7 @@ struct AttachmentAlbumView: View {
     private func tile(_ position: Int, layout: AttachmentAlbumLayout.Result) -> some View {
         let item = attachments[position]
         let isLast = position == layout.visible - 1
-        Button(action: onTap) {
+        Button(action: { onTap(position) }) {
             ZStack {
                 Color.gray.opacity(0.12)
                 if item.isImage, let url = SecureFileURL.currentURL(item.locationPreview ?? item.location) {

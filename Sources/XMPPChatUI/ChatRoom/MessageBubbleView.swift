@@ -19,6 +19,9 @@ struct MessageBubbleView: View {
     let onDelete: (() -> Void)?
     let onReport: (() -> Void)?
     let onMediaTap: ((Message) -> Void)?
+    /// Tap on one tile of a multi-file album: the message and the tapped file's index.
+    /// Falls back to `onMediaTap` (index 0) when not set.
+    var onAlbumTap: ((Message, Int) -> Void)? = nil
     /// Delivery tick for our own messages (see `ReceiptState`).
     var receiptState: ReceiptState = .sent
     /// Local-only removal for messages that were flagged failed and never
@@ -220,7 +223,13 @@ struct MessageBubbleView: View {
                     if message.mediaAttachments.count > 1 {
                         AttachmentAlbumView(
                             attachments: message.mediaAttachments,
-                            onTap: { onMediaTap?(message) }
+                            onTap: { index in
+                                if let onAlbumTap {
+                                    onAlbumTap(message, index)
+                                } else {
+                                    onMediaTap?(message)
+                                }
+                            }
                         )
                     } else {
                         MediaMessagePreview(

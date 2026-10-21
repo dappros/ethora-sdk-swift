@@ -55,6 +55,9 @@ public class ConfigStore: ObservableObject {
         if let videoCalls = partialConfig.videoCalls {
             config.videoCalls = videoCalls
         }
+        if let attachments = partialConfig.attachments {
+            config.attachments = attachments
+        }
         if let googleLogin = partialConfig.googleLogin {
             config.googleLogin = googleLogin
         }

@@ -18,6 +18,11 @@ public struct ConfigurableChatInputView: View {
     /// the attachment — when non-empty it is delivered as a separate text message right
     /// after the media stanza.
     let onSendMedia: ((Data, String, String?) -> Void)?
+    /// Sends every staged file in ONE message (an album) with the typed caption.
+    /// When set, it is used instead of `onSendMedia` for the default composer.
+    let onSendMediaFiles: (([OutgoingMediaFile], String?) -> Void)?
+    /// `attachments` config: file count and per-file size limits.
+    let attachmentsConfig: AttachmentsConfig?
     let placeholderText: String
     let isEditing: Bool
     let editMessageId: String?
@@ -35,6 +40,8 @@ public struct ConfigurableChatInputView: View {
         messageText: Binding<String>,
         onSendMessage: @escaping (String) -> Void,
         onSendMedia: ((Data, String, String?) -> Void)? = nil,
+        onSendMediaFiles: (([OutgoingMediaFile], String?) -> Void)? = nil,
+        attachmentsConfig: AttachmentsConfig? = nil,
         placeholderText: String = "Type a message...",
         isEditing: Bool = false,
         editMessageId: String? = nil,
@@ -47,6 +54,8 @@ public struct ConfigurableChatInputView: View {
         self._messageText = messageText
         self.onSendMessage = onSendMessage
         self.onSendMedia = onSendMedia
+        self.onSendMediaFiles = onSendMediaFiles
+        self.attachmentsConfig = attachmentsConfig
         self.placeholderText = placeholderText
         self.isEditing = isEditing
         self.editMessageId = editMessageId
@@ -72,6 +81,8 @@ public struct ConfigurableChatInputView: View {
                 messageText: $messageText,
                 onSendMessage: onSendMessage,
                 onSendMedia: onSendMedia,
+                onSendMediaFiles: onSendMediaFiles,
+                attachmentsConfig: attachmentsConfig,
                 placeholderText: placeholderText,
                 isEditing: isEditing,
                 editMessageId: editMessageId,
@@ -88,6 +99,8 @@ struct DefaultChatInputView: View {
     @Binding var messageText: String
     let onSendMessage: (String) -> Void
     let onSendMedia: ((Data, String, String?) -> Void)?
+    let onSendMediaFiles: (([OutgoingMediaFile], String?) -> Void)?
+    let attachmentsConfig: AttachmentsConfig?
     let placeholderText: String
     let isEditing: Bool
     let editMessageId: String?
@@ -97,12 +110,11 @@ struct DefaultChatInputView: View {
     let messageTextFilter: MessageTextFilterConfig?
     
     @State private var showMediaPicker = false
-    @State private var selectedMediaData: Data? = nil
-    @State private var selectedMediaType: String? = nil
-    @State private var selectedMediaFileName: String? = nil
-    #if os(iOS)
-    @State private var selectedMediaImage: UIImage? = nil
-    #endif
+    /// Files picked and waiting for Send. Sent together as one album.
+    @State private var staged: [StagedMedia] = []
+    @State private var attachmentNotice: String? = nil
+
+    private var fileLimit: Int { (attachmentsConfig ?? AttachmentsConfig()).fileLimit }
     @FocusState private var isFocused: Bool
     
     private var inputSurfaceColor: Color {
@@ -123,38 +135,22 @@ struct DefaultChatInputView: View {
     
     var body: some View {
         VStack(spacing: 0) {
-            // Media Preview
-            if let mediaData = selectedMediaData, let mediaType = selectedMediaType {
-                #if os(iOS)
-                MediaPreviewView(
-                    mediaData: mediaData,
-                    mediaType: mediaType,
-                    fileName: selectedMediaFileName,
-                    image: selectedMediaImage,
-                    onCancel: {
-                        selectedMediaData = nil
-                        selectedMediaType = nil
-                        selectedMediaFileName = nil
-                        selectedMediaImage = nil
-                    }
-                )
+            // Staged files
+            if !staged.isEmpty {
+                StagedMediaStrip(items: staged, limit: fileLimit) { id in
+                    staged.removeAll { $0.id == id }
+                    attachmentNotice = nil
+                }
                 .padding(.horizontal, 16)
                 .padding(.top, 8)
-                #else
-                MediaPreviewView(
-                    mediaData: mediaData,
-                    mediaType: mediaType,
-                    fileName: selectedMediaFileName,
-                    image: nil,
-                    onCancel: {
-                        selectedMediaData = nil
-                        selectedMediaType = nil
-                        selectedMediaFileName = nil
-                    }
-                )
-                .padding(.horizontal, 16)
-                .padding(.top, 8)
-                #endif
+            }
+            if let attachmentNotice {
+                Text(attachmentNotice)
+                    .font(.footnote)
+                    .foregroundColor(.orange)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 4)
             }
             
             HStack(spacing: 16) {
@@ -185,7 +181,7 @@ struct DefaultChatInputView: View {
                 }
                 
                 ZStack(alignment: .leading) {
-                    if messageText.isEmpty && selectedMediaData == nil {
+                    if messageText.isEmpty && staged.isEmpty {
                         Text(placeholderText)
                             .foregroundColor(.gray.opacity(0.6))
                             .padding(.horizontal, 16)
@@ -244,14 +240,14 @@ struct DefaultChatInputView: View {
                             .font(.system(size: 18, weight: .medium))
                             .foregroundColor(.white)
                             .frame(width: 40, height: 40)
-                            .background((messageText.isEmpty && selectedMediaData == nil) ? Color.gray : Color.blue)
+                            .background((messageText.isEmpty && staged.isEmpty) ? Color.gray : Color.blue)
                             .clipShape(Circle())
                             .overlay(
                                 Circle()
                                     .stroke(Color.gray.opacity(0.3), lineWidth: 0.5)
                             )
                     }
-                    .disabled(messageText.isEmpty && selectedMediaData == nil)
+                    .disabled(messageText.isEmpty && staged.isEmpty)
                     .accessibilityIdentifier(ChatInputAccessibilityID.sendButton)
                 }
             }
@@ -264,18 +260,38 @@ struct DefaultChatInputView: View {
         .background(Color(NSColor.controlBackgroundColor))
         #endif
         .sheet(isPresented: $showMediaPicker) {
-            MediaPickerView(onMediaSelected: { data, type, fileName in
-                selectedMediaData = data
-                selectedMediaType = type
-                selectedMediaFileName = fileName
-                #if os(iOS)
-                if type.hasPrefix("image/"), let image = UIImage(data: data) {
-                    selectedMediaImage = image
-                }
-                #endif
+            MediaPickerView(remainingSlots: max(1, fileLimit - staged.count), onMediaSelected: { files in
+                stage(files)
             })
             .modifier(MediaPickerPresentationModifier())
         }
+    }
+
+    /// Adds picked files to the staging area, enforcing the file count and size limits.
+    private func stage(_ files: [OutgoingMediaFile]) {
+        var notice: String?
+        var added = 0
+        let sizeCap = (attachmentsConfig?.maxFileSizeMb).map { $0 * 1024 * 1024 }
+        for file in files {
+            if staged.count >= fileLimit {
+                notice = "You can attach up to \(fileLimit) files per message."
+                break
+            }
+            if let sizeCap, Double(file.data.count) > sizeCap {
+                let name = file.fileName ?? "A file"
+                notice = "\(name) is larger than \(Int(attachmentsConfig?.maxFileSizeMb ?? 0)) MB and was skipped."
+                continue
+            }
+            #if os(iOS)
+            let image: UIImage? = file.mimeType.hasPrefix("image/") ? UIImage(data: file.data) : nil
+            staged.append(StagedMedia(file: file, image: image))
+            #else
+            staged.append(StagedMedia(file: file))
+            #endif
+            added += 1
+        }
+        attachmentNotice = notice
+        if added > 0, notice == nil { attachmentNotice = nil }
     }
     
     private func sendMessage() {
@@ -287,30 +303,109 @@ struct DefaultChatInputView: View {
         HapticFeedback.messageSent()
     }
 
-    /// If an attachment is selected, send it together with the typed caption (if any) —
-    /// the receiver will deliver them as two separate messages, media first then text.
+    /// If files are staged, send them together with the typed caption (if any) as ONE message.
     /// Otherwise fall back to a plain text send.
     private func sendMediaOrText() {
-        if let data = selectedMediaData, let type = selectedMediaType {
-            let trimmedCaption = messageText.trimmingCharacters(in: .whitespacesAndNewlines)
-            let caption: String? = trimmedCaption.isEmpty ? nil : messageText
-            onSendMedia?(data, type, caption)
-            messageText = ""
-            selectedMediaData = nil
-            selectedMediaType = nil
-            selectedMediaFileName = nil
-            #if os(iOS)
-            selectedMediaImage = nil
-            #endif
-            HapticFeedback.messageSent()
-        } else {
+        guard !staged.isEmpty else {
             sendMessage()
+            return
+        }
+        let trimmedCaption = messageText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let caption: String? = trimmedCaption.isEmpty ? nil : messageText
+        let files = staged.map(\.file)
+        if let onSendMediaFiles {
+            onSendMediaFiles(files, caption)
+        } else if let onSendMedia {
+            // Legacy single-file callback: one message per file, the caption goes with the first.
+            for (index, file) in files.enumerated() {
+                onSendMedia(file.data, file.mimeType, index == 0 ? caption : nil)
+            }
+        }
+        messageText = ""
+        staged = []
+        attachmentNotice = nil
+        HapticFeedback.messageSent()
+    }
+}
+
+/// One file waiting in the composer.
+struct StagedMedia: Identifiable {
+    let id = UUID()
+    let file: OutgoingMediaFile
+    #if os(iOS)
+    var image: UIImage? = nil
+    #endif
+}
+
+/// Thumbnails of the staged files, each with a remove button.
+struct StagedMediaStrip: View {
+    let items: [StagedMedia]
+    let limit: Int
+    let onRemove: (UUID) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(items) { item in
+                        ZStack(alignment: .topTrailing) {
+                            thumbnail(item)
+                                .frame(width: 64, height: 64)
+                                .background(Color.gray.opacity(0.12))
+                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                            Button {
+                                onRemove(item.id)
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .foregroundColor(.white)
+                                    .background(Circle().fill(Color.black.opacity(0.6)))
+                            }
+                            .offset(x: 4, y: -4)
+                            .accessibilityLabel("Remove attachment")
+                        }
+                        .padding(.top, 4)
+                        .padding(.trailing, 4)
+                    }
+                }
+            }
+            if items.count > 1 {
+                Text("\(items.count) of \(limit) files")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func thumbnail(_ item: StagedMedia) -> some View {
+        #if os(iOS)
+        if let image = item.image {
+            Image(uiImage: image)
+                .resizable()
+                .aspectRatio(contentMode: .fill)
+        } else {
+            fallbackIcon(item)
+        }
+        #else
+        fallbackIcon(item)
+        #endif
+    }
+
+    private func fallbackIcon(_ item: StagedMedia) -> some View {
+        VStack(spacing: 2) {
+            Image(systemName: item.file.mimeType.hasPrefix("video/") ? "video.fill" : "doc.fill")
+                .foregroundColor(.blue)
+            if let name = item.file.fileName {
+                Text(name).font(.system(size: 8)).lineLimit(1).padding(.horizontal, 2)
+            }
         }
     }
 }
 
 struct MediaPickerView: View {
-    let onMediaSelected: (Data, String, String?) -> Void
+    /// How many more files the message can take; limits the library selection.
+    let remainingSlots: Int
+    let onMediaSelected: ([OutgoingMediaFile]) -> Void
     @Environment(\.dismiss) var dismiss
     @State private var showImagePicker = false
     @State private var showDocumentPicker = false
@@ -392,20 +487,28 @@ struct MediaPickerView: View {
         }
         .background(Color(uiColor: .systemBackground))
         .sheet(isPresented: $showImagePicker) {
-            ImagePicker(sourceType: sourceType, mediaTypes: ["public.image"], onMediaSelected: { data, mimeType in
-                onMediaSelected(data, mimeType, nil)
-                dismiss()
-            })
+            ImagePicker(
+                sourceType: sourceType,
+                mediaTypes: ["public.image", "public.movie"],
+                selectionLimit: remainingSlots,
+                onMediaSelected: { _, _ in },
+                onBatchSelected: { items in
+                    onMediaSelected(items.map { OutgoingMediaFile(data: $0.0, mimeType: $0.1) })
+                    dismiss()
+                }
+            )
         }
         .sheet(isPresented: $showCamera) {
             ImagePicker(sourceType: .camera, mediaTypes: ["public.image"], onMediaSelected: { data, mimeType in
-                onMediaSelected(data, mimeType, nil)
+                onMediaSelected([OutgoingMediaFile(data: data, mimeType: mimeType)])
                 dismiss()
             })
         }
         .sheet(isPresented: $showDocumentPicker) {
-            DocumentPicker(onDocumentSelected: { fileData, fileName, mimeType in
-                onMediaSelected(fileData, mimeType, fileName)
+            DocumentPicker(onDocumentsSelected: { picked in
+                onMediaSelected(picked.prefix(remainingSlots).map {
+                    OutgoingMediaFile(data: $0.0, mimeType: $0.2, fileName: $0.1)
+                })
                 dismiss()
             })
         }

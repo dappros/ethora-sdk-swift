@@ -10,6 +10,24 @@ import SwiftUI
 
 // MARK: - Main Chat Config
 
+/// Mirrors `attachments` in the web IConfig.
+public struct AttachmentsConfig: Equatable {
+    /// How many files one message may carry. Capped at 10, the hard limit of the stanza payload.
+    public var maxFiles: Int?
+    /// Per-file ceiling in MB. Nil skips the client-side size check.
+    public var maxFileSizeMb: Double?
+
+    public init(maxFiles: Int? = nil, maxFileSizeMb: Double? = nil) {
+        self.maxFiles = maxFiles
+        self.maxFileSizeMb = maxFileSizeMb
+    }
+
+    /// Effective file count limit, 1 to 10.
+    public var fileLimit: Int {
+        min(MessageAttachments.maxPerMessage, max(1, maxFiles ?? MessageAttachments.maxPerMessage))
+    }
+}
+
 public struct ChatConfig {
     public var appId: String?
 
@@ -106,6 +124,9 @@ public struct ChatConfig {
     
     // Video and audio calls (off by default)
     public var videoCalls: VideoCallsConfig?
+
+    // Attachments (multi-file sends). Unset: up to 10 files, no size check.
+    public var attachments: AttachmentsConfig?
 
     // Typing Indicator
     public var disableTypingIndicator: Bool?
