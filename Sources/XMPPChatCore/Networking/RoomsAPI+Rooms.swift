@@ -81,11 +81,16 @@ extension RoomsAPI {
 
     // MARK: - Create Private Room
 
-    /// Create a private room
+    /// Create (or resolve) the 1:1 room with `username`.
     /// POST /chats/private
+    ///
+    /// `e2ee` picks the encrypted variant of the pair's room (a separate room
+    /// on the backend). The field is left out of the body unless it is true,
+    /// so the default request matches what older backends accept (web does the same).
     public static func postPrivateRoom(
         username: String,
         title: String = "Private chat",
+        e2ee: Bool = false,
         baseURL: URL? = nil,
         appId: String? = nil,
         didRefresh: Bool = false
@@ -93,11 +98,7 @@ extension RoomsAPI {
         let resolvedBaseURL = try await AppConfig.resolveBaseURL(baseURL)
         let url = resolvedBaseURL.appendingPathComponent("chats/private")
 
-        struct PostPrivateRoomBody: Codable {
-            let username: String
-        }
-
-        let body = PostPrivateRoomBody(username: username)
+        let body = PostPrivateRoomBody(username: username, e2ee: e2ee ? true : nil)
 
         struct PostPrivateRoomResponse: Codable {
             let result: ApiRoom
@@ -112,6 +113,13 @@ extension RoomsAPI {
             didRefresh: didRefresh
         )
         return response.result
+    }
+
+    /// Request body for `POST /chats/private`. `e2ee` is nil (and so omitted)
+    /// unless the encrypted variant is asked for.
+    struct PostPrivateRoomBody: Codable, Equatable {
+        let username: String
+        let e2ee: Bool?
     }
 
     // MARK: - Get Room By Name

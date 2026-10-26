@@ -21,8 +21,14 @@ public struct User: Codable, Identifiable, Equatable {
     public var profileImage: String?
     public var username: String?
     public var xmppPassword: String?
+    /// File-service token (`ft`) appended to secure file URLs, refreshed with the access token. Optional.
+    public var fileToken: String?
     public var xmppUsername: String?
     public var langSource: String?
+    /// Profile interface language (`appLanguage`), set by the language settings.
+    public var appLanguage: String?
+    /// Profile chat language (`chatLanguage`), what messages are translated into.
+    public var chatLanguage: String?
     public var homeScreen: String?
     public var registrationChannelType: String?
     public var updatedAt: String?
@@ -50,6 +56,8 @@ public struct User: Codable, Identifiable, Equatable {
         xmppPassword: String? = nil,
         xmppUsername: String? = nil,
         langSource: String? = nil,
+        appLanguage: String? = nil,
+        chatLanguage: String? = nil,
         homeScreen: String? = nil,
         registrationChannelType: String? = nil,
         updatedAt: String? = nil,
@@ -59,7 +67,8 @@ public struct User: Codable, Identifiable, Equatable {
         isProfileOpen: Bool? = nil,
         isAssetsOpen: Bool? = nil,
         isAgreeWithTerms: Bool? = nil,
-        isSuperAdmin: Bool? = nil
+        isSuperAdmin: Bool? = nil,
+        fileToken: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -76,6 +85,8 @@ public struct User: Codable, Identifiable, Equatable {
         self.xmppPassword = xmppPassword
         self.xmppUsername = xmppUsername
         self.langSource = langSource
+        self.appLanguage = appLanguage
+        self.chatLanguage = chatLanguage
         self.homeScreen = homeScreen
         self.registrationChannelType = registrationChannelType
         self.updatedAt = updatedAt
@@ -86,6 +97,7 @@ public struct User: Codable, Identifiable, Equatable {
         self.isAssetsOpen = isAssetsOpen
         self.isAgreeWithTerms = isAgreeWithTerms
         self.isSuperAdmin = isSuperAdmin
+        self.fileToken = fileToken
     }
     
     public var fullName: String {

@@ -55,6 +55,21 @@ public struct Message: Codable, Identifiable, Equatable {
     public var xmppId: String?
     public var xmppFrom: String?
     public var waveForm: String? // Waveform data for audio messages
+    /// XEP-0184 delivery receipts for an outgoing message: sender nickname to
+    /// receipt time (ms). Empty or nil until someone else's client acks it.
+    public var receivedBy: [String: Int64]?
+    /// Every file of a multi-file media message (the `attachments` attribute). Nil for text and for media
+    /// messages that carry one file in the flat fields; read `mediaAttachments` for the full list either way.
+    public var attachments: [MessageAttachment]?
+    /// Text typed with the files. Travels on the media message itself, never as a separate message.
+    public var caption: String?
+    /// Set on call-log rows (call-state with log data). Rendered as a centered
+    /// call entry, not a bubble. See CallLogFormatter.
+    public var callLog: CallLogMeta? = nil
+    /// End-to-end encryption: the attachment keys of a sealed media message (E2EE rooms).
+    public var e2eeKeys: [String]?
+    /// True when the attachments of this message are sealed (client-side encrypted).
+    public var clientEncrypted: Bool?
     
     public init(
         id: String,
@@ -89,7 +104,10 @@ public struct Message: Codable, Identifiable, Equatable {
         xmppId: String? = nil,
         xmppFrom: String? = nil,
         waveForm: String? = nil,
-        wasEdited: Bool? = nil
+        wasEdited: Bool? = nil,
+        receivedBy: [String: Int64]? = nil,
+        attachments: [MessageAttachment]? = nil,
+        caption: String? = nil
     ) {
         self.id = id
         self.user = user
@@ -124,18 +142,27 @@ public struct Message: Codable, Identifiable, Equatable {
         self.xmppId = xmppId
         self.xmppFrom = xmppFrom
         self.waveForm = waveForm
+        self.receivedBy = receivedBy
+        self.attachments = attachments
+        self.caption = caption
     }
 }
 
 public typealias Reply = Message
 
 public struct ReactionMessage: Codable, Equatable {
+    /// Shortcodes this reactor currently has on the message. An empty list is
+    /// kept as a removal marker so an older add arriving later cannot revive it.
     public let emoji: [String]
     public let data: [String: String]
+    /// Stanza timestamp (`<stanza-id id>`, nanoseconds) of the update that set
+    /// `emoji`. Newest timestamp wins per reactor (see `MessageReactions.apply`).
+    public var timestamp: Int64?
     
-    public init(emoji: [String], data: [String: String]) {
+    public init(emoji: [String], data: [String: String], timestamp: Int64? = nil) {
         self.emoji = emoji
         self.data = data
+        self.timestamp = timestamp
     }
 }
 

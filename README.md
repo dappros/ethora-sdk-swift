@@ -486,6 +486,30 @@ config.push = PushNotificationConfig(
 )
 ```
 
+## Calls (audio and video)
+
+Off by default. Turn on with `ChatConfig.videoCalls` (`enabled`, `livekitUrl`, `allowedRoomTypes`,
+`enableAudioCalls`). The server picks the transport per call: 1:1 chats use peer to peer WebRTC (TURN/STUN
+from the backend), group chats always use LiveKit. Public rooms never call. `allowedRoomTypes` defaults to
+`["private", "group"]`; pass `["private"]` for 1:1 only.
+
+Host app setup (required):
+
+- `Info.plist`: `NSCameraUsageDescription` and `NSMicrophoneUsageDescription`.
+- For ringing while the app is closed: the "Voice over IP" background mode (`UIBackgroundModes` = `voip`) and a
+  PushKit certificate on the backend.
+
+Optional CallKit (system call screen, lock screen answer). Opt in once at launch:
+
+```swift
+CallKitBridge.shared.enable(CallKitConfiguration(localizedName: "My App"))
+CallKitPushRegistry.shared.register()   // PushKit: registers the VoIP token and reports every VoIP push
+```
+
+A host that already owns a `PKPushRegistry` calls `CallKitBridge.shared.handleVoIPPush(payload.dictionaryPayload, completion: completion)`
+from its own delegate instead (iOS requires the CallKit report inside that callback). Without CallKit, a call
+push can still ring in the app: `CallStore.shared.applyPush(CallPush.parse(userInfo), selfXmppUsername:)`.
+
 ## Persistence and Stores
 
 ### `UserStore`

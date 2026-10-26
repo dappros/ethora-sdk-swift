@@ -47,35 +47,20 @@ public struct RoomsAPI {
             
             if let httpResponse = response as? HTTPURLResponse {
                 if httpResponse.statusCode == 401 && !didRefresh {
-                    let refreshToken = await MainActor.run {
-                        UserStore.shared.refreshToken
-                    }
-                    
-                    guard let refreshToken = refreshToken else {
-                        throw RoomsAPIError.httpError(401, "Token expired and no refresh token available")
-                    }
-                    
+                    // One rotation through the shared `AuthRefresh` point, then one retry.
                     do {
-                        let (newToken, newRefreshToken) = try await AuthAPI.refreshToken(
-                            refreshToken: refreshToken,
-                            baseURL: baseURL
-                        )
-                        
-                        await MainActor.run {
-                            UserStore.shared.updateTokens(token: newToken, refreshToken: newRefreshToken)
-                        }
-                        
-                        return try await performRequest(
-                            url: url,
-                            method: method,
-                            body: body,
-                            baseURL: baseURL,
-                            appId: appId,
-                            didRefresh: true
-                        )
+                        _ = try await AuthRefresh.shared.refresh()
                     } catch {
                         throw RoomsAPIError.httpError(401, "Token expired and refresh failed: \(error.localizedDescription)")
                     }
+                    return try await performRequest(
+                        url: url,
+                        method: method,
+                        body: body,
+                        baseURL: baseURL,
+                        appId: appId,
+                        didRefresh: true
+                    )
                 }
                 
                 if !(200..<300).contains(httpResponse.statusCode) {

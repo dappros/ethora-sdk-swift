@@ -18,6 +18,9 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
     @Published var messages: [Message] = []
     @Published var isTyping: Bool = false
     @Published var composingUsers: [String] = []
+    /// XEP-0333 read watermarks for this room: member nickname to the newest
+    /// message id they displayed. Drives the "seen" tick.
+    @Published var displayedWatermarks: [String: String] = [:]
     @Published var isEditing: Bool = false
     @Published var editText: String?
     @Published var editMessageId: String?
@@ -25,8 +28,16 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
     @Published var isLoadingMore: Bool = false  // For scroll-to-load
     @Published var isRefreshing: Bool = false  // For pull-to-refresh
     @Published var loadError: String? = nil  // Error message when loading fails
+    // Jump to an archived message (see ChatRoomViewModel+Jump.swift)
+    @Published var jumpWindow: [Message]? = nil  // Window shown instead of the live list
+    @Published var jumpScrollTarget: String? = nil  // Message id the list should scroll to
+    @Published var highlightedMessageId: String? = nil
+    @Published var jumpNotice: String? = nil
+    var pendingJumpSubscription: AnyCancellable?
+    var jumpTask: Task<Void, Never>?
+    var jumpNoticeTask: Task<Void, Never>?
     
-    private let client: XMPPClient
+    let client: XMPPClient
     public let currentUserId: String
     public let config: ChatConfig?
     
@@ -59,16 +70,23 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
     /// without touching the actor-isolated `room` property.
     private let ownedRoomJID: String
 
-    /// After this many seconds of `pending == true` without server echo,
-    /// an outgoing message is treated as failed (red ⓘ + Resend/Delete).
-    /// Stamped via `Message.pendingSince`, so this rule survives app
-    /// backgrounding / kill — see `markStalePendingsFailed`.
-    private static let failedThresholdSeconds: TimeInterval = 30
+    /// Web marks an unacknowledged text send as failed after 12 s
+    /// (SEND_FAILURE_TIMEOUT_MS). Stamped via `Message.pendingSince`, so the
+    /// rule survives app backgrounding / kill: see `markStalePendingsFailed`.
+    private static let textFailedThresholdSeconds: TimeInterval = 12
 
-    /// How often the failed-state tick runs while the chat room is on
-    /// screen. 5s is enough granularity that the user doesn't perceive
-    /// a delay past 30s.
-    private static let failedTickIntervalSeconds: TimeInterval = 5
+    /// Media keeps the longer window: an upload followed by a send takes longer
+    /// than a text round trip.
+    private static let mediaFailedThresholdSeconds: TimeInterval = 30
+
+    private static func failedThreshold(for message: Message) -> TimeInterval {
+        message.isMediafile == "true" ? mediaFailedThresholdSeconds : textFailedThresholdSeconds
+    }
+
+    /// How often the failed-state tick runs while the chat room is on screen.
+    /// A check over a few hundred messages is cheap, and 1 s keeps a 12 s
+    /// threshold close to exact.
+    private static let failedTickIntervalSeconds: TimeInterval = 1
 
     public init(room: Room, client: XMPPClient, currentUserId: String, config: ChatConfig? = nil) {
         self.room = room
@@ -76,11 +94,13 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
         self.currentUserId = currentUserId
         self.config = config
         self.ownedRoomJID = room.jid
+        self.displayedWatermarks = RoomStore.shared.rooms[room.jid]?.lastDisplayedByUser ?? [:]
 
         // Load cached messages immediately
         loadCachedMessages()
 
         setupObservers()
+        observePendingJumps()
 
         // Catch up on cache: any pending message older than the threshold
         // — including one left behind by a previous app launch that was
@@ -125,6 +145,29 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
             name: NSNotification.Name("XMPPComposingChanged"),
             object: nil
         )
+
+        // Delivery receipts (XEP-0184) and read markers (XEP-0333)
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleReceiptNotification(_:)),
+            name: NSNotification.Name("XMPPReceiptReceived"),
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleDisplayedMarkerNotification(_:)),
+            name: NSNotification.Name("XMPPDisplayedMarker"),
+            object: nil
+        )
+
+        // A read marker goes out once the list settles and the app is in front.
+        $messages
+            .dropFirst()
+            .sink { [weak self] _ in self?.scheduleDisplayedMarker() }
+            .store(in: &cancellables)
+        NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)
+            .sink { [weak self] _ in self?.scheduleDisplayedMarker() }
+            .store(in: &cancellables)
         
         // Observe history complete notifications
         NotificationCenter.default.addObserver(
@@ -345,6 +388,85 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
         handleIncomingMessage(message)
     }
     
+    // MARK: - Receipts and Read Markers
+
+    /// Tick state for one of our outgoing messages. Other people's messages
+    /// show no tick, so callers pass `.none` for them.
+    func receiptState(for message: Message) -> ReceiptState {
+        ReceiptState.resolve(
+            for: message,
+            in: messages,
+            watermarks: displayedWatermarks,
+            selfUsername: currentUserXmppUsername ?? currentUserId
+        )
+    }
+
+    private func isThisRoom(_ jid: String) -> Bool {
+        (jid.components(separatedBy: "/").first ?? jid) == (room.jid.components(separatedBy: "/").first ?? room.jid)
+    }
+
+    @objc private func handleReceiptNotification(_ notification: Notification) {
+        guard let userInfo = notification.userInfo,
+              let roomJID = userInfo["roomJID"] as? String,
+              let messageId = userInfo["messageId"] as? String,
+              let fromXmppUsername = userInfo["fromXmppUsername"] as? String,
+              let timestamp = userInfo["timestamp"] as? Int64,
+              isThisRoom(roomJID) else {
+            return
+        }
+        Task { @MainActor in
+            self.applyReceipt(messageId: messageId, from: fromXmppUsername, timestamp: timestamp)
+        }
+    }
+
+    private func applyReceipt(messageId: String, from: String, timestamp: Int64) {
+        guard let index = messages.firstIndex(where: { $0.id == messageId || $0.xmppId == messageId }) else {
+            return
+        }
+        var receipts = messages[index].receivedBy ?? [:]
+        receipts[from] = timestamp
+        messages[index].receivedBy = receipts
+        room.messages = messages
+        MessageCache.shared.saveMessages(messages, forRoomJID: room.jid)
+    }
+
+    @objc private func handleDisplayedMarkerNotification(_ notification: Notification) {
+        guard let userInfo = notification.userInfo,
+              let roomJID = userInfo["roomJID"] as? String,
+              let xmppUsername = userInfo["xmppUsername"] as? String,
+              let messageId = userInfo["messageId"] as? String,
+              isThisRoom(roomJID), !xmppUsername.isEmpty else {
+            return
+        }
+        Task { @MainActor in
+            self.displayedWatermarks[xmppUsername] = messageId
+        }
+    }
+
+    private var displayedMarkerTask: Task<Void, Never>?
+    private var lastDisplayedMarkerSent: String?
+
+    /// Web flushMarkRead: once the list has been still for 1 s, send a read
+    /// marker for the newest message, but only when someone else wrote it.
+    private func scheduleDisplayedMarker() {
+        displayedMarkerTask?.cancel()
+        displayedMarkerTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            guard !Task.isCancelled else { return }
+            self?.sendDisplayedMarkerIfNeeded()
+        }
+    }
+
+    private func sendDisplayedMarkerIfNeeded() {
+        guard UIApplication.shared.applicationState == .active else { return }
+        guard let latest = messages.last, latest.id != lastDisplayedMarkerSent else { return }
+        let me = currentUserXmppUsername ?? currentUserId
+        let sender = latest.user.xmppUsername ?? latest.user.id
+        guard !ReceiptPolicy.isSameUser(sender, me) else { return }
+        lastDisplayedMarkerSent = latest.id
+        client.sendDisplayedMarkerStanza(messageId: latest.id, roomJid: room.jid)
+    }
+
     @objc private func handleComposingNotification(_ notification: Notification) {
         guard let userInfo = notification.userInfo,
               let notificationRoomJID = userInfo["roomJID"] as? String,
@@ -443,21 +565,22 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
         //print("👍 ChatRoomViewModel: Reaction received for message \(messageId)")
         
         // Update local messages array
+        let timestamp = userInfo["timestamp"] as? Int64
         Task { @MainActor in
             if let index = messages.firstIndex(where: { $0.id == messageId }) {
                 var updatedMessage = messages[index]
-                if updatedMessage.reaction == nil {
-                    updatedMessage.reaction = [:]
-                }
-                let fromId = from.components(separatedBy: "@").first ?? from
-                if reactions.isEmpty {
-                    updatedMessage.reaction?.removeValue(forKey: fromId)
-                } else {
-                    updatedMessage.reaction?[fromId] = ReactionMessage(emoji: reactions, data: data)
-                }
+                // Same reducer as RoomStore.setReactions: reactor localpart key,
+                // empty list is a removal, newest timestamp wins.
+                updatedMessage.reaction = MessageReactions.apply(
+                    updatedMessage.reaction,
+                    reactorKey: MessageReactions.reactorKey(fromJID: from),
+                    emoji: reactions,
+                    data: data,
+                    timestamp: timestamp
+                )
                 messages[index] = updatedMessage
                 room.messages = messages
-                
+
                 // CRITICAL: Save updated message to cache immediately
                 MessageCache.shared.saveMessages(messages, forRoomJID: room.jid)
             }
@@ -652,6 +775,8 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
             //print("⚠️ loadMoreMessages: SKIPPED - history complete")
             return
         }
+        // A jump window is not the live list, so there is no "oldest message" to page from.
+        guard !isShowingJumpWindow else { return }
         
         // Match web version EXACTLY: loadMoreMessages(firstMessage.roomJid, 30, Number(firstMessageId))
         // The 'before' parameter should be the message ID converted to number using Number()
@@ -660,6 +785,12 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
         // Use the beforeTimestamp passed from ChatRoomView (which already does Number(firstMessageId) conversion)
         // If not provided, find the first message and convert its ID
         let beforeMessageId: Int64? = {
+            // The archive cursor the server gave for the last page (web cursorRef /
+            // messageStats.firstMessageTimestamp) is the exact next page start.
+            if let stored = RoomStore.shared.rooms[room.jid]?.messageStats?.firstMessageTimestamp,
+               MamCursor.isArchiveCursor(stored) {
+                return stored
+            }
             // If beforeTimestamp was provided, use it (it's already converted from message.id)
             if let before = beforeTimestamp {
                 //print("📜 Using provided beforeTimestamp: \(before)")
@@ -804,6 +935,13 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
     
     /// Load message history from XMPP
     /// Sends get-history MAM query - messages will be received through onMessageHistory handler in StanzaHandlers
+    /// Requests one older archive page for a thread (web ThreadWrapper
+    /// loadMoreMessages). The page arrives through the normal history path, so
+    /// the thread panel sees it in `messages`.
+    public func loadThreadHistory(before: Int64, max: Int = 100) {
+        client.operations.sendGetHistory(chatJID: room.jid, max: max, before: before)
+    }
+
     public func loadMessages(max: Int = 30, before: Int64? = nil, forceReload: Bool = false) {
         // If messages are already loaded and we're not forcing a reload, just ensure they're displayed
         if messagesLoaded && !forceReload && !messages.isEmpty {
@@ -1018,6 +1156,8 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
     }
     
     public func sendMessage(_ text: String) {
+        // Sending returns the chat to the live list, as web does.
+        leaveJumpWindow()
         guard !text.isEmpty else { return }
         
         //print("🔥🔥🔥 CHATROOMVIEWMODEL.SENDMESSAGE CALLED 🔥🔥🔥")
@@ -1043,7 +1183,8 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
             photo: photo,
             walletAddress: walletAddress,
             userMessage: text,
-            customId: messageId
+            customId: messageId,
+            translateSource: LanguagePreferences.shared.outgoingTranslateSource
         )
         
         // Add message optimistically to UI (will be confirmed when received from server)
@@ -1077,20 +1218,25 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
         MessageCache.shared.saveMessages(messages, forRoomJID: room.jid)
     }
 
-    /// Send reply to a message
+    /// Send a thread reply to the message with `messageId`, when it is loaded.
     public func sendReply(messageId: String, text: String, alsoSendToMain: Bool) {
+        guard let parent = messages.first(where: { $0.id == messageId }) else { return }
+        sendReply(to: parent, text: text, alsoSendToMain: alsoSendToMain)
+    }
+
+    /// Send a thread reply (web ThreadWrapper sendMessage). One stanza: the
+    /// reply carries `isReply="true"`, `mainMessage` = the parent's JSON
+    /// (ThreadReference.mainMessageJSON) and `showInChannel` = "Also send to room".
+    public func sendReply(to parent: Message, text: String, alsoSendToMain: Bool) {
         guard !text.isEmpty else { return }
-        
-        //print("💬 ChatRoomViewModel: Sending reply to message \(messageId)")
-        
-        // Get current user info from UserStore
+
         let user = UserStore.shared.currentUser
         let firstName = user?.firstName ?? "User"
         let lastName = user?.lastName ?? "Name"
         let walletAddress = user?.walletAddress ?? ""
         let photo = user?.profileImage ?? ""
-        
-        // Send reply message with mainMessage set
+        let mainMessage = ThreadReference.mainMessageJSON(for: parent)
+
         client.operations.sendTextMessage(
             roomJID: room.jid,
             firstName: firstName,
@@ -1099,24 +1245,11 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
             walletAddress: walletAddress,
             userMessage: text,
             isReply: true,
-            mainMessage: messageId
+            showInChannel: alsoSendToMain,
+            mainMessage: mainMessage,
+            translateSource: LanguagePreferences.shared.outgoingTranslateSource
         )
-        
-        // If alsoSendToMain is true, send another message without mainMessage
-        if alsoSendToMain {
-            client.operations.sendTextMessage(
-                roomJID: room.jid,
-                firstName: firstName,
-                lastName: lastName,
-                photo: photo,
-                walletAddress: walletAddress,
-                userMessage: text,
-                isReply: false,
-                mainMessage: nil
-            )
-        }
-        
-        // Add optimistic reply message to UI
+
         let optimisticReply = Message(
             id: "pending-reply-\(Int64(Date().timeIntervalSince1970 * 1000))",
             user: User(
@@ -1133,15 +1266,16 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
             pending: true,
             pendingSince: Date(),
             timestamp: Int64(Date().timeIntervalSince1970 * 1000),
+            showInChannel: alsoSendToMain ? "true" : "false",
             isReply: true,
-            mainMessage: messageId
+            mainMessage: mainMessage
         )
-        
+
         messages.append(optimisticReply)
-        
+
         // Update room's messages array
         room.messages = messages
-        
+
         // CRITICAL: Save pending message to cache immediately so it persists even if connection is lost
         MessageCache.shared.saveMessages(messages, forRoomJID: room.jid)
     }
@@ -1181,6 +1315,15 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
         print("📥 ChatRoomViewModel.handleIncomingMessage: Received message with id: '\(message.id)', body: '\(message.body.prefix(50))', xmppId: '\(message.xmppId ?? "nil")'")
         print("   Current messages count: \(messages.count)")
         
+        // Call-log rows merge per callId (local entry and server copy), keeping the longer duration.
+        if let meta = message.callLog, !meta.callId.isEmpty,
+           let index = messages.firstIndex(where: { $0.callLog?.callId == meta.callId }) {
+            if (messages[index].callLog?.durationMs ?? 0) < meta.durationMs {
+                messages[index] = message
+            }
+            return
+        }
+
         // Match: pending message id === incoming message xmppId
         // CRITICAL: Also check for edited messages - same ID but different body
         if let existingIndex = messages.firstIndex(where: { msg in
@@ -1638,146 +1781,109 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
         )
     }
     
+    /// Sends one media message for a single file. Same wire form as before multi-file sends.
     public func sendMedia(data: Data, type: String, caption: String? = nil) {
-        print("📤 ChatRoomViewModel.sendMedia: Called with type: \(type), size: \(data.count) bytes, caption: \(caption?.isEmpty == false ? "yes" : "no")")
-        
+        sendMediaFiles([OutgoingMediaFile(data: data, mimeType: type)], caption: caption)
+    }
+
+    /// Sends one message carrying every file in `files`, in the order given, with `caption` on the message itself.
+    ///
+    /// Each file is uploaded on its own (secure route first, then the legacy one, as web does). The message is only
+    /// sent once every file is up: one failed upload stops the send rather than posting an incomplete album. Only a
+    /// multi-file message adds the `attachments` attribute; a single file goes out exactly as before.
+    public func sendMediaFiles(_ files: [OutgoingMediaFile], caption: String? = nil) {
+        let picked = Array(files.prefix(MessageAttachments.maxPerMessage))
+        print("📤 ChatRoomViewModel.sendMediaFiles: \(picked.count) file(s), caption: \(caption?.contains(where: { !$0.isWhitespace }) == true ? "yes" : "no")")
+        guard !picked.isEmpty else { return }
+
         guard let user = UserStore.shared.currentUser else {
-            print("❌ ChatRoomViewModel.sendMedia: No current user")
+            print("❌ ChatRoomViewModel.sendMediaFiles: No current user")
             return
         }
-        
+
+        let stamp = Int64(Date().timeIntervalSince1970 * 1000)
         // Generate unique message ID
-        let messageId = "send-media-message-\(Int64(Date().timeIntervalSince1970 * 1000))"
-        
+        let messageId = "send-media-message-\(stamp)"
+        // Web keeps the caption text as typed; it only drops a caption that is blank.
+        let captionText: String? = caption?.contains(where: { !$0.isWhitespace }) == true ? caption : nil
+
         Task {
             do {
-                // Convert HEIC to JPEG if needed
-                var finalData = data
-                var finalMimeType = type
-                var finalFileName = "media_\(Int64(Date().timeIntervalSince1970 * 1000))"
-                
-                #if os(iOS)
-                if type == "image/heic" || type == "image/heif" {
-                    print("🔄 ChatRoomViewModel.sendMedia: Converting HEIC to JPEG...")
-                    if let uiImage = UIImage(data: data) {
-                        if let jpegData = uiImage.jpegData(compressionQuality: 0.8) {
-                            finalData = jpegData
-                            finalMimeType = "image/jpeg"
-                            finalFileName = "\(finalFileName).jpg"
-                            print("✅ ChatRoomViewModel.sendMedia: Converted HEIC to JPEG (\(data.count) -> \(jpegData.count) bytes)")
-                        } else {
-                            print("❌ ChatRoomViewModel.sendMedia: Failed to convert HEIC to JPEG")
-                            return
-                        }
-                    } else {
-                        print("❌ ChatRoomViewModel.sendMedia: Failed to create UIImage from HEIC data")
-                        return
-                    }
-                } else {
-                    // Determine file extension from MIME type
-                    let fileExtension: String
-                    if type.starts(with: "image/") {
-                        if type.contains("png") {
-                            fileExtension = "png"
-                        } else if type.contains("gif") {
-                            fileExtension = "gif"
-                        } else {
-                            fileExtension = "jpg"
-                        }
-                    } else if type.starts(with: "video/") {
-                        fileExtension = "mp4"
-                    } else if type.contains("pdf") {
-                        fileExtension = "pdf"
-                    } else {
-                        fileExtension = "bin"
-                    }
-                    finalFileName = "\(finalFileName).\(fileExtension)"
-                }
-                #else
-                // For macOS, determine file extension from MIME type
-                let fileExtension: String
-                if type.starts(with: "image/") {
-                    if type.contains("png") {
-                        fileExtension = "png"
-                    } else if type.contains("gif") {
-                        fileExtension = "gif"
-                    } else {
-                        fileExtension = "jpg"
-                    }
-                } else if type.starts(with: "video/") {
-                    fileExtension = "mp4"
-                } else if type.contains("pdf") {
-                    fileExtension = "pdf"
-                } else {
-                    fileExtension = "bin"
-                }
-                finalFileName = "\(finalFileName).\(fileExtension)"
-                #endif
-
-                // Preprocess images to avoid backend payload limits (HTTP 413).
-                // Keep non-image files untouched.
-                if finalMimeType.hasPrefix("image/") {
-                    let targetMaxBytes = 1_900_000
-                    let optimized = optimizeImagePayload(
-                        data: finalData,
-                        mimeType: finalMimeType,
-                        maxBytes: targetMaxBytes
-                    )
-                    finalData = optimized.data
-                    finalMimeType = optimized.mimeType
-                    if !finalFileName.lowercased().hasSuffix(".jpg") && !finalFileName.lowercased().hasSuffix(".jpeg") {
-                        finalFileName = "\(finalFileName).jpg"
-                    }
-                }
-                
-                print("📤 ChatRoomViewModel.sendMedia: Final filename: \(finalFileName), MIME type: \(finalMimeType), size: \(finalData.count) bytes")
-                
-                // Upload file to server
                 guard let token = UserStore.shared.token else {
-                    print("❌ ChatRoomViewModel.sendMedia: No authentication token")
+                    print("❌ ChatRoomViewModel.sendMediaFiles: No authentication token")
                     return
                 }
-                
+
                 let uploadBaseURL: URL
                 do {
                     uploadBaseURL = try Self.resolvedUploadBaseURL()
                 } catch {
-                    print("❌ ChatRoomViewModel.sendMedia: \(error.localizedDescription)")
+                    print("❌ ChatRoomViewModel.sendMediaFiles: \(error.localizedDescription)")
                     return
                 }
 
-                print("📤 ChatRoomViewModel.sendMedia: Uploading file \(finalFileName) (\(finalData.count) bytes) to server...")
-                let uploadResponse: UploadResponse
-                if finalMimeType.hasPrefix("image/") {
-                    uploadResponse = try await uploadImageWith413Fallback(
-                        initialData: finalData,
-                        fileName: finalFileName,
-                        mimeType: finalMimeType,
-                        baseURL: uploadBaseURL,
-                        token: token
-                    )
-                } else {
-                    uploadResponse = try await AuthAPI.uploadFile(
-                        fileData: finalData,
-                        fileName: finalFileName,
-                        mimeType: finalMimeType,
-                        baseURL: uploadBaseURL,
-                        token: token
-                    )
+                // The secure route names the file store after the room, as web does (`chatName`).
+                let chatName = room.jid.split(separator: "@").first.map(String.init) ?? room.jid
+
+                var results: [UploadResult] = []
+                var attachments: [MessageAttachment] = []
+                // E2EE: in an e2ee room every file is sealed before it leaves the device. The server
+                // gets opaque bytes under a random name, and the keys ride in the encrypted message.
+                let sealFiles = await E2EE.isRoomEncrypted(room.jid)
+                var sealedKeys: [String] = []
+                for (index, file) in picked.enumerated() {
+                    guard var prepared = prepareUpload(file, index: index, stamp: stamp) else {
+                        print("❌ ChatRoomViewModel.sendMediaFiles: Could not prepare file \(index + 1) (\(file.mimeType))")
+                        return
+                    }
+                    print("📤 ChatRoomViewModel.sendMediaFiles: Uploading \(prepared.fileName) (\(prepared.data.count) bytes) to server...")
+                    let response: UploadResponse
+                    if sealFiles {
+                        let sealed = try E2EE.sealFileForUpload(
+                            bytes: prepared.data,
+                            mimetype: prepared.mimeType,
+                            originalName: prepared.fileName
+                        )
+                        prepared = PreparedUpload(
+                            data: sealed.ciphertext,
+                            mimeType: "application/octet-stream",
+                            fileName: sealed.filename
+                        )
+                        sealedKeys.append(sealed.keyMaterial)
+                        response = try await AuthAPI.uploadFile(
+                            fileData: prepared.data,
+                            fileName: prepared.fileName,
+                            mimeType: prepared.mimeType,
+                            baseURL: uploadBaseURL,
+                            token: token,
+                            chatName: chatName,
+                            clientEncrypted: true
+                        )
+                    } else {
+                        response = try await uploadPrepared(
+                            prepared,
+                            baseURL: uploadBaseURL,
+                            token: token,
+                            chatName: chatName
+                        )
+                    }
+                    guard let result = response.results.first,
+                          let attachment = MessageAttachments.fromUpload(result) else {
+                        print("❌ ChatRoomViewModel.sendMediaFiles: No upload result for file \(index + 1)")
+                        return
+                    }
+                    results.append(result)
+                    attachments.append(attachment)
                 }
-                
-                guard let uploadResult = uploadResponse.results.first else {
-                    print("❌ ChatRoomViewModel.sendMedia: No upload result in response")
-                    return
-                }
-                
+
+                guard let uploadResult = results.first else { return }
                 guard let resultId = uploadResult._id,
                       let resultFilename = uploadResult.filename,
                       let resultMimetype = uploadResult.mimetype,
                       let resultSize = uploadResult.size,
                       let resultLocation = uploadResult.location,
                       let resultCreatedAt = uploadResult.createdAt else {
-                    print("❌ ChatRoomViewModel.sendMedia: Missing required fields in upload result")
+                    print("❌ ChatRoomViewModel.sendMediaFiles: Missing required fields in upload result")
                     print("   _id: \(uploadResult._id ?? "nil")")
                     print("   filename: \(uploadResult.filename ?? "nil")")
                     print("   mimetype: \(uploadResult.mimetype ?? "nil")")
@@ -1786,15 +1892,17 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
                     print("   createdAt: \(uploadResult.createdAt ?? "nil")")
                     return
                 }
-                
-                print("✅ ChatRoomViewModel.sendMedia: File uploaded successfully")
+
+                print("✅ ChatRoomViewModel.sendMediaFiles: \(attachments.count) file(s) uploaded")
                 print("   Location: \(resultLocation)")
                 print("   ID: \(resultId)")
                 print("   Filename: \(resultFilename)")
                 print("   Size: \(resultSize) bytes")
-                
+
+                // Several files: the full list rides in `attachments`, the flat fields describe the first one.
+                let multiAttachments: [MessageAttachment]? = attachments.count > 1 ? attachments : nil
+
                 // Create media message data
-                // Convert size from Int to String for MediaMessageData
                 // Convert expiresAt from Int to String (0 means no expiration, or timestamp)
                 let expiresAtString: String?
                 if let expiresAt = uploadResult.expiresAt {
@@ -1802,8 +1910,8 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
                 } else {
                     expiresAtString = nil
                 }
-                
-                let mediaData = MediaMessageData(
+
+                var mediaData = MediaMessageData(
                     firstName: user.firstName ?? "",
                     lastName: user.lastName ?? "",
                     walletAddress: user.walletAddress ?? "",
@@ -1825,7 +1933,10 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
                     attachmentId: resultId,
                     roomJid: room.jid
                 )
-                
+                mediaData.attachments = multiAttachments
+                mediaData.caption = captionText
+                mediaData.e2eeKeys = sealedKeys.isEmpty ? nil : sealedKeys
+
                 // Add optimistic media message immediately (web parity).
                 // This guarantees the user sees the image even if server echo is delayed.
                 let optimisticMediaMessage = Message(
@@ -1852,9 +1963,11 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
                     fileName: resultFilename,
                     originalName: uploadResult.originalname ?? resultFilename,
                     size: String(resultSize),
-                    xmppId: messageId
+                    xmppId: messageId,
+                    attachments: multiAttachments,
+                    caption: captionText
                 )
-                
+
                 if !messages.contains(where: { msg in
                     msg.id == optimisticMediaMessage.id ||
                     msg.xmppId == optimisticMediaMessage.xmppId
@@ -1863,34 +1976,131 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
                     room.messages = messages
                     MessageCache.shared.saveMessages(messages, forRoomJID: room.jid)
                 }
-                
-                print("📤 ChatRoomViewModel.sendMedia: Sending media message via XMPP to room: \(room.jid)")
-                
-                // Send media message via XMPP
+
+                print("📤 ChatRoomViewModel.sendMediaFiles: Sending media message via XMPP to room: \(room.jid)")
+
+                // Send media message via XMPP. The caption rides on this message; it is never sent as text of its own.
                 client.operations.sendMediaMessage(
                     roomJID: room.jid,
                     data: mediaData,
                     id: messageId
                 )
-                
-                print("✅ ChatRoomViewModel.sendMedia: Media message sent via XMPP")
+
+                print("✅ ChatRoomViewModel.sendMediaFiles: Media message sent via XMPP")
 
                 // In some server paths media echo/ack can be delayed or omitted.
                 // Avoid indefinite "sending..." state for successfully uploaded files.
                 scheduleMediaPendingResolution(messageId: messageId, timeoutSeconds: 8)
 
-                // If the user typed a caption alongside the attachment, send it as a
-                // separate text message AFTER the media stanza so order is preserved
-                // on the wire (media first, then text).
-                if let caption = caption?.trimmingCharacters(in: .whitespacesAndNewlines), !caption.isEmpty {
-                    self.sendMessage(caption)
-                }
-
             } catch {
-                print("❌ ChatRoomViewModel.sendMedia: Error - \(error.localizedDescription)")
+                print("❌ ChatRoomViewModel.sendMediaFiles: Error - \(error.localizedDescription)")
                 print("   Error details: \(error)")
             }
         }
+    }
+
+    /// One picked file as it goes on the wire: HEIC converted, images compressed, a name with an extension.
+    private struct PreparedUpload {
+        let data: Data
+        let mimeType: String
+        let fileName: String
+    }
+
+    private func prepareUpload(_ file: OutgoingMediaFile, index: Int, stamp: Int64) -> PreparedUpload? {
+        var data = file.data
+        var mimeType = file.mimeType
+        var fileName = file.fileName.map(Self.safeUploadFileName) ?? "media_\(stamp)_\(index)"
+
+        #if os(iOS)
+        if mimeType == "image/heic" || mimeType == "image/heif" {
+            print("🔄 ChatRoomViewModel.sendMediaFiles: Converting HEIC to JPEG...")
+            guard let uiImage = UIImage(data: data) else {
+                print("❌ ChatRoomViewModel.sendMediaFiles: Failed to create UIImage from HEIC data")
+                return nil
+            }
+            guard let jpegData = uiImage.jpegData(compressionQuality: 0.8) else {
+                print("❌ ChatRoomViewModel.sendMediaFiles: Failed to convert HEIC to JPEG")
+                return nil
+            }
+            data = jpegData
+            mimeType = "image/jpeg"
+            fileName = Self.replacingExtension(fileName, with: "jpg")
+            print("✅ ChatRoomViewModel.sendMediaFiles: Converted HEIC to JPEG (\(file.data.count) -> \(jpegData.count) bytes)")
+        }
+        #endif
+
+        if (fileName as NSString).pathExtension.isEmpty {
+            fileName = "\(fileName).\(Self.fileExtension(forMimeType: mimeType))"
+        }
+
+        // Preprocess images to avoid backend payload limits (HTTP 413).
+        // Keep non-image files untouched.
+        if mimeType.hasPrefix("image/") {
+            let optimized = optimizeImagePayload(
+                data: data,
+                mimeType: mimeType,
+                maxBytes: 1_900_000
+            )
+            data = optimized.data
+            mimeType = optimized.mimeType
+            if mimeType == "image/jpeg" {
+                let ext = (fileName as NSString).pathExtension.lowercased()
+                if ext != "jpg" && ext != "jpeg" {
+                    fileName = Self.replacingExtension(fileName, with: "jpg")
+                }
+            }
+        }
+
+        return PreparedUpload(data: data, mimeType: mimeType, fileName: fileName)
+    }
+
+    private func uploadPrepared(
+        _ prepared: PreparedUpload,
+        baseURL: URL,
+        token: String,
+        chatName: String
+    ) async throws -> UploadResponse {
+        if prepared.mimeType.hasPrefix("image/") {
+            return try await uploadImageWith413Fallback(
+                initialData: prepared.data,
+                fileName: prepared.fileName,
+                mimeType: prepared.mimeType,
+                baseURL: baseURL,
+                token: token,
+                chatName: chatName
+            )
+        }
+        return try await AuthAPI.uploadFile(
+            fileData: prepared.data,
+            fileName: prepared.fileName,
+            mimeType: prepared.mimeType,
+            baseURL: baseURL,
+            token: token,
+            chatName: chatName
+        )
+    }
+
+    private static func safeUploadFileName(_ name: String) -> String {
+        let cleaned = name
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "/", with: "_")
+        return cleaned.isEmpty ? "file" : cleaned
+    }
+
+    private static func fileExtension(forMimeType type: String) -> String {
+        if type.hasPrefix("image/") {
+            if type.contains("png") { return "png" }
+            if type.contains("gif") { return "gif" }
+            return "jpg"
+        }
+        if type.hasPrefix("video/") { return "mp4" }
+        if type.contains("pdf") { return "pdf" }
+        return "bin"
+    }
+
+    private static func replacingExtension(_ name: String, with ext: String) -> String {
+        let base = (name as NSString).deletingPathExtension
+        return "\(base.isEmpty ? name : base).\(ext)"
     }
 
     #if os(iOS)
@@ -1899,7 +2109,8 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
         fileName: String,
         mimeType: String,
         baseURL: URL,
-        token: String
+        token: String,
+        chatName: String
     ) async throws -> UploadResponse {
         // Try increasingly strict limits; this handles environments with low nginx body limits.
         let attemptCaps = [1_900_000, 1_200_000, 800_000, 500_000, 320_000, 200_000]
@@ -1915,7 +2126,8 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
                     fileName: fileName,
                     mimeType: candidate.mimeType,
                     baseURL: baseURL,
-                    token: token
+                    token: token,
+                    chatName: chatName
                 )
             } catch let AuthAPIError.httpError(statusCode, body) where statusCode == 413 {
                 lastError = AuthAPIError.httpError(statusCode, body)
@@ -2137,7 +2349,7 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
             // Fall back to message `date` if `pendingSince` is missing
             // (older cached messages without the new field).
             let since = m.pendingSince ?? m.date
-            if now.timeIntervalSince(since) > Self.failedThresholdSeconds {
+            if now.timeIntervalSince(since) > Self.failedThreshold(for: m) {
                 messages[index].pending = false
                 messages[index].failed = true
                 didChange = true
@@ -2204,75 +2416,57 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
         RoomStore.shared.deleteMessage(roomJID: room.jid, messageId: messageId)
     }
     
-    /// Add reaction to a message
+    /// Toggle one shortcode on a message (web handleReactionMessage). Sends the
+    /// reactor's full resulting set, then updates the local copies at once.
     public func addReaction(messageId: String, emoji: String) {
-        // Get current user info
-        guard let user = UserStore.shared.currentUser else {
-            //print("❌ Cannot add reaction: user not found")
-            return
-        }
-        
+        guard let user = UserStore.shared.currentUser else { return }
+
         let firstName = user.firstName ?? "User"
         let lastName = user.lastName ?? "Name"
-        
-        // Get current reactions for this message to toggle
+        // Reactions are keyed by the reactor's XMPP localpart, as the web SDK
+        // keys them (user.xmppUsername). The echo uses the same key.
+        let reactorKey = currentUserXmppUsername ?? currentUserId
+
         let currentMessage = messages.first { $0.id == messageId }
-        let currentReactions = currentMessage?.reaction?[currentUserId]?.emoji ?? []
-        
-        // Toggle reaction: if already reacted with this emoji, remove it; otherwise add it
-        var newReactions = currentReactions
+        var newReactions = MessageReactions.emoji(for: reactorKey, in: currentMessage?.reaction)
         if let index = newReactions.firstIndex(of: emoji) {
             newReactions.remove(at: index)
         } else {
             newReactions.append(emoji)
         }
-        
-        // Create reaction data
+
         let reactionData = ReactionData(firstName: firstName, lastName: lastName)
-        
-        // Send reaction via XMPP
         client.operations.sendMessageReaction(
             messageId: messageId,
             roomJid: room.jid,
             reactionsList: newReactions,
             data: reactionData
         )
-        
-        // Update local state optimistically
-        // Get JID from client - avoid accessing xmppStream directly due to ambiguity
-        let fromJid: String = {
-            // Access via reflection or use a helper method
-            // For now, return empty string as JID is not critical for reactions
-            return ""
-        }()
+
         let dataDict: [String: String] = [
             "senderFirstName": firstName,
             "senderLastName": lastName
         ]
-        
         RoomStore.shared.setReactions(
             roomJID: room.jid,
             messageId: messageId,
             reactions: newReactions,
-            from: fromJid,
+            from: reactorKey,
             data: dataDict
         )
-        
-        // Update local messages array
+
         if let index = messages.firstIndex(where: { $0.id == messageId }) {
             var updatedMessage = messages[index]
-            if updatedMessage.reaction == nil {
-                updatedMessage.reaction = [:]
-            }
-            let fromId = fromJid.components(separatedBy: "@").first ?? fromJid
-            if newReactions.isEmpty {
-                updatedMessage.reaction?.removeValue(forKey: fromId)
-            } else {
-                updatedMessage.reaction?[fromId] = ReactionMessage(emoji: newReactions, data: dataDict)
-            }
+            updatedMessage.reaction = MessageReactions.apply(
+                updatedMessage.reaction,
+                reactorKey: reactorKey,
+                emoji: newReactions,
+                data: dataDict,
+                timestamp: nil
+            )
             messages[index] = updatedMessage
             room.messages = messages
-            
+
             // CRITICAL: Save updated message to cache immediately
             MessageCache.shared.saveMessages(messages, forRoomJID: room.jid)
         }
@@ -2289,6 +2483,9 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
     private var isTypingActive: Bool = false
     
     public func startTyping() {
+        // Typing is sent only when the host has not disabled the indicator.
+        guard config?.disableTypingIndicator != true else { return }
+
         // Cancel any existing stop typing timer
         stopTypingTimer?.cancel()
         stopTypingTimer = nil
@@ -2311,8 +2508,7 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
             let fullName = "\(user.firstName ?? "") \(user.lastName ?? "")".trimmingCharacters(in: .whitespaces)
             
             if !fullName.isEmpty {
-                //print("⌨️ ChatRoomViewModel: Sending typing indicator")
-                client.operations.sendTypingRequest(
+                client.sendTypingRequestStanza(
                     chatId: room.jid,
                     fullName: fullName,
                     start: true
@@ -2346,8 +2542,7 @@ public class ChatRoomViewModel: ObservableObject, XMPPClientDelegate {
         let fullName = "\(user.firstName ?? "") \(user.lastName ?? "")".trimmingCharacters(in: .whitespaces)
         
         if !fullName.isEmpty {
-            //print("⌨️ ChatRoomViewModel: Sending stop typing indicator")
-            client.operations.sendTypingRequest(
+            client.sendTypingRequestStanza(
                 chatId: room.jid,
                 fullName: fullName,
                 start: false

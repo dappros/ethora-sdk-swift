@@ -103,7 +103,9 @@ public final class MessageParser {
         let body = fullData.getChild("body")?.text
         let deleted = (fullData.getChild("deleted") != nil)
         
-        // translations
+        // translations: `<translations value='{"translates":[...]}'/>` as web sends it.
+        // Entries are keyed by their `language`, and an entry missing
+        // `translatedText`, `language` or `languageName` is dropped (see web getDataFromXml).
         var translations: [String: String]? = nil
         if let tNode = fullData.getChild("translations"),
            let raw = tNode.attributes["value"],
@@ -113,10 +115,10 @@ public final class MessageParser {
 
             var map: [String: String] = [:]
             for item in arr {
-                if let lang = item["lang"] as? String,
-                   let text = item["text"] as? String {
-                    map[lang] = text
-                }
+                guard let text = item["translatedText"] as? String,
+                      let language = item["language"] as? String,
+                      item["languageName"] is String else { continue }
+                map[language] = text
             }
             translations = map.isEmpty ? nil : map
         }
@@ -203,13 +205,30 @@ public final class MessageParser {
             //print("   size: \(size ?? "nil")")
         }
 
+        // Multi-file media: the `attachments` JSON attribute carries every file, the flat fields above
+        // describe the first one. Caption is the text typed with the files (blank means no caption).
+        let parsedAttachments = MessageAttachments.parse(d.dataAttrs["attachments"])
+        let caption = d.dataAttrs["caption"].flatMap { text -> String? in
+            text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : text
+        }
+
         // Match TypeScript: createMessageFromXml doesn't filter body, but addRoomMessage does
         // So we create message with body (even if empty), and it will be filtered in handleIncomingMessage
-        return Message(
+        // Call-log rows (call-state with log data) get structured metadata.
+        // The fallback body keeps them from being dropped as empty messages.
+        let callLog: CallLogMeta? = d.dataAttrs["type"]?.lowercased() == "call-state"
+            ? CallSignaling.callLogMeta(fromAttributes: d.dataAttrs)
+            : nil
+        var bodyText = d.body ?? "" // Empty body will be filtered out in handleIncomingMessage
+        if bodyText.isEmpty, let callLog {
+            bodyText = CallLogFormatter.fallbackBody(for: callLog)
+        }
+
+        var parsed = Message(
             id: d.id,
             user: user,
             date: d.date,
-            body: d.body ?? "", // Empty body will be filtered out in handleIncomingMessage
+            body: bodyText,
             roomJid: d.roomJid,
             isSystemMessage: d.dataAttrs["isSystemMessage"],
             isMediafile: d.dataAttrs["isMediafile"],
@@ -228,8 +247,23 @@ public final class MessageParser {
             originalName: originalName,
             size: size,
             xmppId: d.xmppId,
-            xmppFrom: d.xmppFrom
+            xmppFrom: d.xmppFrom,
+            attachments: parsedAttachments.isEmpty ? nil : parsedAttachments,
+            caption: caption
         )
+        parsed.callLog = callLog
+        parsed.e2eeKeys = decodeE2eeKeys(d.dataAttrs["e2eeKeys"])
+        parsed.clientEncrypted = d.dataAttrs["clientEncrypted"] == "true"
+        return parsed
+    }
+
+    /// The `e2eeKeys` data attribute is a JSON array of base64 key materials.
+    static func decodeE2eeKeys(_ raw: String?) -> [String]? {
+        guard let raw, let data = raw.data(using: .utf8),
+              let keys = try? JSONSerialization.jsonObject(with: data) as? [String], !keys.isEmpty else {
+            return nil
+        }
+        return keys
     }
 
     private static func inferMimeType(from urlString: String) -> String? {

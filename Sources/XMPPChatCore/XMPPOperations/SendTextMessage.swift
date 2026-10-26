@@ -8,6 +8,9 @@ import Foundation
 
 public class XMPPOperations {
     internal weak var client: XMPPClient?
+
+    /// Awaited MAM answers (jump windows, time lookups), keyed by query id.
+    public let mamQueries = MamQueryRegistry()
     
     internal init(client: XMPPClient) {
         self.client = client
@@ -24,7 +27,8 @@ public class XMPPOperations {
         isReply: Bool = false,
         showInChannel: Bool = false,
         mainMessage: String? = nil,
-        customId: String? = nil
+        customId: String? = nil,
+        translateSource: String? = nil
     ) {
         let id = customId ?? (isReply ? "send-reply-message-\(Int64(Date().timeIntervalSince1970 * 1000))" : "send-text-message-\(Int64(Date().timeIntervalSince1970 * 1000))")
         
@@ -57,19 +61,63 @@ public class XMPPOperations {
             ]
         )
         
-        let bodyStanza = XMPPStanza(name: "body", text: userMessage)
+        let messageStanza = Self.buildTextMessageStanza(
+            id: id,
+            roomJID: roomJID,
+            dataStanza: dataStanza,
+            userMessage: userMessage,
+            translateSource: translateSource
+        )
         
-        let messageStanza = XMPPStanza(
+        // E2EE: in an e2ee room the body is encrypted and <data> rides beside it in the clear.
+        // If encryption fails the message goes out in clear, as the web does.
+        if E2EERuntime.isEnabled {
+            let domain = E2EEManager.accountDomain(from: stream.jid)
+            let bodyStanza = XMPPStanza(name: "body", text: userMessage)
+            Task {
+                do {
+                    if let encrypted = try await self.e2eeEncryptedStanza(
+                        roomJID: roomJID, id: id, content: [bodyStanza], cleartext: [dataStanza], domain: domain
+                    ) {
+                        stream.send(encrypted)
+                        return
+                    }
+                } catch {
+                    print("[E2EE] sending \(roomJID) in clear: \(error.localizedDescription)")
+                }
+                stream.send(messageStanza)
+            }
+            return
+        }
+
+        stream.send(messageStanza)
+    }
+
+    /// The groupchat stanza for a text send. `translateSource` adds
+    /// `<translate source="xx"/>`, which declares the sender's language so each
+    /// reader can get a translation (web sendTextMessageWithTranslateTag). It is
+    /// left out when nil, the plain send.
+    static func buildTextMessageStanza(
+        id: String,
+        roomJID: String,
+        dataStanza: XMPPStanza,
+        userMessage: String,
+        translateSource: String?
+    ) -> XMPPStanza {
+        let bodyStanza = XMPPStanza(name: "body", text: userMessage)
+        var children: [XMPPStanza] = [dataStanza, bodyStanza]
+        if let source = translateSource, !source.isEmpty {
+            children.append(XMPPStanza(name: "translate", attributes: ["source": source]))
+        }
+        return XMPPStanza(
             name: "message",
             attributes: [
                 "to": roomJID,
                 "type": "groupchat",
                 "id": id
             ],
-            children: [dataStanza, bodyStanza]
+            children: children
         )
-        
-        stream.send(messageStanza)
     }
     
     public func sendMediaMessage(
@@ -79,8 +127,63 @@ public class XMPPOperations {
     ) {
         guard let stream = client?.xmppStream else { return }
         
-        let dataAttributes: [String: String] = [
-            "senderJID": stream.jid ?? "",
+        let dataAttributes = Self.mediaDataAttributes(data: data, senderJID: stream.jid ?? "")
+        
+        let bodyStanza = XMPPStanza(name: "body", text: "media")
+        let storeStanza = XMPPStanza(name: "store", attributes: ["xmlns": "urn:xmpp:hints"])
+        let dataStanza = XMPPStanza(name: "data", attributes: dataAttributes)
+        
+        let messageStanza = XMPPStanza(
+            name: "message",
+            attributes: [
+                "id": id,
+                "type": "groupchat",
+                "from": stream.jid ?? "",
+                "to": roomJID
+            ],
+            children: [bodyStanza, storeStanza, dataStanza]
+        )
+        
+        // E2EE: a sealed attachment (keys present) only ever goes out encrypted. The keys ride
+        // in the encrypted <body>, and <data> carries clientEncrypted in the clear.
+        if let keys = data.e2eeKeys, !keys.isEmpty {
+            var sealedAttributes = dataAttributes
+            sealedAttributes["clientEncrypted"] = "true"
+            let sealedData = XMPPStanza(name: "data", attributes: sealedAttributes)
+            let payload = "{\"v\":1,\"keys\":[" + keys.map(E2EEFileEnvelope.jsonString).joined(separator: ",") + "]}"
+            let domain = E2EEManager.accountDomain(from: stream.jid)
+            Task {
+                do {
+                    guard let encrypted = try await self.e2eeEncryptedStanza(
+                        roomJID: roomJID,
+                        id: id,
+                        content: [XMPPStanza(name: "body", text: payload)],
+                        cleartext: [sealedData, storeStanza],
+                        domain: domain
+                    ) else {
+                        print("[E2EE] refusing to send sealed attachment to \(roomJID): room is not e2ee")
+                        return
+                    }
+                    stream.send(encrypted)
+                } catch {
+                    print("[E2EE] refusing to send sealed attachment to \(roomJID): \(error.localizedDescription)")
+                }
+            }
+            return
+        }
+
+        stream.send(messageStanza)
+    }
+
+    /// The `<data>` attributes of a media message (web sendMediaMessage.xmpp.ts). Pure, so the wire shape can be
+    /// tested without a stream.
+    ///
+    /// Multi-file sends add `attachments` (JSON of every file, only when there is more than one, so single-file
+    /// stanzas stay as they were) and the flat fields keep describing attachment #0. The caption rides on the
+    /// media message as `caption`, never as a separate text message, and is omitted when blank.
+    public static func mediaDataAttributes(data: MediaMessageData, senderJID: String) -> [String: String] {
+        var attributes: [String: String] = [
+            "senderJID": senderJID,
             "senderFirstName": data.firstName,
             "senderLastName": data.lastName,
             "senderWalletAddress": data.walletAddress,
@@ -110,23 +213,14 @@ public class XMPPOperations {
             "mainMessage": data.mainMessage ?? "",
             "roomJid": data.roomJid ?? ""
         ]
-        
-        let bodyStanza = XMPPStanza(name: "body", text: "media")
-        let storeStanza = XMPPStanza(name: "store", attributes: ["xmlns": "urn:xmpp:hints"])
-        let dataStanza = XMPPStanza(name: "data", attributes: dataAttributes)
-        
-        let messageStanza = XMPPStanza(
-            name: "message",
-            attributes: [
-                "id": id,
-                "type": "groupchat",
-                "from": stream.jid ?? "",
-                "to": roomJID
-            ],
-            children: [bodyStanza, storeStanza, dataStanza]
-        )
-        
-        stream.send(messageStanza)
+
+        if let attachments = data.attachments, attachments.count > 1 {
+            attributes["attachments"] = MessageAttachments.serialize(attachments)
+        }
+        if let caption = data.caption, caption.contains(where: { !$0.isWhitespace }) {
+            attributes["caption"] = caption
+        }
+        return attributes
     }
     
     public func deleteMessage(room: String, msgId: String) {
@@ -227,28 +321,7 @@ public class XMPPOperations {
         guard let stream = client?.xmppStream else { return }
         
         let id = start ? "typing-\(Int64(Date().timeIntervalSince1970 * 1000))" : "stop-typing-\(Int64(Date().timeIntervalSince1970 * 1000))"
-        
-        let composingStanza = XMPPStanza(
-            name: start ? "composing" : "paused",
-            attributes: ["xmlns": "http://jabber.org/protocol/chatstates"]
-        )
-        
-        let dataStanza = XMPPStanza(
-            name: "data",
-            attributes: ["fullName": fullName]
-        )
-        
-        let messageStanza = XMPPStanza(
-            name: "message",
-            attributes: [
-                "type": "groupchat",
-                "id": id,
-                "to": chatId
-            ],
-            children: [composingStanza, dataStanza]
-        )
-        
-        stream.send(messageStanza)
+        stream.send(XMPPChatStateStanzas.typing(chatId: chatId, fullName: fullName, start: start, id: id))
     }
 }
 
@@ -278,6 +351,13 @@ public struct MediaMessageData {
     public var showInChannel: Bool?
     public var mainMessage: String?
     public var roomJid: String?
+    /// E2EE: attachment keys of a sealed upload (see E2EEFileEnvelope). Set only in e2ee rooms.
+    public var e2eeKeys: [String]?
+    /// Every file of a multi-file send (more than one entry adds the `attachments` attribute). The flat fields
+    /// above describe the first entry.
+    public var attachments: [MessageAttachment]?
+    /// Text typed with the files, sent on the media message itself.
+    public var caption: String?
     
     public init(
         firstName: String,

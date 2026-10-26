@@ -7,6 +7,7 @@ import SwiftUI
 import XMPPChatCore
 
 struct ChatHeaderView: View {
+    @Environment(\.chatPalette) private var palette
     let room: Room
     let isTyping: Bool
     let composingUsers: [String]
@@ -14,8 +15,20 @@ struct ChatHeaderView: View {
     let currentUserId: String
     let currentUserXmppUsername: String?
     let config: ChatConfig?
+    /// Call settings (`videoCalls`). The call buttons appear only when calls are available.
+    let videoCalls: VideoCallsConfig?
     let onBack: () -> Void
     let onInfo: (() -> Void)?
+    var onSearch: (() -> Void)? = nil
+    @State private var showLanguageSheet = false
+
+    /// The globe button shows when translation is on and the host has not hidden the selector.
+    private var showsLanguageButton: Bool {
+        let translates = ConfigStore.shared.config.translates
+        return translates?.enabled == true && translates?.showLanguageSelector != false
+    }
+    /// Re-renders when a call starts or ends, so the buttons hide while busy.
+    @ObservedObject private var callStore: CallStore = .shared
     
     init(
         room: Room,
@@ -25,8 +38,10 @@ struct ChatHeaderView: View {
         currentUserId: String = "",
         currentUserXmppUsername: String? = nil,
         config: ChatConfig? = nil,
+        videoCalls: VideoCallsConfig? = nil,
         onBack: @escaping () -> Void,
-        onInfo: (() -> Void)? = nil
+        onInfo: (() -> Void)? = nil,
+        onSearch: (() -> Void)? = nil
     ) {
         self.room = room
         self.isTyping = isTyping
@@ -35,8 +50,10 @@ struct ChatHeaderView: View {
         self.currentUserId = currentUserId
         self.currentUserXmppUsername = currentUserXmppUsername
         self.config = config
+        self.videoCalls = videoCalls
         self.onBack = onBack
         self.onInfo = onInfo
+        self.onSearch = onSearch
     }
     
     // Get user names from composing user IDs
@@ -108,7 +125,7 @@ struct ChatHeaderView: View {
         } else if names.count == 2 {
             return "\(names[0]) and \(names[1]) are typing"
         } else {
-            return "\(names[0]) and \(names.count - 1) others are typing"
+            return "\(names.count) people are typing"
         }
     }
 
@@ -124,7 +141,9 @@ struct ChatHeaderView: View {
     }
     
     var body: some View {
-        let primaryColor = config?.colors?.primaryColor ?? .blue
+        let primaryColor = palette.isDark
+            ? Color(hex: palette.primaryText)
+            : (config?.colors?.primaryColor ?? .blue)
         HStack {
             if config?.chatHeaderSettings?.backButtonDisabled != true {
                 Button(action: onBack) {
@@ -171,6 +190,49 @@ struct ChatHeaderView: View {
             
             Spacer()
             
+            // Message search (only when the host enabled it and did not hide the button).
+            if let onSearch {
+                Button(action: onSearch) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.title3)
+                        .foregroundColor(primaryColor)
+                }
+                .padding(.trailing, 8)
+                .accessibilityLabel("Search messages")
+            }
+
+            if showsLanguageButton {
+                Button {
+                    showLanguageSheet = true
+                } label: {
+                    Image(systemName: "globe")
+                        .font(.title3)
+                        .foregroundColor(primaryColor)
+                }
+                .accessibilityLabel(UIStrings.t("language.select"))
+            }
+
+            if CallService.shared.canStartCall(room: room, config: videoCalls) {
+                if videoCalls?.enableAudioCalls == true {
+                    Button {
+                        Task { await CallService.shared.placeCall(room: room, kind: .audio) }
+                    } label: {
+                        Image(systemName: "phone.fill")
+                            .font(.title3)
+                            .foregroundColor(primaryColor)
+                    }
+                    .accessibilityLabel("Start audio call")
+                }
+                Button {
+                    Task { await CallService.shared.placeCall(room: room, kind: .video) }
+                } label: {
+                    Image(systemName: "video.fill")
+                        .font(.title3)
+                        .foregroundColor(primaryColor)
+                }
+                .accessibilityLabel("Start video call")
+            }
+
             if config?.chatHeaderSettings?.chatInfoButtonDisabled != true, let onInfo = onInfo {
                 Button(action: onInfo) {
                     Image(systemName: "info.circle")
@@ -180,6 +242,9 @@ struct ChatHeaderView: View {
             }
         }
         .padding()
+        .sheet(isPresented: $showLanguageSheet) {
+            TranslationLanguageSheet()
+        }
         #if os(iOS)
         .background(Color(uiColor: .systemBackground))
         #else

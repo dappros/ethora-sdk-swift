@@ -38,6 +38,10 @@ public class RoomStore: ObservableObject {
     
     // Loading text
     @Published public var loadingText: String?
+
+    /// A request to show one archived message in its room (from message search,
+    /// a notification or a link). The open chat fulfils it and clears it.
+    @Published public var pendingJump: PendingJump?
     
     // MARK: - Initialization
     
@@ -134,6 +138,12 @@ public class RoomStore: ObservableObject {
         if let usersCnt = updates.usersCnt {
             room.usersCnt = usersCnt
         }
+        if let title = updates.title {
+            room.title = title
+        }
+        if let name = updates.name {
+            room.name = name
+        }
         if let messages = updates.messages {
             room.messages = messages
         }
@@ -188,6 +198,9 @@ public class RoomStore: ObservableObject {
         if let historyComplete = updates.historyComplete {
             room.historyComplete = historyComplete
         }
+        if let muted = updates.muted {
+            room.muted = muted
+        }
         
         rooms[jid] = room
         saveToCache()
@@ -215,8 +228,20 @@ public class RoomStore: ObservableObject {
         if room.messages.contains(where: { $0.id == message.id }) {
             return
         }
+
+        // Call-log rows merge per callId. The local entry and the server copy
+        // collapse into one, and the longer duration wins.
+        if let meta = message.callLog, !meta.callId.isEmpty,
+           let index = room.messages.firstIndex(where: { $0.callLog?.callId == meta.callId }) {
+            guard (room.messages[index].callLog?.durationMs ?? 0) < meta.durationMs else { return }
+            room.messages[index] = message
+            rooms[roomJID] = room
+            saveToCache()
+            return
+        }
         
-        room.messages.append(message)
+        let stored = applyPendingReactions(to: message, roomJID: roomJID)
+        room.messages.append(stored)
         room.messages.sort { ($0.timestamp ?? 0) < ($1.timestamp ?? 0) }
         
         // Update last message
@@ -235,10 +260,30 @@ public class RoomStore: ObservableObject {
         saveToCache()
     }
     
+    /// Applies the closing `<fin>` of one paging page: moves the archive cursor
+    /// (`messageStats.firstMessageTimestamp`) and the `historyComplete` flag.
+    /// - Parameter before: the cursor the page was requested with (nil for a latest page).
+    public func applyHistoryPage(roomJID: String, before: Int64?, fin: MamCursor.Fin) {
+        guard let room = rooms[roomJID] else { return }
+        var stats = room.messageStats ?? MessageStats()
+        stats.firstMessageTimestamp = MamCursor.nextCursor(
+            current: stats.firstMessageTimestamp,
+            before: before,
+            fin: fin,
+            hadMessages: !room.messages.isEmpty
+        )
+        var update = PartialRoomUpdate()
+        update.messageStats = stats
+        update.historyComplete = fin.complete
+        updateRoom(jid: roomJID, updates: update)
+    }
+
     /// Set room messages
     public func setRoomMessages(roomJID: String, messages: [Message]) {
         guard var room = rooms[roomJID] else { return }
-        room.messages = messages.sorted { ($0.timestamp ?? 0) < ($1.timestamp ?? 0) }
+        room.messages = messages
+            .map { applyPendingReactions(to: $0, roomJID: roomJID) }
+            .sorted { ($0.timestamp ?? 0) < ($1.timestamp ?? 0) }
         rooms[roomJID] = room
         saveToCache()
     }
@@ -335,48 +380,142 @@ public class RoomStore: ObservableObject {
             originalName: originalMessage.originalName,
             size: originalMessage.size,
             xmppId: originalMessage.xmppId,
-            xmppFrom: originalMessage.xmppFrom
+            xmppFrom: originalMessage.xmppFrom,
+            waveForm: originalMessage.waveForm,
+            wasEdited: updates.wasEdited ?? originalMessage.wasEdited
         )
-        
+
         room.messages[index] = updatedMessage
         rooms[roomJID] = room
         saveToCache()
     }
-    
+
     // MARK: - Reactions
-    
-    /// Set reactions on a message
+
+    /// Set one reactor's reactions on a message (web `setReactions` reducer).
+    ///
+    /// `from` is the reactor JID; the key is its localpart. An empty
+    /// `reactions` list records a removal. A newer `timestamp` wins over an
+    /// older one for the same reactor. When the target message is not loaded
+    /// yet, the update is held and applied when that message is added.
     public func setReactions(
         roomJID: String,
         messageId: String,
         reactions: [String],
         from: String,
-        data: [String: String]
+        data: [String: String],
+        timestamp: Int64? = nil
     ) {
+        let reactorKey = MessageReactions.reactorKey(fromJID: from)
+        guard !reactorKey.isEmpty else { return }
+
         guard var room = rooms[roomJID],
               let index = room.messages.firstIndex(where: { $0.id == messageId }) else {
+            holdPendingReaction(
+                roomJID: roomJID,
+                messageId: messageId,
+                reactorKey: reactorKey,
+                update: PendingReaction(emoji: reactions, data: data, timestamp: timestamp)
+            )
             return
         }
-        
+
         var message = room.messages[index]
-        
-        if message.reaction == nil {
-            message.reaction = [:]
-        }
-        
-        let fromId = from.components(separatedBy: "@").first ?? from
-        
-        if reactions.isEmpty {
-            message.reaction?.removeValue(forKey: fromId)
-        } else {
-            message.reaction?[fromId] = ReactionMessage(emoji: reactions, data: data)
-        }
-        
+        message.reaction = MessageReactions.apply(
+            message.reaction,
+            reactorKey: reactorKey,
+            emoji: reactions,
+            data: data,
+            timestamp: timestamp
+        )
+
         room.messages[index] = message
         rooms[roomJID] = room
         saveToCache()
     }
+
+    /// A reaction whose target message has not arrived yet.
+    struct PendingReaction {
+        let emoji: [String]
+        let data: [String: String]
+        let timestamp: Int64?
+    }
+
+    /// Reactions held per room and message until the target is added. Bounded
+    /// so a room with many unresolved targets cannot grow without limit.
+    private static let maxPendingReactionTargets = 500
+    private var pendingReactions: [String: [String: [String: PendingReaction]]] = [:]
+
+    private func holdPendingReaction(roomJID: String, messageId: String, reactorKey: String, update: PendingReaction) {
+        var perRoom = pendingReactions[roomJID] ?? [:]
+        if perRoom[messageId] == nil, perRoom.count >= Self.maxPendingReactionTargets {
+            return
+        }
+        var perMessage = perRoom[messageId] ?? [:]
+        if let stored = perMessage[reactorKey]?.timestamp, let incoming = update.timestamp, stored > incoming {
+            return
+        }
+        perMessage[reactorKey] = update
+        perRoom[messageId] = perMessage
+        pendingReactions[roomJID] = perRoom
+    }
+
+    /// Applies held reactions to a message that has just been added to a room.
+    private func applyPendingReactions(to message: Message, roomJID: String) -> Message {
+        guard var perRoom = pendingReactions[roomJID],
+              let held = perRoom.removeValue(forKey: message.id) else {
+            return message
+        }
+        pendingReactions[roomJID] = perRoom.isEmpty ? nil : perRoom
+        var result = message
+        for (reactorKey, update) in held {
+            result.reaction = MessageReactions.apply(
+                result.reaction,
+                reactorKey: reactorKey,
+                emoji: update.emoji,
+                data: update.data,
+                timestamp: update.timestamp
+            )
+        }
+        return result
+    }
     
+    // MARK: - Receipts and Read Markers
+
+    /// Records a XEP-0184 delivery receipt on the matching message. Matches the
+    /// archive id or the sent id, since an outgoing message may be known by either.
+    /// Not written to the room cache on every receipt; the chat view model
+    /// persists its own copy, which carries the same field.
+    public func setReceivedReceipt(
+        roomJID: String,
+        messageId: String,
+        fromXmppUsername: String,
+        timestamp: Int64
+    ) {
+        guard !fromXmppUsername.isEmpty,
+              var room = rooms[roomJID],
+              let index = room.messages.firstIndex(where: { $0.id == messageId || $0.xmppId == messageId }) else {
+            return
+        }
+        var message = room.messages[index]
+        var receivedBy = message.receivedBy ?? [:]
+        receivedBy[fromXmppUsername] = timestamp
+        message.receivedBy = receivedBy
+        room.messages[index] = message
+        rooms[roomJID] = room
+    }
+
+    /// Records a XEP-0333 read marker: the newest message `xmppUsername` has
+    /// displayed in the room. One watermark per member, not one per message.
+    public func setDisplayedMarker(roomJID: String, xmppUsername: String, messageId: String) {
+        guard !xmppUsername.isEmpty, !messageId.isEmpty, var room = rooms[roomJID] else { return }
+        var watermarks = room.lastDisplayedByUser ?? [:]
+        watermarks[xmppUsername] = messageId
+        room.lastDisplayedByUser = watermarks
+        rooms[roomJID] = room
+        saveToCache()
+    }
+
     // MARK: - Edit Action
     
     /// Set edit action
@@ -565,6 +704,7 @@ public class RoomStore: ObservableObject {
     /// Clear all rooms
     public func clearAll() {
         rooms.removeAll()
+        pendingReactions.removeAll()
         activeRoomJID = nil
         editAction = nil
         usersSet.removeAll()
@@ -601,6 +741,8 @@ public struct ReportRoomState {
 
 public struct PartialRoomUpdate {
     public var usersCnt: Int?
+    public var title: String?
+    public var name: String?
     public var messages: [Message]?
     public var isLoading: Bool?
     public var roomBg: String?
@@ -619,6 +761,7 @@ public struct PartialRoomUpdate {
     public var role: String?
     public var messageStats: MessageStats?
     public var historyComplete: Bool?
+    public var muted: Bool?
     
     public init() {}
 }
@@ -627,6 +770,7 @@ public struct PartialMessageUpdate {
     public var body: String?
     public var isDeleted: Bool?
     public var reaction: [String: ReactionMessage]?
-    
+    public var wasEdited: Bool?
+
     public init() {}
 }

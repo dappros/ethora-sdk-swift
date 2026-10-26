@@ -13,7 +13,9 @@ import SwiftUI
 public class ConfigStore: ObservableObject {
     public static let shared = ConfigStore()
     
-    @Published public var config: ChatConfig
+    @Published public var config: ChatConfig {
+        didSet { E2EERuntime.setEnabled(config.e2ee?.enabled == true) }
+    }
     
     private let userDefaults = UserDefaults.standard
     private let configKey = "ethora_chat_config"
@@ -29,6 +31,7 @@ public class ConfigStore: ObservableObject {
         } else {
             self.config = ChatConfig()
         }
+        E2EERuntime.setEnabled(config.e2ee?.enabled == true)
     }
     
     /// Update configuration
@@ -48,6 +51,12 @@ public class ConfigStore: ObservableObject {
         }
         if let colors = partialConfig.colors {
             config.colors = colors
+        }
+        if let videoCalls = partialConfig.videoCalls {
+            config.videoCalls = videoCalls
+        }
+        if let attachments = partialConfig.attachments {
+            config.attachments = attachments
         }
         if let googleLogin = partialConfig.googleLogin {
             config.googleLogin = googleLogin
@@ -82,6 +91,15 @@ public class ConfigStore: ObservableObject {
         if let disableInteractions = partialConfig.disableInteractions {
             config.disableInteractions = disableInteractions
         }
+        if let disableReactions = partialConfig.disableReactions {
+            config.disableReactions = disableReactions
+        }
+        if let disableReplies = partialConfig.disableReplies {
+            config.disableReplies = disableReplies
+        }
+        if let reactions = partialConfig.reactions {
+            config.reactions = reactions
+        }
         if let chatHeaderBurgerMenu = partialConfig.chatHeaderBurgerMenu {
             config.chatHeaderBurgerMenu = chatHeaderBurgerMenu
         }
@@ -100,6 +118,15 @@ public class ConfigStore: ObservableObject {
         if let disableNewChatButton = partialConfig.disableNewChatButton {
             config.disableNewChatButton = disableNewChatButton
         }
+        if let disableRoomSwipeActions = partialConfig.disableRoomSwipeActions {
+            config.disableRoomSwipeActions = disableRoomSwipeActions
+        }
+        if let disableRoomMute = partialConfig.disableRoomMute {
+            config.disableRoomMute = disableRoomMute
+        }
+        if let disablePublicChatsDirectory = partialConfig.disablePublicChatsDirectory {
+            config.disablePublicChatsDirectory = disablePublicChatsDirectory
+        }
         if let roomListStyles = partialConfig.roomListStyles {
             config.roomListStyles = roomListStyles
         }
@@ -111,6 +138,15 @@ public class ConfigStore: ObservableObject {
         }
         if let bubleMessage = partialConfig.bubleMessage {
             config.bubleMessage = bubleMessage
+        }
+        if let colorScheme = partialConfig.colorScheme {
+            config.colorScheme = colorScheme
+        }
+        if let typography = partialConfig.typography {
+            config.typography = typography
+        }
+        if let supportsTablet = partialConfig.supportsTablet {
+            config.supportsTablet = supportsTablet
         }
         if let headerLogo = partialConfig.headerLogo {
             config.headerLogo = headerLogo
@@ -124,8 +160,20 @@ public class ConfigStore: ObservableObject {
         if let refreshTokens = partialConfig.refreshTokens {
             config.refreshTokens = refreshTokens
         }
+        if let pushNotifications = partialConfig.pushNotifications {
+            config.pushNotifications = pushNotifications
+        }
+        if let projectName = partialConfig.projectName {
+            config.projectName = projectName
+        }
         if let translates = partialConfig.translates {
             config.translates = translates
+        }
+        if let i18n = partialConfig.i18n {
+            config.i18n = i18n
+        }
+        if let settings = partialConfig.settings {
+            config.settings = settings
         }
         if let disableProfilesInteractions = partialConfig.disableProfilesInteractions {
             config.disableProfilesInteractions = disableProfilesInteractions
@@ -166,6 +214,9 @@ public class ConfigStore: ObservableObject {
         if let whitelistSystemMessage = partialConfig.whitelistSystemMessage {
             config.whitelistSystemMessage = whitelistSystemMessage
         }
+        if let trustedEventSenders = partialConfig.trustedEventSenders {
+            config.trustedEventSenders = trustedEventSenders
+        }
         if let disableTypingIndicator = partialConfig.disableTypingIndicator {
             config.disableTypingIndicator = disableTypingIndicator
         }
@@ -181,6 +232,12 @@ public class ConfigStore: ObservableObject {
         if let chatHeaderSettings = partialConfig.chatHeaderSettings {
             config.chatHeaderSettings = chatHeaderSettings
         }
+        if let enableMessageSearch = partialConfig.enableMessageSearch {
+            config.enableMessageSearch = enableMessageSearch
+        }
+        if let disableMessageSearch = partialConfig.disableMessageSearch {
+            config.disableMessageSearch = disableMessageSearch
+        }
         if let useStoreConsoleEnabled = partialConfig.useStoreConsoleEnabled {
             config.useStoreConsoleEnabled = useStoreConsoleEnabled
         }
@@ -192,6 +249,9 @@ public class ConfigStore: ObservableObject {
         }
         if let push = partialConfig.push {
             config.push = push
+        }
+        if let e2ee = partialConfig.e2ee {
+            config.e2ee = e2ee
         }
         
         saveConfig()
@@ -223,16 +283,21 @@ extension ChatConfig: Codable {
         case googleLogin, jwtLogin, userLogin
         case baseUrl, appId, customAppToken, xmppSettings
         case disableRooms, defaultLogin, disableInteractions
+        case disableReactions, disableReplies, reactions
         case chatHeaderBurgerMenu, forceSetRoom, setRoomJidInPath
         case disableRoomMenu, disableRoomConfig, disableNewChatButton
+        case disableRoomSwipeActions, disableRoomMute, disablePublicChatsDirectory
         case backgroundChat, bubleMessage, headerLogo
-        case translates, disableProfilesInteractions, disableUserCount
+        case colorScheme, typography, supportsTablet
+        case translates, i18n, settings, disableProfilesInteractions, disableUserCount
         case clearStoreBeforeInit, disableSentLogic, initBeforeLoad
         case newArch, qrUrl, enableRoomsRetry
-        case botMessageAutoScroll, whitelistSystemMessage
+        case botMessageAutoScroll, whitelistSystemMessage, trustedEventSenders
         case disableTypingIndicator, disableChatInfo, chatHeaderSettings
         case useStoreConsoleEnabled
-        case push
+        case push, projectName
+        case enableMessageSearch, disableMessageSearch
+        case e2ee
     }
     
     public init(from decoder: Decoder) throws {
@@ -250,16 +315,27 @@ extension ChatConfig: Codable {
         self.disableRooms = try container.decodeIfPresent(Bool.self, forKey: .disableRooms)
         self.defaultLogin = try container.decodeIfPresent(Bool.self, forKey: .defaultLogin)
         self.disableInteractions = try container.decodeIfPresent(Bool.self, forKey: .disableInteractions)
+        self.disableReactions = try container.decodeIfPresent(Bool.self, forKey: .disableReactions)
+        self.disableReplies = try container.decodeIfPresent(Bool.self, forKey: .disableReplies)
+        self.reactions = try container.decodeIfPresent(ReactionsConfig.self, forKey: .reactions)
         self.chatHeaderBurgerMenu = try container.decodeIfPresent(Bool.self, forKey: .chatHeaderBurgerMenu)
         self.forceSetRoom = try container.decodeIfPresent(Bool.self, forKey: .forceSetRoom)
         self.setRoomJidInPath = try container.decodeIfPresent(Bool.self, forKey: .setRoomJidInPath)
         self.disableRoomMenu = try container.decodeIfPresent(Bool.self, forKey: .disableRoomMenu)
         self.disableRoomConfig = try container.decodeIfPresent(Bool.self, forKey: .disableRoomConfig)
         self.disableNewChatButton = try container.decodeIfPresent(Bool.self, forKey: .disableNewChatButton)
+        self.disableRoomSwipeActions = try container.decodeIfPresent(Bool.self, forKey: .disableRoomSwipeActions)
+        self.disableRoomMute = try container.decodeIfPresent(Bool.self, forKey: .disableRoomMute)
+        self.disablePublicChatsDirectory = try container.decodeIfPresent(Bool.self, forKey: .disablePublicChatsDirectory)
         self.backgroundChat = try container.decodeIfPresent(BackgroundChatConfig.self, forKey: .backgroundChat)
         self.bubleMessage = try container.decodeIfPresent(MessageBubbleStyle.self, forKey: .bubleMessage)
+        self.colorScheme = try container.decodeIfPresent(ChatColorScheme.self, forKey: .colorScheme)
+        self.typography = try container.decodeIfPresent(TypographyConfig.self, forKey: .typography)
+        self.supportsTablet = try container.decodeIfPresent(Bool.self, forKey: .supportsTablet)
         self.headerLogo = try container.decodeIfPresent(String.self, forKey: .headerLogo)
         self.translates = try container.decodeIfPresent(TranslationsConfig.self, forKey: .translates)
+        self.i18n = try container.decodeIfPresent(I18nConfig.self, forKey: .i18n)
+        self.settings = try container.decodeIfPresent(AccountSettingsConfig.self, forKey: .settings)
         self.disableProfilesInteractions = try container.decodeIfPresent(Bool.self, forKey: .disableProfilesInteractions)
         self.disableUserCount = try container.decodeIfPresent(Bool.self, forKey: .disableUserCount)
         self.clearStoreBeforeInit = try container.decodeIfPresent(Bool.self, forKey: .clearStoreBeforeInit)
@@ -270,11 +346,16 @@ extension ChatConfig: Codable {
         self.enableRoomsRetry = try container.decodeIfPresent(EnableRoomsRetryConfig.self, forKey: .enableRoomsRetry)
         self.botMessageAutoScroll = try container.decodeIfPresent(Bool.self, forKey: .botMessageAutoScroll)
         self.whitelistSystemMessage = try container.decodeIfPresent([String].self, forKey: .whitelistSystemMessage)
+        self.trustedEventSenders = try container.decodeIfPresent([String].self, forKey: .trustedEventSenders)
         self.disableTypingIndicator = try container.decodeIfPresent(Bool.self, forKey: .disableTypingIndicator)
         self.disableChatInfo = try container.decodeIfPresent(DisableChatInfoConfig.self, forKey: .disableChatInfo)
         self.chatHeaderSettings = try container.decodeIfPresent(ChatHeaderSettingsConfig.self, forKey: .chatHeaderSettings)
         self.useStoreConsoleEnabled = try container.decodeIfPresent(Bool.self, forKey: .useStoreConsoleEnabled)
+        self.enableMessageSearch = try container.decodeIfPresent(Bool.self, forKey: .enableMessageSearch)
+        self.disableMessageSearch = try container.decodeIfPresent(Bool.self, forKey: .disableMessageSearch)
         self.push = try container.decodeIfPresent(PushNotificationConfig.self, forKey: .push)
+        self.projectName = try container.decodeIfPresent(String.self, forKey: .projectName)
+        self.e2ee = try container.decodeIfPresent(E2EEConfig.self, forKey: .e2ee)
         
         // Non-codable properties initialized to nil
         self.customLogin = nil
@@ -309,16 +390,27 @@ extension ChatConfig: Codable {
         try container.encodeIfPresent(disableRooms, forKey: .disableRooms)
         try container.encodeIfPresent(defaultLogin, forKey: .defaultLogin)
         try container.encodeIfPresent(disableInteractions, forKey: .disableInteractions)
+        try container.encodeIfPresent(disableReactions, forKey: .disableReactions)
+        try container.encodeIfPresent(disableReplies, forKey: .disableReplies)
+        try container.encodeIfPresent(reactions, forKey: .reactions)
         try container.encodeIfPresent(chatHeaderBurgerMenu, forKey: .chatHeaderBurgerMenu)
         try container.encodeIfPresent(forceSetRoom, forKey: .forceSetRoom)
         try container.encodeIfPresent(setRoomJidInPath, forKey: .setRoomJidInPath)
         try container.encodeIfPresent(disableRoomMenu, forKey: .disableRoomMenu)
         try container.encodeIfPresent(disableRoomConfig, forKey: .disableRoomConfig)
         try container.encodeIfPresent(disableNewChatButton, forKey: .disableNewChatButton)
+        try container.encodeIfPresent(disableRoomSwipeActions, forKey: .disableRoomSwipeActions)
+        try container.encodeIfPresent(disableRoomMute, forKey: .disableRoomMute)
+        try container.encodeIfPresent(disablePublicChatsDirectory, forKey: .disablePublicChatsDirectory)
         try container.encodeIfPresent(backgroundChat, forKey: .backgroundChat)
         try container.encodeIfPresent(bubleMessage, forKey: .bubleMessage)
+        try container.encodeIfPresent(colorScheme, forKey: .colorScheme)
+        try container.encodeIfPresent(typography, forKey: .typography)
+        try container.encodeIfPresent(supportsTablet, forKey: .supportsTablet)
         try container.encodeIfPresent(headerLogo, forKey: .headerLogo)
         try container.encodeIfPresent(translates, forKey: .translates)
+        try container.encodeIfPresent(i18n, forKey: .i18n)
+        try container.encodeIfPresent(settings, forKey: .settings)
         try container.encodeIfPresent(disableProfilesInteractions, forKey: .disableProfilesInteractions)
         try container.encodeIfPresent(disableUserCount, forKey: .disableUserCount)
         try container.encodeIfPresent(clearStoreBeforeInit, forKey: .clearStoreBeforeInit)
@@ -329,10 +421,15 @@ extension ChatConfig: Codable {
         try container.encodeIfPresent(enableRoomsRetry, forKey: .enableRoomsRetry)
         try container.encodeIfPresent(botMessageAutoScroll, forKey: .botMessageAutoScroll)
         try container.encodeIfPresent(whitelistSystemMessage, forKey: .whitelistSystemMessage)
+        try container.encodeIfPresent(trustedEventSenders, forKey: .trustedEventSenders)
         try container.encodeIfPresent(disableTypingIndicator, forKey: .disableTypingIndicator)
         try container.encodeIfPresent(disableChatInfo, forKey: .disableChatInfo)
         try container.encodeIfPresent(chatHeaderSettings, forKey: .chatHeaderSettings)
         try container.encodeIfPresent(useStoreConsoleEnabled, forKey: .useStoreConsoleEnabled)
+        try container.encodeIfPresent(enableMessageSearch, forKey: .enableMessageSearch)
+        try container.encodeIfPresent(disableMessageSearch, forKey: .disableMessageSearch)
         try container.encodeIfPresent(push, forKey: .push)
+        try container.encodeIfPresent(projectName, forKey: .projectName)
+        try container.encodeIfPresent(e2ee, forKey: .e2ee)
     }
 }

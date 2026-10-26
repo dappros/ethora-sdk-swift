@@ -6,16 +6,54 @@
 import Foundation
 import SwiftUI
 
+/// What a host's token rotation returns. `fileToken` and `xmppPassword`
+/// are used when present (the XMPP password is re-issued on rotation).
+public struct RefreshTokensResult {
+    public let accessToken: String
+    public let refreshToken: String?
+    public let fileToken: String?
+    public let xmppPassword: String?
+
+    public init(
+        accessToken: String,
+        refreshToken: String? = nil,
+        fileToken: String? = nil,
+        xmppPassword: String? = nil
+    ) {
+        self.accessToken = accessToken
+        self.refreshToken = refreshToken
+        self.fileToken = fileToken
+        self.xmppPassword = xmppPassword
+    }
+}
+
+/// `refreshTokens` config. When a host function is set, the SDK calls it
+/// INSTEAD of `/users/login/refresh`, always, including at bootstrap. The
+/// SDK never rotates a host-owned token itself.
 public struct RefreshTokensConfig {
     public let enabled: Bool
+    /// Legacy host rotation (access token and optional refresh token only).
     public let refreshFunction: (() async throws -> (accessToken: String, refreshToken: String?))?
-    
+    /// Host rotation that can also return `fileToken` and `xmppPassword`.
+    /// Takes precedence over `refreshFunction` when both are set.
+    public let rotate: (() async throws -> RefreshTokensResult)?
+
     public init(
         enabled: Bool,
         refreshFunction: (() async throws -> (accessToken: String, refreshToken: String?))? = nil
     ) {
         self.enabled = enabled
         self.refreshFunction = refreshFunction
+        self.rotate = nil
+    }
+
+    public init(
+        enabled: Bool,
+        rotate: @escaping () async throws -> RefreshTokensResult
+    ) {
+        self.enabled = enabled
+        self.refreshFunction = nil
+        self.rotate = rotate
     }
 }
 

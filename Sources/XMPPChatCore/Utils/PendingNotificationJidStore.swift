@@ -22,12 +22,15 @@ public enum RemoteNotificationPayload {
             }
         }
 
-        if let j = stringValue(userInfo["jid"]) { return j }
-        if let j = stringValue(userInfo["roomJid"]) { return j }
-        if let j = stringValue(userInfo["room_jid"]) { return j }
+        // Same keys as RN `handlePushPayload` (jid, chatJid, roomJid, roomJID).
+        for key in ["jid", "chatJid", "roomJid", "roomJID", "room_jid"] {
+            if let j = stringValue(userInfo[key]) { return j }
+        }
 
         if let data = userInfo["data"] as? [String: Any] {
-            if let j = stringValue(data["jid"]) { return j }
+            for key in ["jid", "chatJid", "roomJid", "roomJID"] {
+                if let j = stringValue(data[key]) { return j }
+            }
         }
 
         // Some FCM payloads nest under google.c.a.*

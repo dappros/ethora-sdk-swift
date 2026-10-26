@@ -15,8 +15,20 @@ public struct RoomInfoModal: View {
     let onEdit: (() -> Void)?
     let onLeave: (() -> Void)?
     let onDelete: (() -> Void)?
+    /// Add a member by username. Shown to moderators when set.
+    let onAddMember: ((String) async throws -> Void)?
+    /// Remove one member. Shown to moderators when set.
+    let onRemoveMember: ((RoomMember) async throws -> Void)?
+    /// Report the room (category, details).
+    let onReportRoom: ((String, String?) async throws -> Void)?
     
     @Environment(\.dismiss) var dismiss
+    @State private var showAddMember = false
+    @State private var newMemberName = ""
+    @State private var memberPendingRemoval: RoomMember?
+    @State private var showReport = false
+    @State private var actionError: String?
+    @State private var isWorking = false
     
     public init(
         room: Room,
@@ -24,8 +36,14 @@ public struct RoomInfoModal: View {
         onClose: @escaping () -> Void,
         onEdit: (() -> Void)? = nil,
         onLeave: (() -> Void)? = nil,
-        onDelete: (() -> Void)? = nil
+        onDelete: (() -> Void)? = nil,
+        onAddMember: ((String) async throws -> Void)? = nil,
+        onRemoveMember: ((RoomMember) async throws -> Void)? = nil,
+        onReportRoom: ((String, String?) async throws -> Void)? = nil
     ) {
+        self.onAddMember = onAddMember
+        self.onRemoveMember = onRemoveMember
+        self.onReportRoom = onReportRoom
         self.room = room
         self.members = members
         self.onClose = onClose
@@ -142,8 +160,26 @@ public struct RoomInfoModal: View {
                     
                     // Members List
                     VStack(alignment: .leading, spacing: 12) {
-                        Text("Members")
-                            .font(.headline)
+                        HStack {
+                            Text("Members")
+                                .font(.headline)
+                            Spacer()
+                            if canManage, onAddMember != nil {
+                                Button {
+                                    newMemberName = ""
+                                    showAddMember = true
+                                } label: {
+                                    Label("Add", systemImage: "person.badge.plus")
+                                        .font(.subheadline)
+                                }
+                                .padding(.trailing, 16)
+                            }
+                        }
+                        if let actionError {
+                            Text(actionError)
+                                .font(.footnote)
+                                .foregroundColor(.red)
+                        }
                         
                         if members.isEmpty {
                             Text("No members")
@@ -167,6 +203,17 @@ public struct RoomInfoModal: View {
                                         .font(.body)
                                     
                                     Spacer()
+
+                                    if canManage, onRemoveMember != nil, !isSelf(member) {
+                                        Button {
+                                            memberPendingRemoval = member
+                                        } label: {
+                                            Image(systemName: "person.badge.minus")
+                                                .foregroundColor(.red)
+                                        }
+                                        .accessibilityLabel("Remove member")
+                                        .padding(.trailing, 16)
+                                    }
                                 }
                                 .padding(.vertical, 4)
                             }
@@ -200,6 +247,20 @@ public struct RoomInfoModal: View {
                             }
                         }
                         
+                        if onReportRoom != nil {
+                            Button {
+                                showReport = true
+                            } label: {
+                                Text("Report Room")
+                                    .font(.headline)
+                                    .foregroundColor(.orange)
+                                    .frame(maxWidth: .infinity)
+                                    .padding()
+                                    .background(Color.orange.opacity(0.12))
+                                    .cornerRadius(12)
+                            }
+                        }
+
                         if let onDelete = onDelete {
                             Button(role: .destructive, action: onDelete) {
                                 Text("Delete Room")
@@ -224,6 +285,96 @@ public struct RoomInfoModal: View {
                     Button("Close") {
                         dismiss()
                     }
+                }
+            }
+            .sheet(isPresented: $showAddMember) { addMemberSheet }
+            .sheet(isPresented: $showReport) {
+                ReportModal(
+                    type: .room,
+                    onReport: { reason, details in
+                        guard let onReportRoom else { return }
+                        Task {
+                            do { try await onReportRoom(reason, details) } catch {
+                                actionError = error.localizedDescription
+                            }
+                        }
+                    },
+                    onClose: { showReport = false }
+                )
+            }
+            .alert(
+                "Remove member?",
+                isPresented: Binding(
+                    get: { memberPendingRemoval != nil },
+                    set: { if !$0 { memberPendingRemoval = nil } }
+                ),
+                presenting: memberPendingRemoval
+            ) { member in
+                Button("Remove", role: .destructive) {
+                    memberPendingRemoval = nil
+                    Task {
+                        do { try await onRemoveMember?(member); actionError = nil } catch {
+                            actionError = error.localizedDescription
+                        }
+                    }
+                }
+                Button("Cancel", role: .cancel) { memberPendingRemoval = nil }
+            } message: { member in
+                Text("\(getFullName(for: member)) will no longer be able to read or send messages in this chat.")
+            }
+        }
+    }
+
+    /// Only a moderator manages members (web `activeRoom.role === 'moderator'`).
+    private var canManage: Bool { room.role == "moderator" }
+
+    private func isSelf(_ member: RoomMember) -> Bool {
+        let mine = UserStore.shared.currentUser
+        return member.id == mine?.id
+            || (member.xmppUsername != nil && member.xmppUsername == mine?.xmppUsername)
+    }
+
+    private var addMemberSheet: some View {
+        NavigationView {
+            Form {
+                Section("Username") {
+                    TextField("Username of the person to add", text: $newMemberName)
+                        #if os(iOS)
+                        .textInputAutocapitalization(.never)
+                        #endif
+                        .autocorrectionDisabled(true)
+                }
+                if let actionError {
+                    Section { Text(actionError).foregroundColor(.red) }
+                }
+                Section {
+                    Button {
+                        guard let onAddMember else { return }
+                        isWorking = true
+                        Task {
+                            do {
+                                try await onAddMember(newMemberName)
+                                actionError = nil
+                                showAddMember = false
+                            } catch {
+                                actionError = error.localizedDescription
+                            }
+                            isWorking = false
+                        }
+                    } label: {
+                        Text(isWorking ? "Adding..." : "Add member")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .disabled(isWorking || newMemberName.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+            }
+            .navigationTitle("Add Member")
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            #endif
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { showAddMember = false }
                 }
             }
         }

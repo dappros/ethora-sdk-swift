@@ -51,6 +51,8 @@ public struct RoomListView: View {
     @State private var pushNavActive: Bool = false
     @State private var pushNavRoomBareJID: String?
     @State private var roomPendingLeave: Room?
+    @State private var roomPendingReport: Room?
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     public init(viewModel: RoomListViewModel, singleRoomJID: String? = nil, hideRoomList: Bool = false) {
         self.viewModel = viewModel
@@ -59,7 +61,12 @@ public struct RoomListView: View {
     }
     
     public var body: some View {
-        NavigationView {
+        let sideBySide = !hideRoomList && ChatLayoutPolicy.usesSideBySide(
+            supportsTablet: ConfigStore.shared.config.supportsTablet,
+            isPad: ChatLayoutPolicy.isPad,
+            horizontalSizeClass: horizontalSizeClass
+        )
+        chatNavigationContainer(sideBySide: sideBySide) {
             Group {
                 if hideRoomList {
                     singleRoomContent
@@ -97,6 +104,23 @@ public struct RoomListView: View {
                     tryOpenRoomFromPendingPushNotification()
                 }
             }
+            .sheet(item: $roomPendingReport) { room in
+                ReportModal(
+                    type: .room,
+                    onReport: { reason, details in
+                        let chatName = (room.jid.components(separatedBy: "/").first ?? room.jid)
+                            .components(separatedBy: "@").first ?? ""
+                        Task {
+                            _ = try? await RoomsAPI.postReportRoom(
+                                chatName: chatName,
+                                category: reason,
+                                text: details.isEmpty ? nil : details
+                            )
+                        }
+                    },
+                    onClose: { roomPendingReport = nil }
+                )
+            }
             .alert(
                 "Leave chat?",
                 isPresented: Binding(
@@ -117,9 +141,54 @@ public struct RoomListView: View {
             } message: { room in
                 Text("You will leave \"\(room.title.isEmpty ? room.name : room.title)\" and stop receiving new messages from this chat.")
             }
+            if sideBySide {
+                ChatDetailPlaceholder()
+            }
+        }
+    }
+
+    /// Side-by-side uses the columns style: the list stays on the left and the
+    /// selected chat fills the right. Otherwise the default NavigationView is kept.
+    @ViewBuilder
+    private func chatNavigationContainer<Content: View>(
+        sideBySide: Bool,
+        @ViewBuilder _ content: () -> Content
+    ) -> some View {
+        if sideBySide {
+            NavigationView(content: content).navigationViewStyle(.columns)
+        } else {
+            NavigationView(content: content)
         }
     }
     
+    /// Mutes or unmutes one chat: optimistic store update, REST call, rollback on failure.
+    private func toggleMute(_ room: Room) {
+        let chatName = (room.jid.components(separatedBy: "/").first ?? room.jid)
+            .components(separatedBy: "@").first ?? ""
+        guard !chatName.isEmpty else { return }
+        let previous = room.muted
+        let nextMuted = previous != true
+
+        var optimistic = PartialRoomUpdate()
+        optimistic.muted = nextMuted
+        RoomStore.shared.updateRoom(jid: room.jid, updates: optimistic)
+
+        Task {
+            do {
+                if nextMuted {
+                    _ = try await RoomsAPI.muteRoom(chatName: chatName)
+                } else {
+                    _ = try await RoomsAPI.unmuteRoom(chatName: chatName)
+                }
+            } catch {
+                var rollback = PartialRoomUpdate()
+                rollback.muted = previous
+                RoomStore.shared.updateRoom(jid: room.jid, updates: rollback)
+                print("[RoomList] mute toggle failed for \(chatName): \(error.localizedDescription)")
+            }
+        }
+    }
+
     @ViewBuilder
     private var roomListContent: some View {
         List {
@@ -148,10 +217,31 @@ public struct RoomListView: View {
                     }
                     .accessibilityIdentifier(RoomListAccessibilityID.roomRow)
                     .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                        Button(role: .destructive) {
-                            roomPendingLeave = room
-                        } label: {
-                            Label("Leave", systemImage: "rectangle.portrait.and.arrow.right")
+                        // Web/RN parity: disableRoomSwipeActions removes every row action.
+                        if ConfigStore.shared.config.disableRoomSwipeActions != true {
+                            // Mute only where the backend reports `muted` for the room (web isSupported).
+                            if room.muted != nil, ConfigStore.shared.config.disableRoomMute != true {
+                                Button {
+                                    toggleMute(room)
+                                } label: {
+                                    Label(
+                                        room.muted == true ? "Unmute" : "Mute",
+                                        systemImage: room.muted == true ? "bell" : "bell.slash"
+                                    )
+                                }
+                                .tint(.indigo)
+                            }
+                            Button {
+                                roomPendingReport = room
+                            } label: {
+                                Label("Report", systemImage: "exclamationmark.bubble")
+                            }
+                            .tint(.orange)
+                            Button(role: .destructive) {
+                                roomPendingLeave = room
+                            } label: {
+                                Label("Leave", systemImage: "rectangle.portrait.and.arrow.right")
+                            }
                         }
                     }
                 }
@@ -328,6 +418,7 @@ private struct RoomListModeModifier: ViewModifier {
     let hideRoomList: Bool
     @Binding var searchText: String
     @ObservedObject var viewModel: RoomListViewModel
+    @State private var showAccountSettings = false
 
     func body(content: Content) -> some View {
         if hideRoomList {
@@ -354,6 +445,24 @@ private struct RoomListModeModifier: ViewModifier {
                         }
                         .accessibilityIdentifier(RoomListAccessibilityID.createRoomButton)
                     }
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        if ConfigStore.shared.config.disablePublicChatsDirectory != true {
+                            Button(action: {
+                                viewModel.showPublicChats = true
+                            }) {
+                                Image(systemName: "globe")
+                            }
+                            .accessibilityLabel("Public chats")
+                        }
+                    }
+                    ToolbarItem(placement: .navigationBarLeading) {
+                        Button(action: {
+                            showAccountSettings = true
+                        }) {
+                            Image(systemName: "gearshape")
+                        }
+                        .accessibilityLabel(UIStrings.t("settings.menu.title"))
+                    }
                     #else
                     ToolbarItem(placement: .automatic) {
                         Button(action: {
@@ -364,6 +473,21 @@ private struct RoomListModeModifier: ViewModifier {
                         .accessibilityIdentifier(RoomListAccessibilityID.createRoomButton)
                     }
                     #endif
+                }
+                .sheet(isPresented: $showAccountSettings) {
+                    if let user = UserStore.shared.currentUser {
+                        UserSettingsModal(user: user, onUpdate: { _ in }, onClose: { showAccountSettings = false })
+                    }
+                }
+                .sheet(isPresented: $viewModel.showPublicChats) {
+                    PublicChatsView(
+                        joinedNames: viewModel.joinedRoomNames,
+                        onOpen: { chat in
+                            viewModel.showPublicChats = false
+                            viewModel.openPublicChat(chat)
+                        },
+                        onClose: { viewModel.showPublicChats = false }
+                    )
                 }
                 .sheet(isPresented: $viewModel.showNewChatModal) {
                     NewChatModal(
@@ -577,16 +701,16 @@ struct RoomListItemView: View {
         }
     }
     
-    // Generate typing text from user names
+    // Generate typing text from user names (same wording as web Composing)
     private func typingText(from names: [String]) -> String {
         if names.isEmpty {
-            return "Someone is typing..."
+            return "Someone is typing"
         } else if names.count == 1 {
-            return "\(names[0]) is typing..."
+            return "\(names[0]) is typing"
         } else if names.count == 2 {
-            return "\(names[0]) and \(names[1]) are typing..."
+            return "\(names[0]) and \(names[1]) are typing"
         } else {
-            return "\(names.count) people are typing..."
+            return "\(names.count) people are typing"
         }
     }
     
@@ -655,6 +779,7 @@ struct RoomListItemView: View {
 public class RoomListViewModel: ObservableObject {
     @Published var rooms: [Room] = []
     @Published var showNewChatModal: Bool = false
+    @Published var showPublicChats: Bool = false
     @Published var isLoading: Bool = false
     @Published var errorMessage: String?
     
@@ -908,30 +1033,8 @@ public class RoomListViewModel: ObservableObject {
                     // Update room's composing state
                     self.rooms[roomIndex].composing = true
                     self.rooms[roomIndex].composingList = filteredComposingList
-                    
-                    // Set timeout to clear composing state after 3 seconds
-                    let timer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: false) { [weak self] _ in
-                        Task { @MainActor in
-                            guard let self = self,
-                                  let roomIndex = self.rooms.firstIndex(where: { $0.jid == roomJIDKey }) else {
-                                return
-                            }
-                            
-                            // Clear composing state
-                            self.rooms[roomIndex].composing = false
-                            self.rooms[roomIndex].composingList = []
-                            
-                            // Update RoomStore
-                            var updates = PartialRoomUpdate()
-                            updates.composing = false
-                            updates.composingList = []
-                            RoomStore.shared.updateRoom(jid: roomJIDKey, updates: updates)
-                            
-                            // Trigger UI update
-                            self.objectWillChange.send()
-                        }
-                    }
-                    self.composingTimeouts[roomJIDKey] = timer
+                    // No local timer: ComposingTracker expires typers and
+                    // posts an empty list when the last one goes away.
                 } else {
                     // Clear composing state immediately
                     self.rooms[roomIndex].composing = false
@@ -1309,6 +1412,27 @@ public class RoomListViewModel: ObservableObject {
         }
     }
     
+    /// Names (JID local parts) of the chats the user is already in.
+    var joinedRoomNames: Set<String> {
+        Set(rooms.map { ($0.jid.components(separatedBy: "/").first ?? $0.jid).components(separatedBy: "@").first ?? "" })
+    }
+
+    /// Joins a public chat from the directory and queues it to be opened as soon as it is in
+    /// the list (the same hand-over a tapped push uses). A chat already joined just opens.
+    func openPublicChat(_ chat: PublicChat) {
+        let bareJid = "\(chat.name)@\(conferenceDomain)"
+        PendingNotificationJidStore.store(jid: bareJid)
+        guard !joinedRoomNames.contains(chat.name) else {
+            objectWillChange.send()
+            rooms = rooms // re-publish so the pending jid is picked up
+            return
+        }
+        Task {
+            await client.joinRoomsAndWait(roomJIDs: [bareJid])
+            loadRooms()
+        }
+    }
+
     public func createPrivateRoom(with user: User) async throws {
         guard let token = UserStore.shared.token else {
             throw NSError(domain: "RoomListViewModel", code: 401, userInfo: [NSLocalizedDescriptionKey: "Not authenticated"])

@@ -10,6 +10,24 @@ import SwiftUI
 
 // MARK: - Main Chat Config
 
+/// Mirrors `attachments` in the web IConfig.
+public struct AttachmentsConfig: Equatable {
+    /// How many files one message may carry. Capped at 10, the hard limit of the stanza payload.
+    public var maxFiles: Int?
+    /// Per-file ceiling in MB. Nil skips the client-side size check.
+    public var maxFileSizeMb: Double?
+
+    public init(maxFiles: Int? = nil, maxFileSizeMb: Double? = nil) {
+        self.maxFiles = maxFiles
+        self.maxFileSizeMb = maxFileSizeMb
+    }
+
+    /// Effective file count limit, 1 to 10.
+    public var fileLimit: Int {
+        min(MessageAttachments.maxPerMessage, max(1, maxFiles ?? MessageAttachments.maxPerMessage))
+    }
+}
+
 public struct ChatConfig {
     public var appId: String?
 
@@ -33,18 +51,31 @@ public struct ChatConfig {
     public var disableRooms: Bool?
     public var defaultLogin: Bool?
     public var disableInteractions: Bool?
+    /// RN-named switches for reactions and the "Reply" menu item (see ReactionsConfig).
+    public var disableReactions: Bool?
+    public var disableReplies: Bool?
+    public var reactions: ReactionsConfig?
     public var chatHeaderBurgerMenu: Bool?
     public var forceSetRoom: Bool?
     public var setRoomJidInPath: Bool?
     public var disableRoomMenu: Bool?
     public var disableRoomConfig: Bool?
     public var disableNewChatButton: Bool?
+    public var disableRoomSwipeActions: Bool?
+    public var disableRoomMute: Bool?
+    public var disablePublicChatsDirectory: Bool?
     
     // Styling
     public var roomListStyles: [String: Any]?
     public var chatRoomStyles: [String: Any]?
     public var backgroundChat: BackgroundChatConfig?
     public var bubleMessage: MessageBubbleStyle?
+    /// Force the chat into light or dark, or follow the OS (nil or `.system`).
+    public var colorScheme: ChatColorScheme?
+    /// Font family, base size and web-only Google Fonts keys.
+    public var typography: TypographyConfig?
+    /// Side-by-side room list and chat on iPad. Nil or true enables it; false keeps the stacked layout.
+    public var supportsTablet: Bool?
     
     // Header
     public var headerLogo: String?
@@ -60,6 +91,10 @@ public struct ChatConfig {
     
     // Translations
     public var translates: TranslationsConfig?
+
+    // Interface captions and account settings
+    public var i18n: I18nConfig?
+    public var settings: AccountSettingsConfig?
     
     // Features
     public var disableProfilesInteractions: Bool?
@@ -83,7 +118,16 @@ public struct ChatConfig {
     public var botMessageAutoScroll: Bool?
     public var messageTextFilter: MessageTextFilterConfig?
     public var whitelistSystemMessage: [String]?
+    /// Senders allowed to push `ethora-event` headlines (full jid or localpart).
+    /// Unset or empty: any bare jid on the account's own XMPP domain.
+    public var trustedEventSenders: [String]?
     
+    // Video and audio calls (off by default)
+    public var videoCalls: VideoCallsConfig?
+
+    // Attachments (multi-file sends). Unset: up to 10 files, no size check.
+    public var attachments: AttachmentsConfig?
+
     // Typing Indicator
     public var disableTypingIndicator: Bool?
     public var customTypingIndicator: CustomTypingIndicatorConfig?
@@ -95,12 +139,22 @@ public struct ChatConfig {
     public var disableChatInfo: DisableChatInfoConfig?
     public var chatHeaderSettings: ChatHeaderSettingsConfig?
     
+    // Message search (opt-in, see MessageSearchGate)
+    public var enableMessageSearch: Bool?
+    public var disableMessageSearch: Bool?
+
     // Store
     public var useStoreConsoleEnabled: Bool?
+
+    // End-to-end encryption (OMEMO 2). Off by default.
+    public var e2ee: E2EEConfig?
     
     // Notifications
     public var messageNotifications: MessageNotificationConfig?
     public var push: PushNotificationConfig?
+    public var pushNotifications: PushNotificationsConfig?
+    /// Project name sent to a push gateway (`pushNotifications.apiUrl`).
+    public var projectName: String?
     
     // Event Handlers
     public var eventHandlers: ChatEventHandlers?

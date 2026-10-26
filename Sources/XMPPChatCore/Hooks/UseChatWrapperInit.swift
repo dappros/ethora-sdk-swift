@@ -378,53 +378,13 @@ public class ChatWrapperViewModel: ObservableObject {
         }
     }
     
-    /// Execute configured token refresh logic once on startup when enabled.
+    /// Startup rotation when `refreshTokens` is enabled, then the proactive
+    /// timer. The host's `refreshFunction` (when set) replaces the built-in
+    /// endpoint. Best effort: failures are left to the regular API paths.
     private func runTokenRefreshIfNeeded(refreshTokens: RefreshTokensConfig) async {
-        // Prefer custom refresh function if provided.
-        if let refreshFn = refreshTokens.refreshFunction {
-            do {
-                let result = try await refreshFn()
-                await MainActor.run {
-                    UserStore.shared.updateTokens(
-                        token: result.accessToken,
-                        refreshToken: result.refreshToken ?? UserStore.shared.refreshToken ?? ""
-                    )
-                }
-                return
-            } catch {
-                // Silent failure – normal API flows (RoomsAPI, AuthAPI.refreshToken) already perform refresh.
-                return
-            }
-        }
-        
-        // If no custom function is provided, fall back to
-        // `AuthAPI.refreshToken`. The base URL is read from
-        // `ChatConfig.baseUrl` via `AppConfig.requireBaseURL()`; if the
-        // host hasn't configured one, refresh is skipped (we don't
-        // surface a fatal error here — startup is best-effort).
-        let baseURL: URL
-        do {
-            baseURL = try AppConfig.requireBaseURL()
-        } catch {
-            return
-        }
-        let currentRefreshToken = UserStore.shared.refreshToken
-        
-        guard let refreshToken = currentRefreshToken, !refreshToken.isEmpty else {
-            return
-        }
-        
-        do {
-            let (newToken, newRefreshToken) = try await AuthAPI.refreshToken(
-                refreshToken: refreshToken,
-                baseURL: baseURL
-            )
-            await MainActor.run {
-                UserStore.shared.updateTokens(token: newToken, refreshToken: newRefreshToken)
-            }
-        } catch {
-            // Ignore – regular API calls will surface refresh failures when needed.
-        }
+        _ = refreshTokens
+        _ = await AuthRefresh.shared.refreshQuietly(force: true)
+        AuthRefresh.shared.scheduleProactiveRefresh()
     }
     
     // MARK: - Connection Manager Integration

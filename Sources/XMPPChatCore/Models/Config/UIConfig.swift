@@ -9,10 +9,21 @@ import SwiftUI
 public struct ChatColors: Codable, Equatable {
     public let primary: String
     public let secondary: String
+    /// Own message bubble fill (web `colors.ownMessageBackground`). Nil keeps the default.
+    public let ownMessageBackground: String?
+    /// Other users' message bubble fill (web `colors.otherMessageBackground`). Nil keeps the default.
+    public let otherMessageBackground: String?
     
-    public init(primary: String, secondary: String) {
+    public init(
+        primary: String,
+        secondary: String,
+        ownMessageBackground: String? = nil,
+        otherMessageBackground: String? = nil
+    ) {
         self.primary = primary
         self.secondary = secondary
+        self.ownMessageBackground = ownMessageBackground
+        self.otherMessageBackground = otherMessageBackground
     }
     
     public var primaryColor: Color {

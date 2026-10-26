@@ -230,11 +230,11 @@ final class MessageParserTests: XCTestCase {
     // MARK: - Translations
 
     func testTranslationsJSONAttributeDecodesIntoMap() {
-        // The translations element carries a JSON blob in its `value`
-        // attribute: `{"translates":[{"lang":"en","text":"hello"}, …]}`.
-        // Decode it into a per-language map.
+        // The translations element carries a JSON blob in its `value` attribute,
+        // in the web wire shape: `{"translates":[{"translatedText", "language",
+        // "languageName"}, …]}`. Decode it into a per-language map.
         let json = """
-        {"translates":[{"lang":"en","text":"hello"},{"lang":"fr","text":"bonjour"}]}
+        {"translates":[{"translatedText":"hello","language":"en","languageName":"English"},{"translatedText":"bonjour","language":"fr","languageName":"Français"}]}
         """
         let stanza = messageStanza(body: "hola", translationsJSON: json)
         let parsed = MessageParser.getDataFromStanza(stanza)

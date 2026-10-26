@@ -19,22 +19,55 @@ struct MessageBubbleView: View {
     let onDelete: (() -> Void)?
     let onReport: (() -> Void)?
     let onMediaTap: ((Message) -> Void)?
+    /// Tap on one tile of a multi-file album: the message and the tapped file's index.
+    /// Falls back to `onMediaTap` (index 0) when not set.
+    var onAlbumTap: ((Message, Int) -> Void)? = nil
+    /// Delivery tick for our own messages (see `ReceiptState`).
+    var receiptState: ReceiptState = .sent
     /// Local-only removal for messages that were flagged failed and never
     /// reached the server. Distinct from `onDelete`, which sends `<delete/>`
     /// to the server.
     var onDiscard: (() -> Void)? = nil
+    /// Thread context: the thread panel's own list. No quote and no reply pill,
+    /// and the "Reply" menu item is hidden (web `isReply`).
+    var inThread: Bool = false
+    /// Thread replies whose parent is this message, for the reply pill.
+    var threadReplies: [Message] = []
+    /// Localpart of the current user, the key reactions are stored under.
+    var currentReactorKey: String? = nil
+    /// Opens the thread this message belongs to (or the parent, for a reply).
+    var onOpenThread: (() -> Void)? = nil
+    /// Interactions switch (`disableInteractions`): no menu and no chip taps.
+    var interactionsDisabled: Bool = false
+    /// Reactions and replies switches, from ChatConfig.
+    var reactionsEnabled: Bool = true
+    var reactionPickerEnabled: Bool = true
+    var quickReactions: [String] = EmojiShortcodes.defaultQuickReactions
+    var repliesEnabled: Bool = true
+    var accentColor: Color = .blue
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.chatPalette) private var palette
     
+
     private var bubbleStyle: MessageBubbleStyle? { ConfigStore.shared.config.bubleMessage }
-    
+
     @State private var showContextMenu = false
     @State private var showReactionPicker = false
     
     var body: some View {
+        // System messages (`isSystemMessage="true"`) render as a centered pill, not a bubble.
+        if message.isSystemMessage == "true" {
+            return AnyView(SystemMessagePill(text: message.body))
+        }
+
         if message.id == "delimiter-new" {
             return AnyView(
                 UnreadMessagesDelimiter()
             )
+        }
+
+        if let callLog = message.callLog {
+            return AnyView(CallLogRowView(callLog: callLog))
         }
         
         let isConsecutive = previousMessage?.user.id == message.user.id
@@ -62,14 +95,61 @@ struct MessageBubbleView: View {
                         .foregroundColor(isUser ? .white.opacity(0.8) : .blue)
                 }
                 
-                buildMediaOrTextContent()
+                if !inThread, let quote = quotedText {
+                    Text(quote)
+                        .font(.caption)
+                        .foregroundColor(isUser ? .white.opacity(0.85) : .secondary)
+                        .lineLimit(2)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(Color.black.opacity(isUser ? 0.15 : 0.05))
+                        )
+                        .overlay(
+                            Rectangle()
+                                .fill(accentColor)
+                                .frame(width: 3),
+                            alignment: isUser ? .trailing : .leading
+                        )
+                        .contentShape(Rectangle())
+                        .onTapGesture { onOpenThread?() }
+                }
 
-                // Reactions temporarily disabled.
-                // if let reactions = message.reaction, !reactions.isEmpty {
-                //     ReactionBadgesView(reactions: reactions)
-                //         .padding(.top, 4)
-                // }
-                
+                if message.isDeleted == true {
+                    Text("This message was deleted")
+                        .font(.callout.italic())
+                        .foregroundColor(.secondary)
+                } else {
+                    buildMediaOrTextContent()
+                }
+
+                if message.wasEdited == true, message.isDeleted != true {
+                    Text("(edited)")
+                        .font(.caption2)
+                        .foregroundColor(isUser ? .white.opacity(0.7) : .secondary)
+                }
+
+                if !inThread, !threadReplies.isEmpty {
+                    ThreadReplyPill(
+                        replies: threadReplies,
+                        isUser: isUser,
+                        accentColor: accentColor,
+                        onTap: { onOpenThread?() }
+                    )
+                }
+
+                if message.isDeleted != true, reactionsEnabled {
+                    ReactionChipsView(
+                        reactions: message.reaction,
+                        currentReactorKey: currentReactorKey,
+                        accentColor: accentColor,
+                        interactive: !interactionsDisabled,
+                        onToggle: { emoji in onReactionTap?(emoji) }
+                    )
+                }
+
                 HStack(spacing: 4) {
                     if isUser, message.failed != true, let pending = message.pending, pending {
                         Text("sending...")
@@ -89,6 +169,7 @@ struct MessageBubbleView: View {
                     if isUser {
                         MessageStatusIndicatorView(
                             message: message,
+                            receiptState: receiptState,
                             onRetry: onRetry,
                             onDiscard: onDiscard
                         )
@@ -138,18 +219,43 @@ struct MessageBubbleView: View {
                     }
                 }()
                 
-                MediaMessagePreview(
-                    message: message,
-                    mimeType: mimeType,
-                    isUser: isUser,
-                    onMediaTap: { mediaMessage in
-                        onMediaTap?(mediaMessage)
+                VStack(alignment: .leading, spacing: 6) {
+                    if message.mediaAttachments.count > 1 {
+                        AttachmentAlbumView(
+                            attachments: message.mediaAttachments,
+                            onTap: { index in
+                                if let onAlbumTap {
+                                    onAlbumTap(message, index)
+                                } else {
+                                    onMediaTap?(message)
+                                }
+                            }
+                        )
+                    } else {
+                        MediaMessagePreview(
+                            message: message,
+                            mimeType: mimeType,
+                            isUser: isUser,
+                            onMediaTap: { mediaMessage in
+                                onMediaTap?(mediaMessage)
+                            }
+                        )
                     }
-                )
+
+                    // The caption typed with the files, shown under the media.
+                    if let caption = message.caption, caption.contains(where: { !$0.isWhitespace }) {
+                        Text(caption)
+                            .font(.body)
+                            .foregroundColor(messageTextColor)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .multilineTextAlignment(isUser ? .trailing : .leading)
+                    }
+                }
             } else {
                 if message.body.lowercased() != "media" {
-                    UniversalMarkdownTextView(
-                        text: message.body,
+                    TranslatableMessageText(
+                        message: message,
+                        isUser: isUser,
                         foregroundColor: messageTextColor
                     )
                     .fixedSize(horizontal: false, vertical: true)
@@ -181,7 +287,14 @@ struct MessageBubbleView: View {
                                         },
                                         onEdit: onEdit,
                                         onDelete: onDelete,
-                                        onReport: onReport
+                                        onReport: onReport,
+                                        interactive: !interactionsDisabled && message.isDeleted != true,
+                                        showReply: !inThread && repliesEnabled,
+                                        showReactions: reactionsEnabled && message.isDeleted != true,
+                                        showPicker: reactionPickerEnabled,
+                                        quickReactions: quickReactions,
+                                        onReact: { emoji in onReactionTap?(emoji) },
+                                        onMoreReactions: { showReactionPicker = true }
                                     )
                                 }
                                 .onLongPressGesture {
@@ -206,7 +319,14 @@ struct MessageBubbleView: View {
                                         },
                                         onEdit: onEdit,
                                         onDelete: onDelete,
-                                        onReport: onReport
+                                        onReport: onReport,
+                                        interactive: !interactionsDisabled && message.isDeleted != true,
+                                        showReply: !inThread && repliesEnabled,
+                                        showReactions: reactionsEnabled && message.isDeleted != true,
+                                        showPicker: reactionPickerEnabled,
+                                        quickReactions: quickReactions,
+                                        onReact: { emoji in onReactionTap?(emoji) },
+                                        onMoreReactions: { showReactionPicker = true }
                                     )
                                 }
                                 .onLongPressGesture {
@@ -228,9 +348,24 @@ struct MessageBubbleView: View {
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 2)
+            .sheet(isPresented: $showReactionPicker) {
+                ReactionPickerSheet { emoji in
+                    onReactionTap?(emoji)
+                }
+            }
         )
     }
     
+    /// Quoted parent text for a message that answers another (web MessageReply).
+    private var quotedText: String? {
+        guard let parsed = ThreadReference.parse(message.mainMessage),
+              parsed.id != nil,
+              let text = parsed.text, !text.isEmpty else {
+            return nil
+        }
+        return text
+    }
+
     private func copyToClipboard(_ text: String) {
         #if os(iOS)
         UIPasteboard.general.string = text
@@ -244,18 +379,25 @@ struct MessageBubbleView: View {
         if let configured = bubbleStyle?.backgroundMessageUser, !configured.isEmpty {
             return Color(hex: configured)
         }
-        if let primary = ConfigStore.shared.config.colors?.primary, !primary.isEmpty {
-            let color = Color(hex: primary)
-            return colorScheme == .dark ? color.opacity(0.82) : color
+        if let own = ConfigStore.shared.config.colors?.ownMessageBackground, !own.isEmpty {
+            return Color(hex: own)
         }
-        return colorScheme == .dark
-            ? Color(red: 0.07, green: 0.42, blue: 0.84)
-            : Color.blue
+        // Dark: the palette's lifted primary keeps white text readable on a dark surface.
+        if palette.isDark {
+            return Color(hex: palette.primary)
+        }
+        if let primary = ConfigStore.shared.config.colors?.primary, !primary.isEmpty {
+            return Color(hex: primary)
+        }
+        return Color.blue
     }
     
     private func incomingBubbleBackground() -> Color {
         if let configured = bubbleStyle?.backgroundMessage, !configured.isEmpty {
             return Color(hex: configured)
+        }
+        if let other = ConfigStore.shared.config.colors?.otherMessageBackground, !other.isEmpty {
+            return Color(hex: other)
         }
         return chatIncomingBubbleBackground()
     }
@@ -276,6 +418,7 @@ struct MessageBubbleView: View {
 
 struct MessageStatusIndicatorView: View {
     let message: Message
+    var receiptState: ReceiptState = .sent
     let onRetry: (() -> Void)?
     var onDiscard: (() -> Void)? = nil
 
@@ -306,24 +449,45 @@ struct MessageStatusIndicatorView: View {
                 ProgressView()
                     .scaleEffect(0.6)
                     .frame(width: 12, height: 12)
-            } else if message.xmppId != nil {
-                ZStack {
-                    Image(systemName: "checkmark")
-                        .font(.caption2)
-                        .foregroundColor(.green)
-                        .offset(x: 0, y: 0)
-                    Image(systemName: "checkmark")
-                        .font(.caption2)
-                        .foregroundColor(.green)
-                        .offset(x: 3, y: 0)
-                }
-                .frame(width: 16, height: 12)
             } else {
-                Image(systemName: "checkmark")
-                    .font(.caption2)
-                    .foregroundColor(.white.opacity(0.7))
+                tick
             }
         }
+    }
+
+    /// Web tick rules: one check for sent, two for delivered, two in the accent
+    /// colour once seen. Nothing for a pending or failed message.
+    @ViewBuilder
+    private var tick: some View {
+        switch receiptState {
+        case .none:
+            EmptyView()
+        case .sent:
+            doubleCheck(count: 1, color: .white.opacity(0.7))
+                .accessibilityLabel("Sent")
+        case .delivered:
+            doubleCheck(count: 2, color: .white.opacity(0.7))
+                .accessibilityLabel("Delivered")
+        case .seen:
+            doubleCheck(count: 2, color: Color(red: 0.49, green: 0.70, blue: 1.0))
+                .accessibilityLabel("Read")
+        }
+    }
+
+    private func doubleCheck(count: Int, color: Color) -> some View {
+        ZStack {
+            Image(systemName: "checkmark")
+                .font(.caption2)
+                .foregroundColor(color)
+                .offset(x: 0, y: 0)
+            if count > 1 {
+                Image(systemName: "checkmark")
+                    .font(.caption2)
+                    .foregroundColor(color)
+                    .offset(x: 3, y: 0)
+            }
+        }
+        .frame(width: 16, height: 12)
     }
 }
 
@@ -335,6 +499,16 @@ struct MessageContextMenuItems: View {
     let onEdit: (() -> Void)?
     let onDelete: (() -> Void)?
     let onReport: (() -> Void)?
+    /// False when the host turned interactions off: the menu is empty.
+    var interactive: Bool = true
+    /// "Reply" is hidden inside a thread and when `disableReplies` is set.
+    var showReply: Bool = true
+    /// Reaction row (quick shortcodes, plus the full picker when `showPicker`).
+    var showReactions: Bool = false
+    var showPicker: Bool = false
+    var quickReactions: [String] = EmojiShortcodes.defaultQuickReactions
+    var onReact: ((String) -> Void)? = nil
+    var onMoreReactions: (() -> Void)? = nil
     
     private var isMediaMessage: Bool {
         let hasMediaFlag = message.isMediafile == "true"
@@ -344,21 +518,38 @@ struct MessageContextMenuItems: View {
 
     var body: some View {
         Group {
-            if let onCopy = onCopy {
-                Button(action: onCopy) {
-                    Label("Copy", systemImage: "doc.on.doc")
+            if interactive {
+                if showReactions, let onReact = onReact {
+                    ReactionQuickItems(
+                        shortcodes: quickReactions,
+                        showPicker: showPicker,
+                        onSelect: onReact,
+                        onMore: { onMoreReactions?() }
+                    )
                 }
-            }
 
-            if isUser, !isMediaMessage, let onEdit = onEdit {
-                Button(action: onEdit) {
-                    Label("Edit", systemImage: "pencil")
+                if showReply, let onReply = onReply {
+                    Button(action: onReply) {
+                        Label("Reply", systemImage: "arrowshape.turn.up.left")
+                    }
                 }
-            }
 
-            if isUser, let onDelete = onDelete {
-                Button(role: .destructive, action: onDelete) {
-                    Label("Delete", systemImage: "trash")
+                if let onCopy = onCopy {
+                    Button(action: onCopy) {
+                        Label("Copy", systemImage: "doc.on.doc")
+                    }
+                }
+
+                if isUser, !isMediaMessage, let onEdit = onEdit {
+                    Button(action: onEdit) {
+                        Label("Edit", systemImage: "pencil")
+                    }
+                }
+
+                if isUser, let onDelete = onDelete, message.isDeleted != true {
+                    Button(role: .destructive, action: onDelete) {
+                        Label("Delete", systemImage: "trash")
+                    }
                 }
             }
         }

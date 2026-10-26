@@ -37,6 +37,14 @@ public class XMPPClient {
     private let reconnectDelay: TimeInterval = 2.0
     private var reconnecting: Bool = false
     private var reconnectTimer: Timer?
+
+    /// Re-mints credentials after a SASL `not-authorized` (the XMPP password is
+    /// short-lived). Defaults to `XMPPCredentialRecovery`. Port of web `setCredentialsProvider`.
+    private var credentialsProvider: (() async -> (username: String, password: String)?)? = {
+        await XMPPCredentialRecovery.shared.recover()
+    }
+    private var authRecoveryAttempts: Int = 0
+    private let maxAuthRecoveryAttempts: Int = 3
     private var offlineReconnectAttempts: Int = 0
     private let maxOfflineReconnectAttempts: Int = 10
     private let reconnectBaseDelayMs: TimeInterval = 1.0
@@ -74,6 +82,10 @@ public class XMPPClient {
     
     // XMPP Stream
     internal var xmppStream: XMPPStream?
+
+    // OMEMO (E2EE) IQ replies waiting for their id; see E2EEXMPPClient.swift
+    internal let e2eeIQLock = NSLock()
+    internal var e2eeIQWaiters: [String: CheckedContinuation<XMPPStanza, Error>] = [:]
     
     // Stanza handlers
     internal var stanzaHandlers: StanzaHandlers?
@@ -81,6 +93,10 @@ public class XMPPClient {
     
     // Track rooms that have received presence responses (to avoid duplicate sends)
     private var roomsWithPresenceResponse: Set<String> = []
+    /// Typing state per room, expiring (see ComposingTracker).
+    private let composingTracker = ComposingTracker()
+    /// Receipts already sent for MAM catch-up messages (see HistoryReceiptLedger).
+    private var historyReceiptLedger = HistoryReceiptLedger()
 
     /// XMPP IQ / message operations (presence, history, MUC, media, …).
     public private(set) lazy var operations: XMPPOperations = XMPPOperations(client: self)
@@ -113,6 +129,23 @@ public class XMPPClient {
     }
 
     // MARK: - Public Methods
+    /// Replace the credential provider. `nil` disables SASL recovery.
+    public func setCredentialsProvider(_ provider: (() async -> (username: String, password: String)?)?) {
+        credentialsProvider = provider
+    }
+
+    /// Apply credentials minted by a recovery. The next connect uses them.
+    func updateCredentials(username: String, password: String) {
+        self.username = username
+        self.password = password
+    }
+
+    /// A SASL failure reaches the client as `XMPPStream` error 401 (see `XMPPStream+Handlers`).
+    static func isSASLAuthenticationFailure(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        return nsError.domain == "XMPPStream" && nsError.code == 401
+    }
+
     public func checkOnline() -> Bool {
         return status == .online
     }
@@ -582,6 +615,9 @@ extension XMPPClient: XMPPStreamDelegate {
     }
     
     private func handleOnlineEvent(jid: String) async {
+        // E2EE: publish this device's OMEMO keys. A no-op unless encryption is enabled.
+        Task { await E2EEManager.shared.onOnline(transport: self, jid: jid) }
+
         // Match TypeScript: this.client.on('online', async (jid) => { ... })
         do {
             // Match TypeScript: this.resource = jid.resource || 'default';
@@ -598,6 +634,7 @@ extension XMPPClient: XMPPStreamDelegate {
             
             // Match TypeScript: this.status = 'online';
             status = .online
+            authRecoveryAttempts = 0
             isConnecting = false // Connection successful, reset flag
             
             // Notify ConnectionManager
@@ -843,6 +880,11 @@ extension XMPPClient: XMPPStreamDelegate {
         // Match TypeScript: this.client.on('stanza', (stanza) => { ... })
         // Match TypeScript: this.lastActivityTs = Date.now();
         lastActivityTs = Date().timeIntervalSince1970
+
+        // E2EE: an OMEMO PEP reply resolves its waiting IQ and goes no further.
+        if e2eeConsumeIQReply(stanza) {
+            return
+        }
         
         // Match TypeScript: try { if (this.lastPingId && isPong(stanza, this.lastPingId)) { this.handlePong(); } } catch {}
         do {
@@ -853,6 +895,23 @@ extension XMPPClient: XMPPStreamDelegate {
             // Ignore errors - match TypeScript empty catch
         }
         
+        // E2EE seam. Inert unless the host turned encryption on; when a stanza carries an
+        // OMEMO payload it is decrypted off the XMPP thread and then routed as usual.
+        if E2EERuntime.isEnabled, E2EEStanza.carrierPath(stanza) != nil {
+            let domain = E2EEManager.accountDomain(from: xmppStream?.jid)
+            Task {
+                let outcome = await E2EEStanza.decryptInPlace(stanza, domain: domain)
+                switch outcome {
+                case .drop:
+                    return
+                case .notEncrypted(let plain), .decrypted(let plain), .undecryptable(let plain):
+                    self.handleStanza(plain)
+                    self.delegate?.xmppClient(self, didReceiveStanza: plain)
+                }
+            }
+            return
+        }
+
         // Match TypeScript: handleStanza.bind(this, stanza, this)();
         handleStanza(stanza)
         
@@ -898,7 +957,33 @@ extension XMPPClient: XMPPStreamDelegate {
             object: nil,
             userInfo: userInfo
         )
+        if Self.isSASLAuthenticationFailure(error),
+           credentialsProvider != nil,
+           authRecoveryAttempts < maxAuthRecoveryAttempts {
+            authRecoveryAttempts += 1
+            logStep("auth-recovery:start:\(authRecoveryAttempts)")
+            recoverCredentialsThenReconnect()
+            return
+        }
         scheduleReconnect(reason: "event:error")
+    }
+
+    /// Fetch fresh credentials, store them, then reconnect with them.
+    /// A provider that returns nothing keeps the current credentials.
+    private func recoverCredentialsThenReconnect() {
+        guard let provider = credentialsProvider else { return }
+        Task { [weak self] in
+            let fresh = await provider()
+            guard let self else { return }
+            if let fresh, !fresh.password.isEmpty {
+                self.updateCredentials(
+                    username: fresh.username.isEmpty ? self.username : fresh.username,
+                    password: fresh.password
+                )
+            }
+            self.logStep("auth-recovery:credentials-ready")
+            self.scheduleReconnect(reason: "auth-recovery")
+        }
     }
     
     private func isPong(_ stanza: XMPPStanza, pingId: String) -> Bool {
@@ -1106,6 +1191,7 @@ extension XMPPClient: XMPPStreamDelegate {
             // is idempotent (dedupe by id / xmppId), so calling it here is
             // safe for ChatRoomViewModel's own reconciliation as well.
             self.processIncomingMessage(message)
+            self.acknowledgeLiveMessage(message, roomJID: roomJID)
 
             // Unread recompute is handled inside `processIncomingMessage`
             // (above) once the cache + RoomStore are in sync. Doing it here
@@ -1146,6 +1232,7 @@ extension XMPPClient: XMPPStreamDelegate {
             // Process incoming message (save to cache, update room, etc.)
             // This ensures messages are available even if no ChatRoomViewModel is active
             self.processIncomingMessage(message)
+            self.acknowledgeHistoryMessage(message, roomJID: roomJID)
 
             // Notify delegate (for ChatRoomViewModel if active)
             //print("📤 XMPPClient: Notifying delegate about history message")
@@ -1170,33 +1257,56 @@ extension XMPPClient: XMPPStreamDelegate {
             )
         }
         
-        // Set up reaction handler
-        handlers.onReactionReceived = { [weak self] (roomJID: String, messageId: String, reactions: [String], from: String, data: [String: String]) in
-            //print("👍 XMPPClient: Reaction received in room \(roomJID) for message \(messageId)")
-            guard let self = self else { return }
-            
-            // Update RoomStore (must be on MainActor)
+        // A paging page closed by its <fin>: move the archive cursor and the
+        // history-complete flag, then tell the open chat. Without this the chat
+        // never learns the archive is exhausted and keeps asking for older pages.
+        handlers.onHistoryPageFin = { [weak self] (roomJID: String, _: String, fin: MamCursor.Fin, before: Int64?) in
+            guard self != nil else { return }
             Task { @MainActor in
-                RoomStore.shared.setReactions(
-                    roomJID: roomJID,
-                    messageId: messageId,
-                    reactions: reactions,
-                    from: from,
-                    data: data
-                )
+                RoomStore.shared.applyHistoryPage(roomJID: roomJID, before: before, fin: fin)
             }
-            
-            // Post notification so ChatRoomViewModel can update its local messages array
             NotificationCenter.default.post(
-                name: NSNotification.Name("XMPPReactionReceived"),
+                name: NSNotification.Name("XMPPHistoryComplete"),
                 object: self,
                 userInfo: [
                     "roomJID": roomJID,
-                    "messageId": messageId,
-                    "reactions": reactions,
-                    "from": from,
-                    "data": data
+                    "historyComplete": fin.complete
                 ]
+            )
+        }
+
+        // Set up reaction handler
+        handlers.onReactionReceived = { [weak self] (update: ReactionUpdate) in
+            //print("👍 XMPPClient: Reaction received in room \(update.roomJID) for message \(update.messageId)")
+            guard let self = self else { return }
+
+            // Update RoomStore (must be on MainActor)
+            Task { @MainActor in
+                RoomStore.shared.setReactions(
+                    roomJID: update.roomJID,
+                    messageId: update.messageId,
+                    reactions: update.emoji,
+                    from: update.reactorJID,
+                    data: update.data,
+                    timestamp: update.timestamp
+                )
+            }
+
+            // Post notification so ChatRoomViewModel can update its local messages array
+            var userInfo: [String: Any] = [
+                "roomJID": update.roomJID,
+                "messageId": update.messageId,
+                "reactions": update.emoji,
+                "from": update.reactorJID,
+                "data": update.data
+            ]
+            if let timestamp = update.timestamp {
+                userInfo["timestamp"] = timestamp
+            }
+            NotificationCenter.default.post(
+                name: NSNotification.Name("XMPPReactionReceived"),
+                object: self,
+                userInfo: userInfo
             )
         }
         
@@ -1299,20 +1409,71 @@ extension XMPPClient: XMPPStreamDelegate {
             )
         }
 
-        // Set up composing (typing) indicator handler
-        handlers.onComposingChanged = { [weak self] (roomJID: String, composingList: [String], isComposing: Bool) in
-            //print("⌨️ XMPPClient: Composing changed in room \(roomJID) - isComposing: \(isComposing), users: \(composingList)")
-            guard let self = self else { return }
-            // Post notification for composing change so ChatRoomViewModel can observe it
+        // Typing indicator. Every typer is kept (not just the last one) and
+        // expires when its "paused" is lost. ChatRoomViewModel and RoomListView
+        // read the list from this notification.
+        composingTracker.onChange = { [weak self] (roomJID: String, typers: [String], isComposing: Bool) in
             NotificationCenter.default.post(
                 name: NSNotification.Name("XMPPComposingChanged"),
                 object: self,
                 userInfo: [
                     "roomJID": roomJID,
-                    "composingList": composingList,
+                    "composingList": typers,
                     "isComposing": isComposing
                 ]
             )
+        }
+        handlers.onComposingChanged = { [weak self] (roomJID: String, nickname: String, fullName: String, isComposing: Bool) in
+            Task { @MainActor [weak self] in
+                self?.composingTracker.apply(
+                    roomJID: roomJID,
+                    nickname: nickname,
+                    fullName: fullName,
+                    isComposing: isComposing
+                )
+            }
+        }
+
+        // XEP-0184 delivered: a peer acked one of our messages.
+        handlers.onReceiptReceived = { (roomJID: String, messageId: String, fromXmppUsername: String, timestamp: Int64) in
+            Task { @MainActor in
+                RoomStore.shared.setReceivedReceipt(
+                    roomJID: roomJID,
+                    messageId: messageId,
+                    fromXmppUsername: fromXmppUsername,
+                    timestamp: timestamp
+                )
+                NotificationCenter.default.post(
+                    name: NSNotification.Name("XMPPReceiptReceived"),
+                    object: nil,
+                    userInfo: [
+                        "roomJID": roomJID,
+                        "messageId": messageId,
+                        "fromXmppUsername": fromXmppUsername,
+                        "timestamp": timestamp
+                    ]
+                )
+            }
+        }
+
+        // XEP-0333 seen: a peer displayed up to a message.
+        handlers.onDisplayedMarkerReceived = { (roomJID: String, xmppUsername: String, messageId: String) in
+            Task { @MainActor in
+                RoomStore.shared.setDisplayedMarker(
+                    roomJID: roomJID,
+                    xmppUsername: xmppUsername,
+                    messageId: messageId
+                )
+                NotificationCenter.default.post(
+                    name: NSNotification.Name("XMPPDisplayedMarker"),
+                    object: nil,
+                    userInfo: [
+                        "roomJID": roomJID,
+                        "xmppUsername": xmppUsername,
+                        "messageId": messageId
+                    ]
+                )
+            }
         }
         
         // Set up delete message handler
@@ -1346,6 +1507,8 @@ extension XMPPClient: XMPPStreamDelegate {
             Task { @MainActor in
                 var updates = PartialMessageUpdate()
                 updates.body = newText
+                // XEP-0308 edit: drives the "(edited)" label (web isEdited).
+                updates.wasEdited = true
                 RoomStore.shared.updateMessage(
                     roomJID: roomJID,
                     messageId: messageId,
@@ -1364,6 +1527,41 @@ extension XMPPClient: XMPPStreamDelegate {
                 ]
             )
         }
+    }
+}
+
+// MARK: - Receipts, Markers and Typing
+
+extension XMPPClient {
+    /// XEP-0184 receipt for a message from another user.
+    public func sendReceivedReceiptStanza(messageId: String, roomJid: String) {
+        operations.sendReceivedReceipt(roomJID: roomJid, messageId: messageId)
+    }
+
+    /// XEP-0333 read marker: the newest message this client has displayed.
+    public func sendDisplayedMarkerStanza(messageId: String, roomJid: String) {
+        operations.sendDisplayedMarker(roomJID: roomJid, messageId: messageId)
+    }
+
+    /// Typing indicator. Sent only to a joined room on a live connection,
+    /// matching web sendTypingRequestStanza.
+    public func sendTypingRequestStanza(chatId: String, fullName: String, start: Bool) {
+        guard chatId.contains("@"), isFullyConnected(), hasPresenceResponseForRoom(chatId) else { return }
+        operations.sendTypingRequest(chatId: chatId, fullName: fullName, start: start)
+    }
+
+    /// Ack a live message from someone else (web onRealtimeMessage).
+    fileprivate func acknowledgeLiveMessage(_ message: Message, roomJID: String) {
+        guard ReceiptPolicy.shouldAcknowledge(message, selfUsername: username) else { return }
+        sendReceivedReceiptStanza(messageId: message.id, roomJid: roomJID)
+    }
+
+    /// Ack a MAM catch-up message once per room and message (web sendHistoryReceivedReceiptStanza).
+    fileprivate func acknowledgeHistoryMessage(_ message: Message, roomJID: String) {
+        guard ReceiptPolicy.shouldAcknowledge(message, selfUsername: username) else { return }
+        let bareRoomJID = roomJID.components(separatedBy: "/").first ?? roomJID
+        guard historyReceiptLedger.insert(roomJID: bareRoomJID, messageId: message.id) else { return }
+        sendReceivedReceiptStanza(messageId: message.id, roomJid: bareRoomJID)
     }
 }
 

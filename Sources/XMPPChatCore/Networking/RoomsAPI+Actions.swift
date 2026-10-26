@@ -167,3 +167,66 @@ extension RoomsAPI {
         )
     }
 }
+
+// MARK: - Per-chat mute
+
+extension RoomsAPI {
+    /// Mute notifications for one chat (the caller's own preference).
+    /// PUT /chats/my/{chatName}/mute, body `{}`. Returns true on success.
+    public static func muteRoom(
+        chatName: String,
+        baseURL: URL? = nil,
+        appId: String? = nil,
+        didRefresh: Bool = false
+    ) async throws -> Bool {
+        let resolvedBaseURL = try await AppConfig.resolveBaseURL(baseURL)
+        let url = resolvedBaseURL.appendingPathComponent("chats/my/\(chatName)/mute")
+
+        struct EmptyBody: Codable {}
+
+        return try await performRequest(
+            url: url,
+            method: "PUT",
+            body: EmptyBody(),
+            baseURL: resolvedBaseURL,
+            appId: appId,
+            didRefresh: didRefresh
+        )
+    }
+
+    /// Unmute one chat. DELETE /chats/my/{chatName}/mute. Returns true on success.
+    public static func unmuteRoom(
+        chatName: String,
+        baseURL: URL? = nil,
+        appId: String? = nil,
+        didRefresh: Bool = false
+    ) async throws -> Bool {
+        let resolvedBaseURL = try await AppConfig.resolveBaseURL(baseURL)
+        let url = resolvedBaseURL.appendingPathComponent("chats/my/\(chatName)/mute")
+
+        return try await performRequest(
+            url: url,
+            method: "DELETE",
+            body: nil,
+            baseURL: resolvedBaseURL,
+            appId: appId,
+            didRefresh: didRefresh
+        )
+    }
+}
+
+// MARK: - Report room category list
+
+extension RoomsAPI {
+    /// Categories offered by the web report form. The `id` is the value sent
+    /// as `category` (an API contract), so it stays English whatever the UI language.
+    public static let reportCategories: [String] = [
+        "Spam",
+        "Violence",
+        "Child Abuse",
+        "Pornography",
+        "Personal Details",
+        "Illegal Drugs",
+        "Other",
+    ]
+}

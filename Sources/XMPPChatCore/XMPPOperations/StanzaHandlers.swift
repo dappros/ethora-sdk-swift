@@ -8,16 +8,30 @@
 
 import Foundation
 
+/// One parsed `<reactions>` stanza (live or MAM). `reactorJID` is the full
+/// `from` of the `<reactions>` element; `emoji` empty means the reactor cleared
+/// their reaction on that message.
+struct ReactionUpdate: Equatable {
+    let roomJID: String
+    let messageId: String
+    let emoji: [String]
+    let reactorJID: String
+    let data: [String: String]
+    let timestamp: Int64?
+}
+
 public class StanzaHandlers {
     weak var client: XMPPClient?
     
     // Callbacks for different events
     var onMessageReceived: ((Message, String) -> Void)? // (message, roomJID)
     var onHistoryMessageReceived: ((Message, String) -> Void)? // (message, roomJID)
-    var onReactionReceived: ((String, String, [String], String, [String: String]) -> Void)? // (roomJID, messageId, reactions, from, data)
+    var onReactionReceived: ((ReactionUpdate) -> Void)?
     var onMessageDeleted: ((String, String) -> Void)? // (roomJID, messageId)
     var onMessageEdited: ((String, String, String) -> Void)? // (roomJID, messageId, newText)
-    var onComposingChanged: ((String, [String], Bool) -> Void)? // (roomJID, composingList, isComposing)
+    var onComposingChanged: ((String, String, String, Bool) -> Void)? // (roomJID, nickname, fullName, isComposing)
+    var onReceiptReceived: ((String, String, String, Int64) -> Void)? // (roomJID, messageId, fromXmppUsername, timestamp)
+    var onDisplayedMarkerReceived: ((String, String, String) -> Void)? // (roomJID, xmppUsername, messageId)
     var onPresenceInRoom: ((String, String) -> Void)? // (roomJID, role)
     var onChatInvite: ((String) -> Void)? // (roomJID)
     var onRoomKicked: ((String) -> Void)? // (roomJID)
@@ -25,6 +39,8 @@ public class StanzaHandlers {
     var onNewRoomCreated: ((String) -> Void)? // (roomJID)
     var onGetLastMessageArchive: ((String, Bool, Int64?, Int64?) -> Void)? // (roomJID, historyComplete, lastMessageTimestamp, firstMessageTimestamp)
     var onMessageError: ((String) -> Void)? // (roomJID)
+    /// A paging page (`get-history:` query) closed by its <fin>: (roomJID, queryId, fin, requestedBefore)
+    var onHistoryPageFin: ((String, String, MamCursor.Fin, Int64?) -> Void)?
     
     // Get-history collectors: queryId -> (stanza, roomJID) -> Void
     private var getHistoryCollectors: [String: (XMPPStanza, String) -> Void] = [:]
@@ -65,6 +81,11 @@ public class StanzaHandlers {
         if stanzaId == "deleteMessageStanza" { return }
         if stanzaId.contains("message-reaction") { return }
         if stanzaId.contains("edit-message") { return }
+        // Receipts and read markers have their own handlers; typing frames
+        // carry a <data/> child and would otherwise parse as empty messages.
+        if stanzaId.contains("message-received") { return }
+        if stanzaId.contains("message-displayed") { return }
+        if XMPPChatStateStanzas.isChatState(stanza) { return }
 
         // Match TypeScript: try { const { data } = await getDataFromXml(stanza); } catch (error) { handleErrorMessageStanza(stanza); return; }
         guard let messageData = MessageParser.getDataFromStanza(stanza) else {
@@ -160,48 +181,85 @@ public class StanzaHandlers {
         
         // Match TypeScript: const message = await createMessageFromXml({ data, id, body, ...rest });
         let message = MessageParser.createMessageFromData(messageData)
+
+        // A row that answers a query someone awaits (jump window, time lookup)
+        // is handed to that query as well as to the cache.
+        if let queryId = firstChild.attributes["queryid"], !queryId.isEmpty {
+            client?.operations.mamQueries.append(message, queryId: queryId)
+        }
         
         // Match TypeScript: store.dispatch(addRoomMessage({ roomJID: stanza.attrs.from, message }))
         let roomJIDForMessage = stanza.attributes["from"] ?? ""
         onHistoryMessageReceived?(message, roomJIDForMessage)
     }
     
+    /// Handle the closing `<fin>` of a MAM query (an iq result, not a message).
+    /// Paging pages move the cursor through `onHistoryPageFin`. Every awaited
+    /// query is completed with its fin.
+    public func onMamFin(_ stanza: XMPPStanza) {
+        guard stanza.name == "iq",
+              stanza.attributes["type"] == "result",
+              let queryId = stanza.attributes["id"], !queryId.isEmpty,
+              let fin = MamCursor.parseFin(stanza) else {
+            return
+        }
+        let roomJID = (stanza.attributes["from"] ?? "").components(separatedBy: "/").first ?? ""
+        let registry = client?.operations.mamQueries
+        let before = registry?.takeRequestedBefore(queryId: queryId)
+        if queryId.hasPrefix("get-history:") {
+            onHistoryPageFin?(roomJID, queryId, fin, before)
+        }
+        registry?.complete(queryId: queryId, fin: fin)
+    }
+
     /// Handle reaction messages (onReactionMessage from TypeScript)
     public func onReactionMessage(_ stanza: XMPPStanza) {
         guard let id = stanza.attributes["id"],
               id.contains("message-reaction"),
-              let reactions = stanza.getChild("reactions"),
-              let stanzaId = stanza.getChild("stanza-id") else {
+              let update = Self.reactionUpdate(from: stanza) else {
             return
         }
-        
-        let roomJid = stanzaId.attributes["by"] ?? ""
-        let messageId = reactions.attributes["id"] ?? ""
-        let reactionsList = reactions.children.compactMap { $0.name }
-        let from = stanza.attributes["from"] ?? ""
-        let dataAttrs = reactions.attributes
-        
-        onReactionReceived?(roomJid, messageId, reactionsList, from, dataAttrs)
+        onReactionReceived?(update)
     }
-    
-    /// Handle reaction history (onReactionHistory from TypeScript)
+
+    /// Handle reaction history (onReactionHistory from TypeScript). The
+    /// reaction sits inside the MAM `<result><forwarded><message>` wrapper.
     public func onReactionHistory(_ stanza: XMPPStanza) {
-        // Similar to onReactionMessage but for history
         guard let result = stanza.getChild("result"),
               let forwarded = result.getChild("forwarded"),
               let message = forwarded.getChild("message"),
-              let reactions = message.getChild("reactions"),
-              let stanzaId = message.getChild("stanza-id") else {
+              let update = Self.reactionUpdate(from: message) else {
             return
         }
-        
-        let roomJid = stanzaId.attributes["by"] ?? ""
+        onReactionReceived?(update)
+    }
+
+    /// Reads one `<reactions>` stanza the way web `onReactionMessage` and
+    /// `onReactionHistory` do: target id and reactor from the `<reactions>`
+    /// element, shortcodes from its `<reaction>` children, name from `<data>`,
+    /// room and timestamp from `<stanza-id>`. Returns nil without a target.
+    static func reactionUpdate(from message: XMPPStanza) -> ReactionUpdate? {
+        guard let reactions = message.getChild("reactions") else { return nil }
         let messageId = reactions.attributes["id"] ?? ""
-        let reactionsList = reactions.children.compactMap { $0.name }
-        let from = message.attributes["from"] ?? ""
-        let dataAttrs = reactions.attributes
-        
-        onReactionReceived?(roomJid, messageId, reactionsList, from, dataAttrs)
+        guard !messageId.isEmpty else { return nil }
+
+        let reactor = reactions.attributes["from"] ?? ""
+        let emoji = reactions.getChildren("reaction")
+            .compactMap { $0.text }
+            .filter { !$0.isEmpty }
+        let data = message.getChild("data")?.attributes ?? [:]
+        let stanzaId = message.getChild("stanza-id")
+        let roomJID = stanzaId?.attributes["by"] ?? ""
+        let timestamp = stanzaId?.attributes["id"].flatMap { Int64($0) }
+
+        return ReactionUpdate(
+            roomJID: roomJID,
+            messageId: messageId,
+            emoji: emoji,
+            reactorJID: reactor,
+            data: data,
+            timestamp: timestamp
+        )
     }
     
     /// Handle delete message (onDeleteMessage from TypeScript)
@@ -239,25 +297,46 @@ public class StanzaHandlers {
         onMessageEdited?(roomJID, messageId, newText)
     }
     
-    /// Handle composing (typing) indicator (handleComposing from TypeScript)
+    /// Handle composing (typing) indicator (handleComposing from TypeScript).
+    /// The display name comes from `<data fullName>`, as web sends it. Our own
+    /// echoes are dropped with web's comparison (case and underscores ignored).
     public func handleComposing(_ stanza: XMPPStanza, currentUser: String) {
-        let from = stanza.attributes["from"] ?? ""
-        let roomJID = from.components(separatedBy: "/").first ?? ""
-        
         let isComposing = stanza.getChild("composing") != nil
         let isPaused = stanza.getChild("paused") != nil
-        
-        // Extract composing users list (simplified)
-        var composingList: [String] = []
-        // In a real implementation, you'd track composing users per room
-        if isComposing {
-            let userWallet = from.components(separatedBy: "/").last ?? ""
-            if !userWallet.isEmpty && userWallet != currentUser {
-                composingList.append(userWallet)
-            }
-        }
-        
-        onComposingChanged?(roomJID, composingList, isComposing)
+        guard isComposing || isPaused else { return }
+
+        let from = stanza.attributes["from"] ?? ""
+        let roomJID = from.components(separatedBy: "/").first ?? ""
+        let nickname = from.range(of: "/").map { String(from[$0.upperBound...]) } ?? ""
+        guard !roomJID.isEmpty, !nickname.isEmpty else { return }
+        guard !ReceiptPolicy.isSameUser(nickname, currentUser) else { return }
+
+        let fullName = stanza.getChild("data")?.attributes["fullName"] ?? "User"
+        onComposingChanged?(roomJID, nickname, fullName, isComposing)
+    }
+
+    /// Handle an XEP-0184 receipt (onReceivedReceipt from TypeScript). The real
+    /// sender travels in `<received from>`, because the MUC rewrites the outer `from`.
+    public func handleReceivedReceipt(_ stanza: XMPPStanza) {
+        guard stanza.attributes["id"]?.contains("message-received") == true,
+              let received = stanza.getChild("received") else { return }
+        let messageId = received.attributes["id"] ?? ""
+        let fromXmppUsername = ReceiptPolicy.localPart(received.attributes["from"] ?? "")
+        let roomJID = (stanza.attributes["from"] ?? "").components(separatedBy: "/").first ?? ""
+        guard !messageId.isEmpty, !fromXmppUsername.isEmpty, !roomJID.isEmpty else { return }
+        onReceiptReceived?(roomJID, messageId, fromXmppUsername, Int64(Date().timeIntervalSince1970 * 1000))
+    }
+
+    /// Handle an XEP-0333 read marker (onDisplayedMarker from TypeScript). The
+    /// marker is a per-member watermark for the room, not a per-message flag.
+    public func handleDisplayedMarker(_ stanza: XMPPStanza) {
+        guard stanza.attributes["id"]?.contains("message-displayed") == true,
+              let displayed = stanza.getChild("displayed") else { return }
+        let messageId = displayed.attributes["id"] ?? ""
+        let xmppUsername = ReceiptPolicy.localPart(displayed.attributes["from"] ?? "")
+        let roomJID = (stanza.attributes["from"] ?? "").components(separatedBy: "/").first ?? ""
+        guard !messageId.isEmpty, !xmppUsername.isEmpty, !roomJID.isEmpty else { return }
+        onDisplayedMarkerReceived?(roomJID, xmppUsername, messageId)
     }
     
     /// Handle presence in room (onPresenceInRoom from TypeScript)
@@ -356,8 +435,14 @@ public class StanzaHandlers {
         
         let id = stanza.attributes["id"] ?? ""
         let from = stanza.attributes["from"] ?? ""
+
+        // A refused awaited query resolves as failed, so its caller does not wait.
+        if !id.isEmpty {
+            client?.operations.mamQueries.fail(queryId: id)
+        }
         
         if id.hasPrefix("get-history:") {
+            _ = client?.operations.mamQueries.takeRequestedBefore(queryId: id)
             let roomJID = from.components(separatedBy: "/").first ?? from
             
             var errorType = "unknown"

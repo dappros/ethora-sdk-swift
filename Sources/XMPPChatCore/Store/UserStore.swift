@@ -15,6 +15,8 @@ public class UserStore: ObservableObject {
     @Published public var currentUser: User?
     @Published public var token: String?
     @Published public var refreshToken: String?
+    /// Token for secure media URLs (`?ft=`). Kept apart from `token`, refreshed with it.
+    @Published public var fileToken: String?
     @Published public var isAuthenticated: Bool = false
     
     private init() {
@@ -25,6 +27,7 @@ public class UserStore: ObservableObject {
            let user = try? JSONDecoder().decode(User.self, from: savedUserData) {
             self.token = savedToken
             self.refreshToken = savedRefreshToken
+            self.fileToken = UserDefaults.standard.string(forKey: "ethora_user_file_token")
             self.currentUser = user
             self.isAuthenticated = true
         }
@@ -46,45 +49,108 @@ public class UserStore: ObservableObject {
             username: loginResponse.user.username,
             xmppPassword: loginResponse.user.xmppPassword,
             xmppUsername: loginResponse.user.xmppUsername,
+            appLanguage: loginResponse.user.appLanguage,
+            chatLanguage: loginResponse.user.chatLanguage,
             isProfileOpen: loginResponse.user.isProfileOpen,
             isAssetsOpen: loginResponse.user.isAssetsOpen,
-            isAgreeWithTerms: loginResponse.user.isAgreeWithTerms
+            isAgreeWithTerms: loginResponse.user.isAgreeWithTerms,
+            fileToken: loginResponse.fileToken
         )
         
         self.currentUser = user
         self.token = loginResponse.token
         self.refreshToken = loginResponse.refreshToken
+        self.fileToken = loginResponse.fileToken
         self.isAuthenticated = true
         
         // Persist to UserDefaults
         UserDefaults.standard.set(loginResponse.token, forKey: "ethora_user_token")
         UserDefaults.standard.set(loginResponse.refreshToken, forKey: "ethora_user_refresh_token")
+        setStoredFileToken(loginResponse.fileToken)
         if let userData = try? JSONEncoder().encode(user) {
             UserDefaults.standard.set(userData, forKey: "ethora_user_data")
         }
+
+        // The profile's languages win at session start (web and RN behaviour).
+        LanguagePreferences.shared.applyProfile(user)
         
         //print("✅ UserStore: User logged in - \(user.email ?? "unknown")")
     }
     
-    /// Update tokens after refresh
-    public func updateTokens(token: String, refreshToken: String) {
+    /// Update tokens after refresh. A nil or empty `fileToken` keeps the one already held.
+    public func updateTokens(token: String, refreshToken: String, fileToken: String? = nil) {
         self.token = token
         self.refreshToken = refreshToken
         UserDefaults.standard.set(token, forKey: "ethora_user_token")
         UserDefaults.standard.set(refreshToken, forKey: "ethora_user_refresh_token")
+        if let fileToken = fileToken, !fileToken.isEmpty {
+            self.fileToken = fileToken
+            setStoredFileToken(fileToken)
+        }
         //print("✅ UserStore: Tokens refreshed")
     }
+
+    private func setStoredFileToken(_ value: String?) {
+        if let value = value, !value.isEmpty {
+            UserDefaults.standard.set(value, forKey: "ethora_user_file_token")
+        } else {
+            UserDefaults.standard.removeObject(forKey: "ethora_user_file_token")
+        }
+    }
     
+    /// Persist the tokens of a rotation (see `AuthRefresh`). Runs before the
+    /// rotation's caller resumes, so a rotated refresh token is never lost.
+    /// An empty `refreshToken` keeps the stored one.
+    public func applyRefreshResult(
+        token: String,
+        refreshToken: String,
+        fileToken: String?,
+        xmppPassword: String?
+    ) {
+        self.token = token
+        UserDefaults.standard.set(token, forKey: "ethora_user_token")
+        if !refreshToken.isEmpty {
+            self.refreshToken = refreshToken
+            UserDefaults.standard.set(refreshToken, forKey: "ethora_user_refresh_token")
+        }
+        if var user = currentUser {
+            if let fileToken, !fileToken.isEmpty {
+                user.fileToken = fileToken
+            }
+            if let xmppPassword, !xmppPassword.isEmpty {
+                user.xmppPassword = xmppPassword
+            }
+            currentUser = user
+            persistUser(user)
+        }
+    }
+
+    /// Replace the XMPP password (re-issued by `POST /users/xmpp-token`).
+    public func setXmppPassword(_ password: String) {
+        guard !password.isEmpty, var user = currentUser else { return }
+        user.xmppPassword = password
+        currentUser = user
+        persistUser(user)
+    }
+
+    private func persistUser(_ user: User) {
+        if let data = try? JSONEncoder().encode(user) {
+            UserDefaults.standard.set(data, forKey: "ethora_user_data")
+        }
+    }
+
     /// Clear user data (logout)
     /// This removes all cached user data and tokens
     public func clearUser() {
         self.currentUser = nil
         self.token = nil
         self.refreshToken = nil
+        self.fileToken = nil
         self.isAuthenticated = false
         
         UserDefaults.standard.removeObject(forKey: "ethora_user_token")
         UserDefaults.standard.removeObject(forKey: "ethora_user_refresh_token")
+        UserDefaults.standard.removeObject(forKey: "ethora_user_file_token")
         UserDefaults.standard.removeObject(forKey: "ethora_user_data")
         
         // Clear message cache on logout

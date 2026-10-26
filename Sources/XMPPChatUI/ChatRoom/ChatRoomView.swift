@@ -99,6 +99,54 @@ public struct ChatRoomView: View {
         #endif
     }
     
+    /// Message search is opt-in (`enableMessageSearch` + `appId`), and `hideSearch` hides only the button.
+    private var messageSearchEnabled: Bool {
+        MessageSearchGate.isHeaderButtonVisible(viewModel.config ?? ConfigStore.shared.config)
+    }
+
+    /// Room members for the search sender filter.
+    private var searchSenders: [MessageSearchSender] {
+        (viewModel.room.members ?? []).map { member in
+            let name = [member.firstName, member.lastName]
+                .compactMap { $0 }
+                .joined(separator: " ")
+                .trimmingCharacters(in: .whitespaces)
+            return MessageSearchSender(id: member.id, name: name.isEmpty ? (member.xmppUsername ?? member.id) : name)
+        }
+    }
+
+    /// Overlay for a jump: the notice, and "Jump to latest" while a window is shown.
+    @ViewBuilder
+    private func jumpOverlay(proxy: ScrollViewProxy) -> some View {
+        VStack(spacing: 8) {
+            if let notice = viewModel.jumpNotice {
+                Text(notice)
+                    .font(.caption)
+                    .foregroundColor(.primary)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(Color.orange.opacity(0.15))
+                    .cornerRadius(8)
+            }
+            if viewModel.isShowingJumpWindow {
+                Button {
+                    viewModel.leaveJumpWindow()
+                    pinToBottom = true
+                    scrollToBottom(proxy: proxy)
+                } label: {
+                    Label("Jump to latest", systemImage: "arrow.down.circle.fill")
+                        .font(.caption.weight(.semibold))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(Color.blue)
+                        .clipShape(Capsule())
+                }
+            }
+        }
+        .padding(.bottom, 8)
+    }
+
     public init(viewModel: ChatRoomViewModel) {
         self.viewModel = viewModel
         self._connectionManager = ObservedObject(wrappedValue: ConnectionManager.shared)
@@ -155,14 +203,10 @@ public struct ChatRoomView: View {
                             // Filter messages - matches React Native MessageList.tsx logic exactly
                             // React Native: const nonDeletedMessages = addReplyMessages.filter((item: IMessage) => !item.deleted && !item.isDeleted);
                             // Then: item.showInChannel === "true" || ((!item.isReply || item.isReply === "false") && !item.mainMessage)
-                            let filteredMessages = viewModel.messages.filter { msg in
+                            let filteredMessages = viewModel.displayedMessages.filter { msg in
                                 // Match TypeScript: if (!message?.body) return;
-                                guard !msg.body.isEmpty else {
-                                    return false
-                                }
-                                
-                                // Match TypeScript: if (message.deleted || message.isDeleted) return;
-                                guard msg.isDeleted != true else {
+                                // Deleted messages stay as a tombstone placeholder (web DeletedMessage).
+                                guard !msg.body.isEmpty || msg.isDeleted == true else {
                                     return false
                                 }
                                 
@@ -263,8 +307,7 @@ public struct ChatRoomView: View {
                                         viewModel.addReaction(messageId: message.id, emoji: emoji)
                                     },
                                     onReply: {
-                                        selectedMessageForThread = message
-                                        showThread = true
+                                        openThread(for: message)
                                     },
                                     onEdit: isUser ? {
                                         viewModel.isEditing = true
@@ -275,19 +318,35 @@ public struct ChatRoomView: View {
                                     onDelete: isUser ? {
                                         viewModel.deleteMessage(message.id)
                                     } : nil,
-                                    onReport: nil,
+                                    onReport: !isUser ? {
+                                        messageToReport = message
+                                        showReportModal = true
+                                    } : nil,
                                     onMediaTap: { mediaMessage in
                                         mediaPreview = MediaPreviewTarget(message: mediaMessage)
                                     },
+                                    onAlbumTap: { mediaMessage, index in
+                                        mediaPreview = MediaPreviewTarget(message: mediaMessage, startIndex: index)
+                                    },
+                                    receiptState: isUser ? viewModel.receiptState(for: message) : .none,
                                     onDiscard: isUser ? {
                                         viewModel.discardFailedMessage(message.id)
-                                    } : nil
-//                                    onReport: !isUser ? {
-//                                        messageToReport = message
-//                                        showReportModal = true
-//                                    } : nil
+                                    } : nil,
+                                    inThread: false,
+                                    threadReplies: threadRepliesByParent[message.id] ?? [],
+                                    currentReactorKey: viewModel.currentUserXmppUsername ?? viewModel.currentUserId,
+                                    onOpenThread: {
+                                        openThread(for: message)
+                                    },
+                                    interactionsDisabled: chatConfigSnapshot.disableInteractions == true,
+                                    reactionsEnabled: ReactionSettings.enabled(chatConfigSnapshot),
+                                    reactionPickerEnabled: ReactionSettings.pickerEnabled(chatConfigSnapshot),
+                                    quickReactions: ReactionSettings.quickShortcodes(chatConfigSnapshot),
+                                    repliesEnabled: ReactionSettings.repliesEnabled(chatConfigSnapshot),
+                                    accentColor: Color(hex: chatConfigSnapshot.colors?.primary ?? "#0052CD")
                             )
                             .id(message.id)
+                            .background(viewModel.highlightedMessageId == message.id ? Color.yellow.opacity(0.25) : Color.clear)
                             .onAppear {
                                 // Track when message becomes visible for scroll button
                                 // Use debounce to avoid excessive updates
@@ -317,6 +376,29 @@ public struct ChatRoomView: View {
         .padding()
     }
     
+    /// Config snapshot for the reaction and reply switches.
+    private var chatConfigSnapshot: ChatConfig { ConfigStore.shared.config }
+
+    /// Replies grouped by their parent id, for the reply pill under each root.
+    private var threadRepliesByParent: [String: [Message]] {
+        ThreadReference.repliesByParent(viewModel.messages)
+    }
+
+    /// Opens the thread for a message. A reply opens its parent's thread, as the
+    /// web handleReplyMessage does; the parent is a stub when not loaded.
+    private func openThread(for message: Message) {
+        let target: Message
+        if let parentId = ThreadReference.threadParentId(of: message) {
+            target = viewModel.messages.first { $0.id == parentId }
+                ?? ThreadReference.parentStub(for: message)
+                ?? message
+        } else {
+            target = message
+        }
+        selectedMessageForThread = target
+        showThread = true
+    }
+
     public var body: some View {
         VStack(spacing: 0) {
             // Connection Status
@@ -332,13 +414,35 @@ public struct ChatRoomView: View {
                 messages: viewModel.messages,
                 currentUserId: viewModel.currentUserId,
                 currentUserXmppUsername: viewModel.currentUserXmppUsername,
+                videoCalls: ConfigStore.shared.config.videoCalls,
                 onBack: {
                     presentationMode.wrappedValue.dismiss()
                 },
                 onInfo: {
                     showRoomInfo = true
-                }
+                },
+                onSearch: messageSearchEnabled ? {
+                    showSearch = true
+                } : nil
             )
+            .sheet(isPresented: $showSearch) {
+                MessageSearchModal(
+                    model: MessageSearchModel(
+                        roomName: viewModel.room.jid.components(separatedBy: "@").first
+                    ),
+                    senders: searchSenders,
+                    onSelect: { hit in
+                        showSearch = false
+                        // The open chat fulfils the request (ChatRoomViewModel.observePendingJumps).
+                        RoomStore.shared.pendingJump = PendingJump(
+                            roomJID: viewModel.room.jid,
+                            ids: [hit.id, hit.stanzaId, hit.messageId],
+                            createdAt: hit.createdDate,
+                            body: hit.body
+                        )
+                    }
+                )
+            }
             
             // Off-Clinic Hours Banner
             OffClinicHoursBanner()
@@ -350,6 +454,22 @@ public struct ChatRoomView: View {
                         buildMessagesList(proxy: proxy)
                     }
                     .coordinateSpace(name: "messageScroll")
+                    .onChange(of: viewModel.jumpScrollTarget) { target in
+                        guard let target else { return }
+                        // The jump target is in a window: stop pinning the list to the bottom.
+                        pinToBottom = false
+                        Task { @MainActor in
+                            // Give the list a moment to lay out the window before scrolling.
+                            try? await Task.sleep(nanoseconds: 150_000_000)
+                            withAnimation {
+                                proxy.scrollTo(target, anchor: .center)
+                            }
+                            viewModel.jumpScrollTarget = nil
+                        }
+                    }
+                    .overlay(alignment: .bottom) {
+                        jumpOverlay(proxy: proxy)
+                    }
                     .sheet(isPresented: $showThread) {
                         if let message = selectedMessageForThread,
                            let currentUser = UserStore.shared.currentUser {
@@ -361,11 +481,18 @@ public struct ChatRoomView: View {
                                     selectedMessageForThread = nil
                                 },
                                 onSendMessage: { text, alsoSendToMain in
-                                    viewModel.sendReply(messageId: message.id, text: text, alsoSendToMain: alsoSendToMain)
+                                    viewModel.sendReply(to: message, text: text, alsoSendToMain: alsoSendToMain)
                                 },
                                 onSendMedia: { data, type in
                                     viewModel.sendMedia(data: data, type: type)
-                                }
+                                },
+                                customMessageComponent: nil,
+                                config: chatConfigSnapshot,
+                                source: viewModel,
+                                onReact: { messageId, emoji in
+                                    viewModel.addReaction(messageId: messageId, emoji: emoji)
+                                },
+                                currentReactorKey: viewModel.currentUserXmppUsername ?? viewModel.currentUserId
                             )
                         }
                     }
@@ -403,8 +530,17 @@ public struct ChatRoomView: View {
                             members: viewModel.room.members ?? [],
                             onClose: { showRoomInfo = false },
                             onEdit: nil,
-                            onLeave: nil,
-                            onDelete: nil
+                            onLeave: {
+                                showRoomInfo = false
+                                Task {
+                                    await viewModel.leaveCurrentRoom()
+                                    presentationMode.wrappedValue.dismiss()
+                                }
+                            },
+                            onDelete: nil,
+                            onAddMember: viewModel.canManageMembers ? { name in try await viewModel.addMember(username: name) } : nil,
+                            onRemoveMember: viewModel.canManageMembers ? { member in try await viewModel.removeMember(member) } : nil,
+                            onReportRoom: { reason, details in try await viewModel.reportRoom(category: reason, text: details) }
                         )
                     }
                     .fullScreenCover(item: $mediaPreview) { target in
@@ -682,6 +818,11 @@ public struct ChatRoomView: View {
                     viewModel.stopTyping() // Stop typing when sending media
                     viewModel.sendMedia(data: data, type: type, caption: caption)
                 },
+                onSendMediaFiles: { files, caption in
+                    viewModel.stopTyping()
+                    viewModel.sendMediaFiles(files, caption: caption)
+                },
+                attachmentsConfig: chatConfigSnapshot.attachments,
                 isEditing: viewModel.isEditing,
                 editMessageId: viewModel.editMessageId,
                 onCancelEdit: {
